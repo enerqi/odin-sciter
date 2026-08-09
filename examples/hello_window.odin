@@ -58,13 +58,13 @@ main :: proc() {
 	arg0: [64]u16
 	utf16.encode_string(arg0[:], "odin-sciter")
 	argv: [1][^]u16 = {raw_data(arg0[:])}
-	api.SciterExec(u32(sciter.Sciter_App_Cmd.INIT), 1, uintptr(rawptr(&argv[0])))
+	api.SciterExec(.INIT, 1, uintptr(rawptr(&argv[0])))
 
 	// 3. Create a top-level window. SW_MAIN is what makes closing it end the message loop; SW_ENABLE_DEBUG
 	//    lets the SDK's `inspector` attach. Sciter 6 commented out the SW_TITLEBAR / SW_RESIZEABLE /
 	//    SW_CONTROLS / SW_GLASSY / SW_ALPHA / SW_TOOL flags that 4.x had - a plain top-level window is
 	//    now the default and window chrome is styled from CSS instead.
-	flags := u32(sciter.Sciter_Create_Window_Flags.MAIN) | u32(sciter.Sciter_Create_Window_Flags.ENABLE_DEBUG)
+	flags := sciter.Sciter_Create_Window_Flags{.MAIN, .ENABLE_DEBUG}
 
 	frame := sciter.Tag_Rect {
 		left   = 200,
@@ -87,7 +87,9 @@ main :: proc() {
 	}
 
 	// 5. Show it, then run Sciter's own message pump until the window closes.
-	api.SciterWindowExec(window, u32(sciter.Sciter_Window_Cmd.SET_STATE), uintptr(sciter.Sciter_Window_State.SHOWN), 0)
-	api.SciterExec(u32(sciter.Sciter_App_Cmd.LOOP), 0, 0)
-	api.SciterExec(u32(sciter.Sciter_App_Cmd.SHUTDOWN), 0, 0)
+	// `p1` stays a bare uintptr: it is a window state only for SET_STATE - for SET_PLACEMENT it is a
+	// `POINT*`, for ACTIVATE a boolean - so there is no one type the bindings could give it.
+	api.SciterWindowExec(window, .SET_STATE, uintptr(sciter.Sciter_Window_State.SHOWN), 0)
+	api.SciterExec(.LOOP, 0, 0)
+	api.SciterExec(.SHUTDOWN, 0, 0)
 }

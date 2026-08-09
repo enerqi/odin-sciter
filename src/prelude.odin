@@ -30,6 +30,26 @@ LIBRARY_NAME :: "sciter.dll" when ODIN_OS == .Windows else "libsciter.dylib" whe
 // the headers these bindings were built from.
 EXPECTED_API_VERSION :: SCITER_API_VERSION
 
+// The result of every DOM call in ISciterAPI.
+//
+// This is hand-written rather than generated because upstream never made it a type: sciter-x-dom.h has
+// `#define SCDOM_RESULT INT` and six more `#define`s for the values, so clang only ever sees an `int`
+// return and a handful of unrelated integer constants. bindgen's `enumify_macros` would collect them,
+// but it builds the enum over Odin's `int` (8 bytes), and these functions return a 4-byte C `int` - the
+// upper half of the returned register would be read as part of the value. Hence `enum Int` here, and
+// the `procedure_type_overrides` table in bindgen.sjson to put it on all 101 slots that return it.
+//
+// The `#define`s themselves are removed in bindgen.sjson, so this is the only spelling of them.
+Scdom_Result :: enum Int {
+	OK                = 0,
+	INVALID_HWND      = 1,  // invalid HWINDOW
+	INVALID_HANDLE    = 2,  // invalid HELEMENT
+	PASSIVE_HANDLE    = 3,  // attempt to use an HELEMENT not marked by Sciter_UseElement()
+	INVALID_PARAMETER = 4,  // parameter is invalid, e.g. a null pointer
+	OPERATION_FAILED  = 5,  // operation failed, e.g. invalid html in SciterSetElementHtml()
+	OK_NOT_HANDLED    = -1, // not an error: the call succeeded and nothing consumed it
+}
+
 @(private = "file")
 g_api: ^Isciter_Api
 

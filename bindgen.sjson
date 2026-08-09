@@ -73,8 +73,11 @@ type_overrides = {
 	// `const BYTE*` / `BYTE*` are always buffer pointers here (HTML source, CSS source, resource
 	// blobs), never pointers to one byte. `[^]u8` is the Odin spelling for that, and it is what
 	// `raw_data(some_string)` and `raw_data(some_slice)` produce.
+	//
+	// This only reaches the parameters that spell the type `LPCBYTE`; the four that are written out as
+	// `const BYTE*` are handled one at a time in procedure_type_overrides below. (There is no LPBYTE:
+	// the headers name it in two doc comments but never typedef it.)
 	"LPCBYTE" = "[^]u8"
-	"LPBYTE" = "[^]u8"
 
 	// Same reasoning for UTF-16 strings: LPCWSTR is a pointer to a NUL-terminated run of code units.
 	"LPCWSTR" = "[^]u16"
@@ -84,4 +87,286 @@ type_overrides = {
 	// but half its uses are genuinely pointers passed through SciterExec / SciterPostCallback / the
 	// SCITER_APP_INIT argv, and `uintptr` lets those be written as one cast instead of two.
 	"UINT_PTR" = "uintptr"
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Flag enums -> bit_set
+//
+// The key is the C enum tag; the value names the *member* enum that the bit_set is built over. The
+// generated pair is `Foo_Bar :: bit_set[Foo_Ba; u32]` - so the plural, C-named type stays the one that
+// appears in signatures, and the singular is only ever written as `.MEMBER`. bindgen log2s the member
+// values, keeps the enum's C storage type (all of these are `u32`, so the ABI is unchanged), and turns
+// any member that is not a single bit into a named constant of the bit_set type.
+//
+// Only enums whose members are genuinely independent bits belong here. Two enums that look like
+// candidates are deliberately absent - see the note below the table.
+bit_setify = {
+	// EVENT_GROUPS is the subscription mask handed to SciterWindowAttachEventHandler and the `evtg`
+	// argument of every ELEMENT_EVENT_PROC. HANDLE_ALL (0xFFFF) and SUBSCRIPTIONS_REQUEST (0xFFFFFFFF)
+	// are multi-bit, so they come out as constants rather than members.
+	//
+	// One casualty: HANDLE_INITIALIZATION is 0, and bindgen drops zero-valued members (a bit_set has no
+	// bit for them). That is correct here - initialization events are delivered whatever the mask says,
+	// and the value the engine passes in `evtg` for them is the empty set.
+	"EVENT_GROUPS" = "Event_Group"
+
+	// SW_MAIN | SW_ENABLE_DEBUG is the common case and reads badly as `u32(...) | u32(...)`.
+	"SCITER_CREATE_WINDOW_FLAGS" = "Sciter_Create_Window_Flag"
+
+	// The :link / :hover / :active / ... pseudo-class bits. 30 members, every one a distinct bit.
+	"ELEMENT_STATE_BITS" = "Element_State_Bit"
+
+	// ALLOW_FILE_IO | ALLOW_SOCKET_IO | ... , the value side of SCITER_SET_SCRIPT_RUNTIME_FEATURES.
+	"SCRIPT_RUNTIME_FEATURES" = "Script_Runtime_Feature"
+
+	// SCROLL_TO_TOP (0x01) and SCROLL_SMOOTH (0x10).
+	"SCITER_SCROLL_FLAGS" = "Sciter_Scroll_Flag"
+}
+
+// NOT bit_setified, though docs/PLAN.md section 7 lists them - both would generate values that compile
+// and are wrong:
+//
+//   OUTPUT_SUBSYTEMS - OT_DOM=0, OT_CSSS=1, OT_CSS=2, OT_SCRIPT=3. A plain sequence, not flags. As a
+//     bit_set, DOM would be deleted outright (zero-valued) and SCRIPT would become the constant
+//     `{.CSSS, .CSS}`. It is an alternation, so it stays an enum.
+//
+//   ELEMENT_AREAS - packs two small alternations and one flag into one UINT: the low bits select what
+//     the rectangle is relative to (ROOT_RELATIVE=1, SELF_RELATIVE=2, CONTAINER_RELATIVE=3,
+//     VIEW_RELATIVE=4 - note 3, which is *not* ROOT|SELF), the next bits select which box
+//     (CONTENT_BOX=0x00, PADDING_BOX=0x10, BORDER_BOX=0x20, MARGIN_BOX=0x30, BACK_IMAGE_AREA=0x40,
+//     FORE_IMAGE_AREA=0x50, SCROLLABLE_AREA=0x60 - again a sequence), and AS_PPX=0x8000 on top. Only
+//     AS_PPX is a real flag. A bit_set would make `{.ROOT_RELATIVE, .VIEW_RELATIVE}` (= 5) and
+//     `{.PADDING_BOX, .BORDER_BOX, .BACK_IMAGE_AREA}` (= 0x70) expressible and meaningless, and would
+//     hide the real rule, which is "pick one from each group and add them".
+
+// ---------------------------------------------------------------------------------------------------
+// Parameters and returns that are an enum wearing a UINT
+//
+// The header says what these are only in a comment - `UINT areas /*ELEMENT_AREAS*/`, `UINT appCmd /**/`
+// - so bindgen sees a bare integer and there is nothing to infer from. Keys are the C names:
+// `Struct.field.parameter` for a slot of the API table, `Proc.parameter` for a typedef'd callback, and
+// the same key without a parameter for a return type. Values are written in *Odin* spelling, because
+// they are pasted verbatim into the output.
+//
+// The API table's C tag is `_ISciterAPI` (`typedef struct _ISciterAPI { ... } ISciterAPI;`), which is
+// why every key below starts with the underscore.
+procedure_type_overrides = {
+	// --- application and window lifecycle ---------------------------------------------------------
+	"_ISciterAPI.SciterExec.appCmd"                = "Sciter_App_Cmd"
+	"_ISciterAPI.SciterWindowExec.windowCmd"       = "Sciter_Window_Cmd"
+	"_ISciterAPI.SciterCreateWindow.creationFlags" = "Sciter_Create_Window_Flags"
+	"_ISciterAPI.SciterSetOption.option"           = "Sciter_Rt_Options"
+
+	// SciterWindowExec's `p1` is deliberately NOT typed as Sciter_Window_State, though docs/PLAN.md
+	// section 7 suggests it: it is only a window state for SET_STATE. For SET_PLACEMENT it is a
+	// `const POINT*`, for ACTIVATE a BOOL, for GET_VULKAN_CONTEXT a struct pointer. `uintptr` is the
+	// only type that is right for all of them.
+
+	// --- DOM ------------------------------------------------------------------------------------
+	"_ISciterAPI.SciterGetElementState.pstateBits"     = "^Element_State_Bits"
+	"_ISciterAPI.SciterSetElementState.stateBitsToSet"   = "Element_State_Bits"
+	"_ISciterAPI.SciterSetElementState.stateBitsToClear" = "Element_State_Bits"
+	"_ISciterAPI.SciterScrollToView.SciterScrollFlags"   = "Sciter_Scroll_Flags"
+	"_ISciterAPI.SciterSetElementHtml.where"             = "Set_Element_Html"
+	"_ISciterAPI.SciterControlGetType.pType"             = "^Ctl_Type"
+	"_ISciterAPI.SciterNodeType.pNodeType"               = "^Node_Type"
+
+	// SciterGetElementLocation's `areas` stays a UINT - see the ELEMENT_AREAS note above. It is a
+	// packed pair of alternations, so neither an enum nor a bit_set describes it.
+
+	// --- events ---------------------------------------------------------------------------------
+	"_ISciterAPI.SciterWindowAttachEventHandler.subscription" = "Event_Groups"
+
+	// The handler side of the same mask. On a normal call the engine passes exactly one group; when it
+	// is asking a handler what it wants to receive it passes SUBSCRIPTIONS_REQUEST, and the handler
+	// writes a mask back through `prms`. Both are Event_Groups values.
+	"ElementEventProc.evtg" = "Event_Groups"
+
+	// --- values ---------------------------------------------------------------------------------
+	// ValueType's `pUnits` is left as ^Uint on purpose, though docs/PLAN.md section 7 pairs it with
+	// pType: which enum it holds is decided by pType. It is VALUE_UNIT_TYPE only for T_LENGTH; for
+	// T_DATE it is VALUE_UNIT_TYPE_DATE, for T_OBJECT VALUE_UNIT_TYPE_OBJECT, for T_STRING
+	// VALUE_UNIT_TYPE_STRING, for T_UNDEFINED VALUE_UNIT_UNDEFINED. Naming one of them would make the
+	// other four look wrong.
+	"_ISciterAPI.ValueType.pType" = "^Value_Type"
+
+	// --- SCDOM_RESULT returns ---------------------------------------------------------------------
+	// `#define SCDOM_RESULT INT`, so clang sees a bare `int` on all 101 DOM slots and there is nothing
+	// to key off but the name. The list is generated from the header with:
+	//
+	//   grep -oP 'SCDOM_RESULT\s+SCFN\(\s*\K\w+' external/sciter/include/sciter-x-api.h
+	//
+	// A slot added by a future SDK just keeps returning `Int` until it is added here - visible, and
+	// better than a rule that guesses.
+	"_ISciterAPI.Sciter_UseElement" = "Scdom_Result"
+	"_ISciterAPI.Sciter_UnuseElement" = "Scdom_Result"
+	"_ISciterAPI.SciterGetRootElement" = "Scdom_Result"
+	"_ISciterAPI.SciterGetFocusElement" = "Scdom_Result"
+	"_ISciterAPI.SciterFindElement" = "Scdom_Result"
+	"_ISciterAPI.SciterGetChildrenCount" = "Scdom_Result"
+	"_ISciterAPI.SciterGetNthChild" = "Scdom_Result"
+	"_ISciterAPI.SciterGetParentElement" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementHtmlCB" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementTextCB" = "Scdom_Result"
+	"_ISciterAPI.SciterSetElementText" = "Scdom_Result"
+	"_ISciterAPI.SciterGetAttributeCount" = "Scdom_Result"
+	"_ISciterAPI.SciterGetNthAttributeNameCB" = "Scdom_Result"
+	"_ISciterAPI.SciterGetNthAttributeValueCB" = "Scdom_Result"
+	"_ISciterAPI.SciterGetAttributeByNameCB" = "Scdom_Result"
+	"_ISciterAPI.SciterSetAttributeByName" = "Scdom_Result"
+	"_ISciterAPI.SciterClearAttributes" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementIndex" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementType" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementTypeCB" = "Scdom_Result"
+	"_ISciterAPI.SciterGetStyleAttributeCB" = "Scdom_Result"
+	"_ISciterAPI.SciterSetStyleAttribute" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementLocation" = "Scdom_Result"
+	"_ISciterAPI.SciterScrollToView" = "Scdom_Result"
+	"_ISciterAPI.SciterUpdateElement" = "Scdom_Result"
+	"_ISciterAPI.SciterRefreshElementArea" = "Scdom_Result"
+	"_ISciterAPI.SciterSetCapture" = "Scdom_Result"
+	"_ISciterAPI.SciterReleaseCapture" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementHwnd" = "Scdom_Result"
+	"_ISciterAPI.SciterCombineURL" = "Scdom_Result"
+	"_ISciterAPI.SciterSelectElements" = "Scdom_Result"
+	"_ISciterAPI.SciterSelectElementsW" = "Scdom_Result"
+	"_ISciterAPI.SciterSelectParent" = "Scdom_Result"
+	"_ISciterAPI.SciterSelectParentW" = "Scdom_Result"
+	"_ISciterAPI.SciterSetElementHtml" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementUID" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementByUID" = "Scdom_Result"
+	"_ISciterAPI.SciterShowPopup" = "Scdom_Result"
+	"_ISciterAPI.SciterShowPopupAt" = "Scdom_Result"
+	"_ISciterAPI.SciterHidePopup" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementState" = "Scdom_Result"
+	"_ISciterAPI.SciterSetElementState" = "Scdom_Result"
+	"_ISciterAPI.SciterCreateElement" = "Scdom_Result"
+	"_ISciterAPI.SciterCloneElement" = "Scdom_Result"
+	"_ISciterAPI.SciterInsertElement" = "Scdom_Result"
+	"_ISciterAPI.SciterDetachElement" = "Scdom_Result"
+	"_ISciterAPI.SciterDeleteElement" = "Scdom_Result"
+	"_ISciterAPI.SciterSetTimer" = "Scdom_Result"
+	"_ISciterAPI.SciterDetachEventHandler" = "Scdom_Result"
+	"_ISciterAPI.SciterAttachEventHandler" = "Scdom_Result"
+	"_ISciterAPI.SciterWindowAttachEventHandler" = "Scdom_Result"
+	"_ISciterAPI.SciterWindowDetachEventHandler" = "Scdom_Result"
+	"_ISciterAPI.SciterSendEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterPostEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterCallBehaviorMethod" = "Scdom_Result"
+	"_ISciterAPI.SciterRequestElementData" = "Scdom_Result"
+	"_ISciterAPI.SciterHttpRequest" = "Scdom_Result"
+	"_ISciterAPI.SciterGetScrollInfo" = "Scdom_Result"
+	"_ISciterAPI.SciterSetScrollPos" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementIntrinsicWidths" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementIntrinsicHeight" = "Scdom_Result"
+	"_ISciterAPI.SciterIsElementVisible" = "Scdom_Result"
+	"_ISciterAPI.SciterIsElementEnabled" = "Scdom_Result"
+	"_ISciterAPI.SciterSortElements" = "Scdom_Result"
+	"_ISciterAPI.SciterSwapElements" = "Scdom_Result"
+	"_ISciterAPI.SciterTraverseUIEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterCallScriptingMethod" = "Scdom_Result"
+	"_ISciterAPI.SciterCallScriptingFunction" = "Scdom_Result"
+	"_ISciterAPI.SciterEvalElementScript" = "Scdom_Result"
+	"_ISciterAPI.SciterAttachHwndToElement" = "Scdom_Result"
+	"_ISciterAPI.SciterControlGetType" = "Scdom_Result"
+	"_ISciterAPI.SciterGetValue" = "Scdom_Result"
+	"_ISciterAPI.SciterSetValue" = "Scdom_Result"
+	"_ISciterAPI.SciterGetExpando" = "Scdom_Result"
+	"_ISciterAPI.SciterGetObject" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementNamespace" = "Scdom_Result"
+	"_ISciterAPI.SciterGetHighlightedElement" = "Scdom_Result"
+	"_ISciterAPI.SciterSetHighlightedElement" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeAddRef" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeRelease" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeCastFromElement" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeCastToElement" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeFirstChild" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeLastChild" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeNextSibling" = "Scdom_Result"
+	"_ISciterAPI.SciterNodePrevSibling" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeParent" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeNthChild" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeChildrenCount" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeType" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeGetText" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeSetText" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeInsert" = "Scdom_Result"
+	"_ISciterAPI.SciterNodeRemove" = "Scdom_Result"
+	"_ISciterAPI.SciterCreateTextNode" = "Scdom_Result"
+	"_ISciterAPI.SciterCreateCommentNode" = "Scdom_Result"
+	"_ISciterAPI.SciterFireEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterGetElementAsset" = "Scdom_Result"
+	"_ISciterAPI.SciterEGLSendEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterRequestAnimationFrameEvent" = "Scdom_Result"
+	"_ISciterAPI.SciterRequestPaint" = "Scdom_Result"
+
+	// --- byte buffers written as `const BYTE*` --------------------------------------------------
+	// `[^]` augments the existing type rather than replacing it, so `^Byte` becomes `[^]Byte`. These
+	// are the four parameters the LPCBYTE type_override cannot see, because the header spells them out
+	// instead of using the typedef.
+	"_ISciterAPI.SciterSetElementHtml.html"           = "[^]"
+	"SciterGraphicsAPI.imageLoad.bytes"               = "[^]"
+	"SciterGraphicsAPI.imageCreateFromPixmap.pixmap"  = "[^]"
+	"image_write_function.data"                       = "[^]"
+
+	// ... and the pixmap layout that goes with the buffer above.
+	"SciterGraphicsAPI.imageCreateFromPixmap.pixmap_format" = "Sciter_Pixmap_Format"
+
+	// --- diagnostics ----------------------------------------------------------------------------
+	"DEBUG_OUTPUT_PROC.subsystem" = "Output_Subsytems"
+	"DEBUG_OUTPUT_PROC.severity"  = "Output_Severity"
+}
+
+// The SCDOM_* `#define`s that `Scdom_Result` in src/prelude.odin replaces. Leaving them would give
+// every result code two spellings, one of which (`SCDOM_RESULT :: Int`) is a type that no signature
+// uses any more.
+remove = [
+	"SCDOM_RESULT"
+	"SCDOM_OK"
+	"SCDOM_INVALID_HWND"
+	"SCDOM_INVALID_HANDLE"
+	"SCDOM_PASSIVE_HANDLE"
+	"SCDOM_INVALID_PARAMETER"
+	"SCDOM_OPERATION_FAILED"
+	"SCDOM_OK_NOT_HANDLED"
+]
+
+// ---------------------------------------------------------------------------------------------------
+// Renames
+//
+// `force_ada_case_types` is right for the ~250 type names that read as words, but it is a faithful
+// transliteration, so Windows-style Hungarian tags survive as `Lpcwstr`, `Sbool`, `Hsarchive`. Those
+// three plus LPCBYTE are the ones that turn up in signatures a caller has to write, so they get real
+// names. Everything else keeps its upstream spelling - the point of `package sciter` is that
+// sciter.com's documentation reads across to it (see docs/PLAN.md section 10).
+//
+// Renaming happens before Ada-casing and takes the C name as key, so the value is the final spelling.
+rename = {
+	// `typedef int SBOOL`, retyped to `b32` above. `Sbool` says nothing; `Bool32` says the one thing
+	// that matters about it, which is that it is not Odin's 1-byte `bool`.
+	"SBOOL" = "Bool32"
+
+	// Both are `[^]u16` after the type_overrides above: a NUL-terminated run of UTF-16 code units.
+	// Sciter takes UTF-16 everywhere a string comes back out of the engine.
+	"LPCWSTR" = "Wide_String"
+	"LPWSTR"  = "Wide_String_Buffer"
+
+	// `[^]u8` - HTML source, CSS source, resource blobs. `raw_data(some_string)` produces one.
+	"LPCBYTE" = "Bytes"
+
+	// The callbacks the `...CB` getters hand their result to. Named after what they receive.
+	"LPCWSTR_RECEIVER" = "Wide_String_Receiver"
+	"LPCSTR_RECEIVER"  = "Cstring_Receiver"
+	"LPCBYTE_RECEIVER" = "Bytes_Receiver"
+
+	// The handle from SciterOpenArchive, used with SciterGetArchiveItem / SciterCloseArchive.
+	"HSARCHIVE" = "Archive"
+}
+
+// The automatic "strip the prefix all members share" pass gets SET_ELEMENT_HTML wrong: its members are
+// SIH_* (inner html) and SOH_* (outer html), whose shared prefix is the single letter `S`, so they come
+// out as `IH_REPLACE_CONTENT` / `OH_REPLACE` - names that appear nowhere upstream. No member starts with
+// the string below, so nothing is stripped; setting the key at all is what turns the automatic pass off.
+remove_enum_member_prefix = {
+	"SET_ELEMENT_HTML" = "SET_ELEMENT_HTML_"
 }

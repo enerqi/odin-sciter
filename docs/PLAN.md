@@ -304,7 +304,44 @@ the wrong slot.
 
 ---
 
-## 7. Next: idiomatic Odin types
+## 7. Idiomatic Odin types — **done**
+
+Applied, all of it declaratively in `bindgen.sjson` so it survives regeneration. `Isciter_Api` is still
+1520 bytes and `just example api_map` still resolves 189/189 slots, so none of it moved the ABI.
+
+- **`bit_setify`** on `EVENT_GROUPS`, `SCITER_CREATE_WINDOW_FLAGS`, `ELEMENT_STATE_BITS`,
+  `SCRIPT_RUNTIME_FEATURES`, `SCITER_SCROLL_FLAGS`. Each generates a singular member enum plus the
+  C-named `bit_set[...; u32]`, and multi-bit members (`HANDLE_ALL`, `SUBSCRIPTIONS_REQUEST`) become
+  constants of the bit_set type.
+- **`procedure_type_overrides`** on the app/window/option commands, the DOM state and node/control
+  types, the event subscription mask on both sides (`SciterWindowAttachEventHandler.subscription` and
+  `ElementEventProc.evtg`), `ValueType.pType`, the debug output callback, and all **101** slots that
+  return `SCDOM_RESULT`. Four `const BYTE*` parameters that the `LPCBYTE` override cannot see are
+  augmented to `[^]` individually.
+- **`Scdom_Result`** is hand-written in `src/prelude.odin`, not generated: upstream has
+  `#define SCDOM_RESULT INT` and six more `#define`s, so there is no C enum to convert, and bindgen's
+  `enumify_macros` builds enums over Odin's 8-byte `int` — wrong for a 4-byte C `int` return. The
+  `SCDOM_*` macros are `remove`d so there is one spelling of each code.
+- **`rename`** for the Hungarian leftovers that appear in signatures callers write: `Sbool` →
+  `Bool32`, `Lpcwstr` → `Wide_String`, `Lpcbyte` → `Bytes`, `Hsarchive` → `Archive`, and the three
+  `*_RECEIVER` callbacks to match. Everything else keeps its upstream spelling.
+- **`remove_enum_member_prefix`** for `SET_ELEMENT_HTML`, whose members are `SIH_*` and `SOH_*`: the
+  automatic pass stripped their shared leading `S` and produced names that exist nowhere upstream.
+
+Three items in the tables below were **not** applied, because each would have compiled and been wrong.
+The reasoning is recorded in full in `bindgen.sjson` next to where it would have gone:
+
+- `ELEMENT_AREAS` is not a flag set. It packs two alternations (relative-to: 1,2,3,4 — note 3, which is
+  not `1|2`; and box: 0x00,0x10,...,0x60) plus one real flag, `AS_PPX`. A bit_set would make invalid
+  combinations expressible and hide the actual rule. It stays an enum, and `SciterGetElementLocation`'s
+  `areas` stays a `Uint`.
+- `OUTPUT_SUBSYTEMS` is `0,1,2,3` — an alternation. As a bit_set, `DOM` (zero-valued) would be deleted
+  outright and `SCRIPT` would become `{.CSSS, .CSS}`.
+- `SciterWindowExec`'s `p1` is a `SCITER_WINDOW_STATE` only for `SET_STATE`; it is a `POINT*` for
+  `SET_PLACEMENT` and a boolean for `ACTIVATE`. Likewise `ValueType`'s `pUnits`, whose enum is chosen
+  by `pType` — one of five. Both stay untyped.
+
+The original plan for this section follows.
 
 The generated layer is a faithful 1-to-1 port, which means it is still C-shaped: bare `Uint` where an
 enum belongs, integers where a `bit_set` belongs, `Int` returns where a result enum belongs. The same
@@ -352,7 +389,7 @@ types that are already right, or the same conversions get written twice.
 4. ~~Generate — flatten, `bindgen.sjson`, prelude, post-process~~ **done**
 5. ~~Verify the generated struct against the shipped engine~~ **done** (`examples/api_map`)
 6. ~~First window~~ **done** (`examples/hello_window`)
-7. **Idiomatic types** — §7. Do this next.
+7. ~~Idiomatic types — §7~~ **done**
 8. **Ergonomic layer** — `package sciter_app`: window, load, eval, call, `Value` conversions to and from
    Odin types, event handler registration. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, so this is where the memory bugs will live and where the tests
