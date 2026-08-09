@@ -1,0 +1,40 @@
+<html>
+<head>
+  <title>odin-sciter: extension</title>
+  <style>
+    html { background: #1e1e2e; color: #cdd6f4; font: 16px system; }
+    body { padding: 2em; margin: 0; }
+    h1   { color: #89b4fa; margin-top: 0; }
+    pre  { background: #313244; padding: 1em; border-radius: 4px; font: 14px monospace; }
+    code { background: #313244; padding: 0 .3em; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>extension</h1>
+  <p>
+    This document is running under the SDK's <code>scapp</code> &mdash; there is no Odin
+    <code>main</code> anywhere in this process. The results below came from
+    <code>odin-ext.so</code>, loaded on demand by the engine.
+  </p>
+  <pre id="out">loading…</pre>
+
+  <script type="module">
+    import * as sciter from "@sciter";
+
+    let text;
+    try {
+      // Loads odin-ext.so from the folder holding this executable.
+      const ext = sciter.loadLibrary("odin-ext");
+      text = [
+        "ext.greet('scapp')  -> " + ext.greet("scapp"),
+        "ext.version()       -> " + ext.version(),
+        "ext.calls()         -> " + ext.calls(),
+        "ext.calls()         -> " + ext.calls(),   // state persists inside the .so
+      ].join("\n");
+    } catch (e) {
+      text = "FAILED to load odin-ext: " + e;
+    }
+    document.$("#out").innerText = text;
+  </script>
+</body>
+</html>

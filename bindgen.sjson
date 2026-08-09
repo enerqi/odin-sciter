@@ -83,6 +83,15 @@ type_overrides = {
 	"LPCWSTR" = "[^]u16"
 	"LPWSTR" = "[^]u16"
 
+	// `typedef const char* LPCSTR`, and every one of its 29 uses is a NUL-terminated name - a tag, an
+	// attribute name, a method name, a mime type. That is exactly Odin's `cstring`, and it is what a
+	// string literal converts to for free. Without this it comes out as `^i8`, which cannot be passed
+	// a literal at all.
+	//
+	// The one exception is LPCSTR_RECEIVER's `str`, which comes with an explicit length and is not
+	// promised to be terminated; it is overridden back to `[^]u8` below.
+	"LPCSTR" = "cstring"
+
 	// `typedef size_t UINT_PTR` comes out as `c.size_t` (Odin `uint`). It is pointer-sized either way,
 	// but half its uses are genuinely pointers passed through SciterExec / SciterPostCallback / the
 	// SCITER_APP_INIT argv, and `uintptr` lets those be written as one cast instead of two.
@@ -300,6 +309,48 @@ procedure_type_overrides = {
 	"_ISciterAPI.SciterRequestAnimationFrameEvent" = "Scdom_Result"
 	"_ISciterAPI.SciterRequestPaint" = "Scdom_Result"
 
+	// --- VALUE_RESULT returns ----------------------------------------------------------------------
+	// Same story as SCDOM_RESULT, with a twist: the VALUE_RESULT enum does exist in value.h, but every
+	// slot is declared `UINT SCFN( Value... )`, so clang never connects the two. Worse, HV_OK_TRUE is
+	// -1, which as the declared UINT reads as 4294967295. The enum is `i32`, so the size is unchanged
+	// and `.OK_TRUE` compares correctly.
+	"_ISciterAPI.ValueInit" = "Value_Result"
+	"_ISciterAPI.ValueClear" = "Value_Result"
+	"_ISciterAPI.ValueCompare" = "Value_Result"
+	"_ISciterAPI.ValueCopy" = "Value_Result"
+	"_ISciterAPI.ValueIsolate" = "Value_Result"
+	"_ISciterAPI.ValueType" = "Value_Result"
+	"_ISciterAPI.ValueStringData" = "Value_Result"
+	"_ISciterAPI.ValueStringDataSet" = "Value_Result"
+	"_ISciterAPI.ValueIntData" = "Value_Result"
+	"_ISciterAPI.ValueIntDataSet" = "Value_Result"
+	"_ISciterAPI.ValueInt64Data" = "Value_Result"
+	"_ISciterAPI.ValueInt64DataSet" = "Value_Result"
+	"_ISciterAPI.ValueFloatData" = "Value_Result"
+	"_ISciterAPI.ValueFloatDataSet" = "Value_Result"
+	"_ISciterAPI.ValueBinaryData" = "Value_Result"
+	"_ISciterAPI.ValueBinaryDataSet" = "Value_Result"
+	"_ISciterAPI.ValueElementsCount" = "Value_Result"
+	"_ISciterAPI.ValueNthElementValue" = "Value_Result"
+	"_ISciterAPI.ValueNthElementValueSet" = "Value_Result"
+	"_ISciterAPI.ValueNthElementKey" = "Value_Result"
+	"_ISciterAPI.ValueEnumElements" = "Value_Result"
+	"_ISciterAPI.ValueSetValueToKey" = "Value_Result"
+	"_ISciterAPI.ValueGetValueOfKey" = "Value_Result"
+	"_ISciterAPI.ValueToString" = "Value_Result"
+	"_ISciterAPI.ValueFromString" = "Value_Result"
+	"_ISciterAPI.ValueInvoke" = "Value_Result"
+	"_ISciterAPI.ValueNativeFunctorSet" = "Value_Result"
+
+	// The VALUE_TYPE / VALUE_UNIT_TYPE_* / VALUE_STRING_CVT_TYPE arguments of the same API. `units` is
+	// left alone for the same reason as ValueType.pUnits - which enum it is depends on `type`.
+	"_ISciterAPI.ValueIntDataSet.type"    = "Value_Type"
+	"_ISciterAPI.ValueInt64DataSet.type"  = "Value_Type"
+	"_ISciterAPI.ValueFloatDataSet.type"  = "Value_Type"
+	"_ISciterAPI.ValueBinaryDataSet.type" = "Value_Type"
+	"_ISciterAPI.ValueToString.how"       = "Value_String_Cvt_Type"
+	"_ISciterAPI.ValueFromString.how"     = "Value_String_Cvt_Type"
+
 	// --- byte buffers written as `const BYTE*` --------------------------------------------------
 	// `[^]` augments the existing type rather than replacing it, so `^Byte` becomes `[^]Byte`. These
 	// are the four parameters the LPCBYTE type_override cannot see, because the header spells them out
@@ -311,6 +362,10 @@ procedure_type_overrides = {
 
 	// ... and the pixmap layout that goes with the buffer above.
 	"SciterGraphicsAPI.imageCreateFromPixmap.pixmap_format" = "Sciter_Pixmap_Format"
+
+	// The receivers hand back a pointer *and* a length, and nothing promises a terminator, so this one
+	// LPCSTR is a counted UTF-8 buffer rather than a cstring.
+	"LPCSTR_RECEIVER.str" = "[^]u8"
 
 	// --- diagnostics ----------------------------------------------------------------------------
 	"DEBUG_OUTPUT_PROC.subsystem" = "Output_Subsytems"
@@ -356,7 +411,7 @@ rename = {
 
 	// The callbacks the `...CB` getters hand their result to. Named after what they receive.
 	"LPCWSTR_RECEIVER" = "Wide_String_Receiver"
-	"LPCSTR_RECEIVER"  = "Cstring_Receiver"
+	"LPCSTR_RECEIVER"  = "Utf8_Receiver"
 	"LPCBYTE_RECEIVER" = "Bytes_Receiver"
 
 	// The handle from SciterOpenArchive, used with SciterGetArchiveItem / SciterCloseArchive.

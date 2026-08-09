@@ -7,30 +7,44 @@ You write your UI in HTML and CSS, script it in JavaScript, and drive it from Od
 browser and not Electron: the whole engine is a single ~25 MB shared library with no Chromium, no
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
-> **Status: early.** The generated bindings work and are verified against the shipped engine — see
-> [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not. The friendly wrapper API is
-> not written yet, so today you call the engine's C-shaped functions directly. Linux x64 is the only
-> platform vendored and tested so far.
+> **Status: early but usable.** The generated bindings work and are verified against the shipped engine,
+> and there is an Odin-shaped layer on top of them. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what
+> is done and what is not. Linux x64 is the only platform vendored and tested so far.
+
+There are two packages, and you can mix them freely.
+
+**`sciter_app`** is the one to write against. Snake_case, Odin `string`s, error enums:
 
 ```odin
 package main
 
-import "core:fmt"
-import sciter ".."
+import "../sciter_app"
 
 main :: proc() {
-	err, _ := sciter.load()
-	if err != .None {
-		fmt.eprintln("could not load the Sciter engine:", err)
-		return
-	}
-	api := sciter.api()
-	fmt.println("Sciter", api.SciterVersion(0), api.SciterVersion(1))
+	if !sciter_app.load_engine() {return}
+	sciter_app.init()
+
+	window, _ := sciter_app.create_window({width = 720, height = 480})
+	sciter_app.load_html(window, "<html><body><h1>Hello from Odin</h1></body></html>")
+
+	sciter_app.show(window)
+	sciter_app.run()
+	sciter_app.shutdown()
 }
 ```
 
-A complete window is [`examples/hello_window.odin`](examples/hello_window.odin) — about 60 lines,
-including the HTML.
+**`sciter`** is generated, and stays 1-to-1 with the C API so that
+[sciter.com's documentation](https://docs.sciter.com/) reads across to it directly. The raw function
+table is always one `sciter.api()` away:
+
+```odin
+api := sciter.api()
+api.SciterExec(.INIT, 1, argv)
+api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
+```
+
+[`examples/hello_window.odin`](examples/hello_window.odin) does the whole thing in the raw bindings and
+nothing else, if you want to see what the wrapper is doing.
 
 
 ## Quick start
@@ -51,6 +65,11 @@ If it does not load, the error lists every path it tried. Point it at a library 
 ```sh
 SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64 just example hello_window
 ```
+
+**If the window opens and then segfaults on X11**, run it with `XMODIFIERS=@im=none`. The crash is
+inside the engine binary's X input-method handling (`XSetICFocus`), it fires when the window takes
+focus, and disabling XIM avoids it — measured here at 3 crashes out of 3 without, 0 out of 3 with. It
+is not a fault in the bindings: `just example api_map` is the check that catches a real mismatch.
 
 
 ## How it works, in one section
@@ -85,6 +104,110 @@ just example api_map
 
 That walks every slot and resolves each pointer back to its symbol name with the dynamic linker. It is
 also the regression test for a Sciter upgrade — 189 slots, 0 mismatches expected.
+
+
+## Examples
+
+Each is a single self-contained file with the explanation in its header comment, ordered by difficulty.
+Run one with `just example NAME`.
+
+| Example | What it shows |
+| --- | --- |
+| `hello_window` | A window, HTML and CSS, and the app loop — raw bindings only, no wrapper |
+| `api_map` | Walks all 189 `ISciterAPI` slots and resolves each to its symbol. The upgrade check. |
+| `load_file` | Loading a document from disk, and why relative URLs need a base URL |
+| `eval` | Running JavaScript from Odin and reading results back as `Value`s |
+| `call_odin_from_js` | The other direction: exposing an Odin procedure to script |
+| `dom_walk` | CSS selectors, traversal, and reading and writing text and attributes |
+| `events` | Handling DOM events in Odin, without any script in the document |
+| `custom_loader` | Serving a document's CSS and images from memory via the `SC_LOAD_DATA` host callback |
+| `archive` | The whole UI in one compressed blob inside the executable, via `packfolder` and `#load` |
+| `single_binary` | `archive` plus the engine itself embedded — one self-contained 25 MB executable |
+| `inspector` | Attaching the SDK's DevTools-style inspector to a running window |
+| `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
+
+Tests live inside the examples, next to the code they cover:
+
+```sh
+just test                  # every example's tests
+just test1 eval test_value_array
+just test_sanitize eval    # the Value refcounting tests under ASan
+```
+
+Tests that need a window skip themselves when there is no display.
+
+`archive` uses a committed 2 KB `examples/assets/app.pak`, so it builds from a clean checkout with no
+SDK. Re-pack it after editing anything under `examples/assets/app/`:
+
+```sh
+SCITER_SDK=/path/to/sciter-js-sdk just pack
+```
+
+
+## Shipping one file
+
+Sciter is dynamic-link-only without a commercial licence, so the engine has to exist as a file for the
+system loader to open — normally a ~25 MB library shipped beside your program. `single_binary` embeds
+it anyway:
+
+```odin
+ENGINE    :: #load("../lib/linux/x64/libsciter.so")   // the engine
+RESOURCES :: #load("assets/app.pak")                  // the UI
+
+sciter_app.load_embedded(ENGINE)                      // extract once, then load
+```
+
+`load_embedded` writes the engine to a hash-named directory under the user's cache
+(`~/.cache/odin-sciter/<hash>/libsciter.so`) and loads it from there. The hash means a different engine
+build gets a different directory instead of silently reusing a stale one, and an unchanged one is
+written exactly once — later runs reuse it untouched. The write is via a temporary file plus rename, so
+two copies starting at once cannot see a half-written library.
+
+This is **not** static linking and it does not avoid the disk; there is no portable way to hand the
+system loader a library from memory. What it buys is a single artifact. The trade-offs are listed in
+[`sciter_app/embed.odin`](sciter_app/embed.odin) — notably that the cache directory must not be
+mounted `noexec`, and that a freshly written DLL is what Windows anti-malware heuristics look for.
+
+On licensing: the EULA's grant is "You may utilize sciter.dll in any manner you see fit (subject to the
+limitations outlined in this license)", and the only limitation it states is the About-box attribution.
+It says nothing about embedding. That is a reading of the text and not legal advice.
+
+
+## Three ways to combine Odin and Sciter
+
+Most of this README is about the first one, but the engine supports all three and they are genuinely
+different architectures.
+
+| | Who owns `main` | Your code is | Built with |
+| --- | --- | --- | --- |
+| **Embedding** | your Odin executable | Odin, hosting the engine | `just example NAME` |
+| **scapp / Quark** | the SDK's prebuilt `scapp` | JavaScript only | the SDK's own tooling |
+| **Native extension** | `scapp`, or any Sciter host | an Odin shared library | `just extension` |
+
+`scapp` is the Sciter engine packaged as a standalone executable, and
+[Quark](https://quark.sciter.com/) assembles your HTML/CSS/JS onto a copy of it to produce a single
+monolithic binary. That path has no native code of your own in it — which is where extensions come in.
+
+A **native extension** is a shared library the engine loads on demand, in response to script:
+
+```js
+import * as sciter from "@sciter";
+const ext = sciter.loadLibrary("odin-ext");   // loads odin-ext.so beside the executable
+ext.greet("world");
+```
+
+The whole contract is one exported symbol, `SciterLibraryInit`, which is handed the `ISciterAPI` table
+and returns the object script sees. `sciter.adopt()` takes that table instead of opening the library,
+and everything else in these bindings then works unchanged.
+[`examples/extension.odin`](examples/extension.odin) is a complete one, in about 40 lines of actual
+code:
+
+```sh
+just extension                                   # -> target/debug/odin-ext.so
+SCITER_SDK=/path/to/sciter-js-sdk just extension-run   # runs it under scapp
+```
+
+`scapp` is not vendored here, hence `SCITER_SDK`.
 
 
 ## Finding the engine
@@ -137,13 +260,14 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 | Path | What it is |
 | --- | --- |
 | `sciter.odin` | **Generated.** The whole binding — `package sciter`. Do not edit; run `just bindgen`. |
-| `src/prelude.odin` | Hand-written: the loader, `api()`, and the doc comments explaining them. Pasted into `sciter.odin` at generation time. |
+| `sciter_app/` | Hand-written `package sciter_app`: the Odin-shaped layer — windows, `Value`s, the DOM, events |
+| `src/prelude.odin` | Hand-written: the loader, `api()`, `Scdom_Result`. Pasted into `sciter.odin` at generation time. |
 | `bindgen.sjson` | odin-c-bindgen configuration, heavily commented |
 | `src/flatten_headers.py` | Concatenates the SDK headers into one file for bindgen, and explains why that is necessary |
-| `src/postprocess_bindings.py` | Rewrites the calling convention for 32-bit Windows |
+| `src/postprocess_bindings.py` | Rewrites the calling convention, and drops the `-> Void` returns bindgen emits for C `void` |
 | `external/sciter/` | Vendored SDK headers, both licences, and `VENDORED.md` (pinned version) |
 | `lib/` | The engine binaries |
-| `examples/` | Runnable examples, one file each |
+| `examples/` | Runnable examples, one file each, plus `assets/`. `extension.odin` is a shared library, not an application. |
 | `spike/smoke/` | The minimal ABI handshake, written before any bindings existed |
 | `docs/` | Plan, findings, and how the research was done |
 
@@ -153,16 +277,26 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 Tasks run with [just](https://just.systems/).
 
 - `just example NAME` — build and run `examples/NAME.odin`; defaults to `hello_window`
-- `just check` — type check the bindings package
+- `just check` — type check both packages and build every example
 - `just bindgen` — regenerate `sciter.odin` from `external/sciter/include`
 - `just format` — `odinfmt -w .`
+
+The root package is a library with no `main`, so the usual build-profile recipes are pointed at
+examples instead. Each takes an example name:
+
+- `just run NAME` / `run_release NAME` / `run_release_debug NAME` … — the same profiles, on one example
+- `just rerun NAME` — re-run the last build without recompiling
+- `just sanitize NAME` — run one example under ASan
+- `just test` / `just test1 EXAMPLE TEST` / `just test_sanitize EXAMPLE` — the tests
+
+Every test recipe passes `-define:ODIN_TEST_THREADS=1`, and that is not optional: Sciter is
+single-threaded — every `ISciterAPI` call has to come from the thread that ran `SCITER_APP_INIT` —
+while Odin's test runner is parallel by default. Without it the engine's heap gets corrupted instead of
+the tests failing cleanly, which shows up as `malloc(): unaligned tcache chunk detected`.
 
 Regenerating needs [odin-c-bindgen](https://github.com/karl-zylinski/odin-c-bindgen) built alongside
 this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing at it, plus
 [uv](https://docs.astral.sh/uv/) for the two Python steps.
-
-> The skeleton's `run_*`, `rerun_*`, `sanitize` and `test` recipes still assume the root package has a
-> `main`, which it does not. They are not wired up yet.
 
 
 ## Sciter version

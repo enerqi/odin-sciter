@@ -32,6 +32,15 @@ set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 set minimum-version := "1.49.0"
 
 main_name := "main.exe"
+
+# Shared-library extension, for `just extension`. Sciter's loadLibrary() takes a name without one.
+shared_ext := if os() == "windows" { ".dll" } else if os() == "macos" { ".dylib" } else { ".so" }
+
+# Where packfolder lives inside an SDK checkout, per platform (note: no x64 subfolder).
+packfolder_platform := if os() == "windows" { "windows" } else if os() == "macos" { "macosx" } else { "linux" }
+
+# Where scapp lives inside an SDK checkout, per platform.
+scapp_platform := if os() == "windows" { "windows/x64" } else if os() == "macos" { "macosx" } else { "linux/x64" }
 test_main_name := "test-main.exe"
 
 # `join`, not the `/` operator: `/` always emits a forward slash, and cmd.exe rejects a forward-slash
@@ -96,6 +105,7 @@ collection_path := env_var_or_default("XYZ_HOME", "")
 # odinfmt every odin file in the project
 format:
 	odinfmt -w sciter.odin
+	odinfmt -w sciter_app
 	odinfmt -w examples
 	odinfmt -w spike
 
@@ -141,8 +151,8 @@ lint *args:
 # (-keep-executable so `rerun_debug` can skip recompiling)
 # ---
 # run with debug build
-run_debug *args: mktarget_dirs
-	odin run . -debug -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("debug", main_name) }} {{args}}
+run_debug name="hello_window" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -debug -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
 alias run := run_debug
 
@@ -151,20 +161,20 @@ alias run := run_debug
 # (-keep-executable so `rerun_fast_debug` can skip recompiling)
 # ---
 # run with debug info and light optimizations
-run_fast_debug *args: mktarget_dirs
-	odin run . -debug -o:minimal -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("fast_debug", main_name) }} {{args}}
+run_fast_debug name="hello_window" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -debug -o:minimal -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("fast_debug", name + ".exe") }} {{args}}
 
 # Release codegen with debug info retained: for profiling and for chasing bugs that only appear under
 # optimization. Slowest to compile, and the debugger will jump around inlined/reordered code.
 # (-keep-executable so `rerun_release_debug` can skip recompiling)
 # ---
 # run with full optimizations AND debug info
-run_release_debug *args: mktarget_dirs
-	odin run . -debug -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_debug", main_name) }} {{args}}
+run_release_debug name="hello_window" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -debug -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_debug", name + ".exe") }} {{args}}
 
 # run with optimizations (-keep-executable so `rerun_release` can skip recompiling)
-run_release *args: mktarget_dirs
-	odin run . -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release", main_name) }} {{args}}
+run_release name="hello_window" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release", name + ".exe") }} {{args}}
 
 # `run_release` plus every runtime safety check compiled out: `-no-bounds-check` (slice/array indexing),
 # `-disable-assert` (the built-in `assert`) and `-no-type-assert` (union/any type assertions). Those
@@ -174,8 +184,8 @@ run_release *args: mktarget_dirs
 # (-keep-executable so `rerun_release_nochecks` can skip recompiling)
 # ---
 # run with optimizations and ALL runtime safety checks removed
-run_release_nochecks *args: mktarget_dirs
-	odin run . -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", main_name) }} {{args}}
+run_release_nochecks name="hello_window" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
 # `address` (ASan) catches out-of-bounds accesses and use-after-free; `memory` catches reads of
 # uninitialized memory; `thread` catches data races. Only `address` is widely supported - `memory` and
@@ -208,52 +218,51 @@ run_release_nochecks *args: mktarget_dirs
 # Usage:  just sanitize   or   just sanitize thread -- --my-arg
 # ---
 # run a debug build under a sanitizer (address | memory | thread)
-sanitize kind="address" *args: mktarget_dirs
-	odin run . -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{main_name}}") }} {{args}}
+sanitize name="hello_window" kind="address" *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}.exe") }} {{args}}
 
 # same sanitizer options as `sanitize`; see its notes for platform support and the linker note.
 # ---
 # run the tests under a sanitizer (address | memory | thread)
-test_sanitize kind="address" *args: mktarget_dirs
-	odin test . -debug -file -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{test_main_name}}") }} {{args}}
+test_sanitize name="eval" kind="address" *args: mktarget_dirs
+	odin test examples/{{name}}.odin -file -debug -sanitize:{{kind}} -define:ODIN_TEST_THREADS=1 -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}-test.exe") }} {{args}}
 
 # Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `run_debug`/`run` build.
 # ---
 # re-run the last debug binary WITHOUT recompiling
-rerun_debug *args:
-	{{ target_path("debug", main_name) }} {{args}}
+rerun_debug name="hello_window" *args:
+	{{ target_path("debug", name + ".exe") }} {{args}}
 
 alias rerun := rerun_debug
 
 # re-run the last fast_debug binary without recompiling. Requires a prior `run_fast_debug` build.
-rerun_fast_debug *args:
-	{{ target_path("fast_debug", main_name) }} {{args}}
+rerun_fast_debug name="hello_window" *args:
+	{{ target_path("fast_debug", name + ".exe") }} {{args}}
 
 # re-run the last release_debug binary without recompiling. Requires a prior `run_release_debug` build.
-rerun_release_debug *args:
-	{{ target_path("release_debug", main_name) }} {{args}}
+rerun_release_debug name="hello_window" *args:
+	{{ target_path("release_debug", name + ".exe") }} {{args}}
 
 # re-run the last release binary without recompiling. Requires a prior `run_release` build.
-rerun_release *args:
-	{{ target_path("release", main_name) }} {{args}}
+rerun_release name="hello_window" *args:
+	{{ target_path("release", name + ".exe") }} {{args}}
 
 # re-run the last nochecks binary without recompiling. Requires a prior `run_release_nochecks` build.
-rerun_release_nochecks *args:
-	{{ target_path("release_nochecks", main_name) }} {{args}}
+rerun_release_nochecks name="hello_window" *args:
+	{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
 # run all tests
-test *args: mktarget_dirs
-	odin test . -debug -file -microarch:native -linker:{{linker}} -out:{{ target_path("debug", test_main_name) }} {{args}}
+alias test := example-tests
 
 # Filtering is a `core:testing` define rather than a compiler flag - there is no `-test-name:`, and a
-# stale spelling of one fails with `Unknown flag: 'test-name'` before anything builds. NAME takes a
-# comma-separated list and the package prefix is optional, so `pkg.my_test`, `my_test` and
-# `one,two` all work:
-#     just test1 my_test
+# stale spelling of one fails with `Unknown flag: 'test-name'` before anything builds. TEST_NAME takes a
+# comma-separated list and the package prefix is optional, so `main.my_test`, `my_test` and
+# `one,two` all work. The first argument says which example to look in:
+#     just test1 eval test_value_array
 # ---
-# run one named test (comma-separated for several)
-test1 name *args: mktarget_dirs
-	odin test . -debug -file -microarch:native -define:ODIN_TEST_NAMES={{name}} -linker:{{linker}} -out:{{ target_path("debug", test_main_name) }} {{args}}
+# run one named test from one example (comma-separated for several)
+test1 example test_name *args: mktarget_dirs
+	odin test examples/{{example}}.odin -file -debug -microarch:native -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES={{test_name}} -linker:{{linker}} -out:{{ target_path("debug", example + "_test.exe") }} {{args}}
 
 # simple delete of all debug databases and executables in the target directory
 [unix]
@@ -408,9 +417,24 @@ ols-config:
 # ---------------------------------------------------------------------------------------------------
 # odin-sciter
 #
-# The generic `run_*` / `rerun_*` / `sanitize` recipes above build the ROOT package, which in this
-# repository is `package sciter` - a library with no `main`. They are inherited from the project
-# skeleton and are not wired up yet; use `just example NAME` until they are reworked.
+# The root package here is `package sciter` - a generated library with no `main` - so the skeleton's
+# `run_*` / `rerun_*` / `sanitize` / `test*` recipes have been repointed at `examples/NAME.odin`, which
+# is where every `main` and every `@(test)` in this repository lives. They keep their build profiles and
+# their names, and each takes an example name:
+#
+#     just run                     # hello_window, debug
+#     just run_release dom_walk    # optimized
+#     just rerun events            # last debug build, no recompile
+#     just sanitize eval           # under ASan
+#     just test                    # every example's tests
+#     just test_sanitize eval      # those tests under ASan
+#
+# `just example NAME` remains the short spelling of `just run NAME`.
+#
+# One trap, and it is not optional: Sciter is single-threaded - every ISciterAPI call has to come from
+# the thread that ran SCITER_APP_INIT - while Odin's test runner is parallel by default. Every test
+# recipe below passes `-define:ODIN_TEST_THREADS=1`. Without it the engine's heap is corrupted rather
+# than the tests failing cleanly, which presents as `malloc(): unaligned tcache chunk detected`.
 # ---------------------------------------------------------------------------------------------------
 
 # Path to a built odin-c-bindgen. Override with `just bindgen_bin=/path/to/bindgen.bin bindgen`.
@@ -429,14 +453,127 @@ bindgen:
 	uv run --no-project -p 3.14 python src/postprocess_bindings.py sciter.odin
 	odin check . -no-entry-point
 
-# type check the bindings package (it has no `main`, hence -no-entry-point)
-check:
+# `-no-entry-point` for the two library packages, which have no `main`. The examples do have one, and
+# are checked by building them - `odin check` on a `-file` target is not meaningfully cheaper.
+# ---
+# type check both packages and build every example
+check: mktarget_dirs
+	#!/usr/bin/env bash
+	set -euo pipefail
 	odin check . -no-entry-point
+	odin check sciter_app -no-entry-point
+	for f in examples/*.odin; do
+	    if [ "$f" = "examples/extension.odin" ]; then
+	        # Not an application: a native extension, so it has no `main` and builds as a shared library.
+	        odin build "$f" -file -build-mode:shared -out:{{ target_path("debug", "odin-ext" + shared_ext) }}
+	    else
+	        odin build "$f" -file -out:{{ target_path("debug", "check.exe") }}
+	    fi
+	done
+	echo "ok: both packages type check, all $(ls examples/*.odin | wc -l) examples build"
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
 # repository root so the loader finds lib/<platform>/ - see `load` in src/prelude.odin for the full
 # search order, or set SCITER_LIB.
 # ---
+# Regenerates examples/assets/app.pak from examples/assets/app/, for the `archive` example.
+#
+# The .pak is COMMITTED, so `just example archive` works from a clean checkout with no SDK and no
+# network - it is 2 KB. Run this only after editing something under examples/assets/app/.
+#
+# packfolder is an SDK tool and is not vendored (see external/sciter/VENDORED.md), so point SCITER_SDK
+# at a checkout:
+#
+#     SCITER_SDK=~/dev/sciter-js-sdk just pack
+#
+# `-binary` rather than one of packfolder's source generators (-csharp/-dlang/-go, or its default C
+# array): Odin's `#load` embeds a plain file at compile time, which keeps a hex dump out of git and
+# puts the bytes in the executable's read-only data - which is exactly what SciterOpenArchive needs,
+# since it indexes the blob in place rather than copying it.
+# ---
+# rebuild examples/assets/app.pak from examples/assets/app/
+pack:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	sdk="${SCITER_SDK:-}"
+	if [ -z "$sdk" ]; then
+	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
+	    echo "packfolder is not vendored here; see external/sciter/VENDORED.md." >&2
+	    exit 1
+	fi
+	packfolder="$sdk/bin/{{ packfolder_platform }}/packfolder"
+	if [ ! -x "$packfolder" ]; then
+	    echo "no packfolder at $packfolder" >&2
+	    exit 1
+	fi
+	"$packfolder" examples/assets/app examples/assets/app.pak -binary
+
+# `examples/extension.odin` is not an application - it is a Sciter *native extension*, a shared library
+# the engine loads in response to script's `sciter.loadLibrary("odin-ext")`. It exports exactly one
+# symbol, `SciterLibraryInit`, and has no `main`, so it is built rather than run.
+#
+# The name matters: `loadLibrary("odin-ext")` looks for `odin-ext.so` (no `lib` prefix) beside the
+# host executable, so `-out:` sets it exactly.
+# ---
+# build the native extension -> target/debug/odin-ext.so
+extension: mktarget_dirs
+	odin build examples/extension.odin -file -build-mode:shared -out:{{ target_path("debug", "odin-ext" + shared_ext) }}
+
+# Assembles a throwaway app folder - scapp, the extension and its document together, which is the
+# layout `loadLibrary` requires - and runs it. Nothing in the SDK checkout is modified.
+#
+# scapp is the Sciter engine packaged as a standalone executable; it is NOT vendored here (see
+# external/sciter/VENDORED.md), so point SCITER_SDK at a checkout:
+#
+#     SCITER_SDK=~/dev/sciter-js-sdk just extension-run
+# ---
+# build the extension and run it under the SDK's scapp
+extension-run: extension
+	#!/usr/bin/env bash
+	set -euo pipefail
+	sdk="${SCITER_SDK:-}"
+	if [ -z "$sdk" ]; then
+	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
+	    echo "scapp is not vendored here; see external/sciter/VENDORED.md." >&2
+	    exit 1
+	fi
+	scapp="$sdk/bin/{{ scapp_platform }}/scapp"
+	if [ ! -x "$scapp" ]; then
+	    echo "no scapp at $scapp" >&2
+	    exit 1
+	fi
+	app="target/debug/extension-app"
+	rm -rf "$app" && mkdir -p "$app"
+	cp "$scapp" "$app/"
+	cp {{ target_path("debug", "odin-ext" + shared_ext) }} "$app/"
+	cp examples/assets/extension/index.htm "$app/"
+	echo "running $app/scapp"
+	cd "$app" && ./scapp index.htm
+
+# Run the `@(test)` procs that live inside the examples.
+#
+# ODIN_TEST_THREADS=1 is not optional: Sciter is single-threaded - every ISciterAPI call has to come
+# from the thread that ran SCITER_APP_INIT - and Odin's test runner is parallel by default. Sharing one
+# engine across test threads corrupts its heap rather than failing cleanly.
+#
+# Tests that need a window skip themselves when there is no DISPLAY / WAYLAND_DISPLAY.
+# ---
+# run the tests inside one example, e.g. `just example-test eval`
+example-test name="eval" *args: mktarget_dirs
+	odin test examples/{{name}}.odin -file -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
+
+# run every example's tests
+example-tests:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for f in examples/*.odin; do
+	    name=$(basename "$f" .odin)
+	    if grep -q '@(test)' "$f"; then
+	        echo "--- $name"
+	        just example-test "$name"
+	    fi
+	done
+
 # build and run an example, e.g. `just example hello_window`
 example name="hello_window" *args: mktarget_dirs
 	odin run examples/{{name}}.odin -file -debug -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}

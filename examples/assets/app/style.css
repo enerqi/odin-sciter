@@ -1,0 +1,9 @@
+html { background: #1e1e2e; color: #cdd6f4; font: 16px system; }
+body { padding: 2em; margin: 0; }
+h1   { color: #89b4fa; margin-top: 0; }
+code { background: #313244; padding: 0 .3em; border-radius: 3px; }
+img  { width: 96px; height: 96px; }
+pre  { background: #313244; padding: 1em; border-radius: 4px; font: 13px monospace;
+       white-space: pre-wrap; }
+.muted { color: #6c7086; font-size: 14px; }
+#from-script { color: #a6e3a1; }

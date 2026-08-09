@@ -34,6 +34,11 @@
 *.bc binary
 *.spall binary
 
+# Not a build artifact and not gitignored: examples/assets/app.pak is a committed Sciter archive
+# (packfolder output) so the `archive` example builds with no SDK. It is binary, and `* text=auto
+# eol=lf` above would corrupt it on checkout without this line.
+*.pak binary
+
 # Editor configuration, not project source. Linguist reads `.sublime-build` / `.sublime-project` as
 # JSON with Comments and `.sublime-snippet` as XML, so in a repository this small they visibly skew
 # the language bar away from the Odin the project is actually written in. `vendored` rather than

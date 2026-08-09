@@ -186,14 +186,47 @@ load :: proc(
 	return .None, candidates[:]
 }
 
+// Takes an ISciterAPI table that something else already has, instead of opening the library.
+//
+// This is what a **native extension** calls. An extension is a shared library that the engine itself
+// loads, in response to script's `sciter.loadLibrary("name")`, through one exported entry point:
+//
+//	SBOOL SCAPI SciterLibraryInit(ISciterAPI* psapi, SCITER_VALUE* plibobject)
+//
+// The host hands over the table there - the library is already open, and `load` would be both wrong
+// and wasteful. Everything after this call works exactly as if `load` had succeeded: `api()` returns
+// the table, and every wrapper built on it works unchanged.
+//
+// The version check is the same one `load` makes, and matters more here rather than less: the host
+// decides which engine is running, so an extension can be handed a table it was not generated against.
+//
+// See `examples/extension.odin`.
+adopt :: proc(table: ^Isciter_Api) -> Load_Error {
+	if g_api != nil {
+		return .Already_Loaded
+	}
+	if table == nil {
+		return .Null_Api
+	}
+	if table.version != EXPECTED_API_VERSION {
+		return .Version_Mismatch
+	}
+	g_api = table
+	return .None
+}
+
 // Releases the shared library. Rarely needed - the engine is normally kept for the life of the process.
 unload :: proc() {
 	if g_api == nil {
 		return
 	}
 	g_api = nil
-	dynlib.unload_library(g_library)
-	g_library = {}
+
+	// Nothing to unload when the table came from `adopt`: the host owns the library, not us.
+	if g_library != nil {
+		dynlib.unload_library(g_library)
+		g_library = {}
+	}
 }
 
 
@@ -228,7 +261,7 @@ Wchar              :: u16
 Wide_String        :: [^]u16
 Wide_String_Buffer :: [^]u16
 Char               :: i8
-Lpcstr             :: ^Char
+Lpcstr             :: cstring
 Void               :: struct {}
 
 /* duplicate INT_PTR typedef; removed by src/flatten_headers.py */
@@ -267,9 +300,9 @@ Lpuint :: ^Uint
 Bytes  :: [^]u8
 
 /**callback function used with various get*** functions */
-Wide_String_Receiver :: proc "system" (str: Wide_String, str_length: Uint, param: Lpvoid) -> Void
-Cstring_Receiver     :: proc "system" (str: Lpcstr, str_length: Uint, param: Lpvoid) -> Void
-Bytes_Receiver       :: proc "system" (str: Bytes, num_bytes: Uint, param: Lpvoid) -> Void
+Wide_String_Receiver :: proc "system" (str: Wide_String, str_length: Uint, param: Lpvoid)
+Utf8_Receiver        :: proc "system" (str: [^]u8, str_length: Uint, param: Lpvoid)
+Bytes_Receiver       :: proc "system" (str: Bytes, num_bytes: Uint, param: Lpvoid)
 
 Gfx_Layer :: enum u32 {
 	GDI               = 1,  /*Mac OS*/
@@ -389,8 +422,8 @@ Value_Unit_Type_String :: enum u32 {
 }
 
 // Native functor
-Native_Functor_Invoke  :: proc "system" (tag: ^Void, argc: Uint, argv: ^Value, retval: ^Value) -> Void // retval may contain error definition
-Native_Functor_Release :: proc "system" (tag: ^Void) -> Void
+Native_Functor_Invoke  :: proc "system" (tag: ^Void, argc: Uint, argv: ^Value, retval: ^Value) // retval may contain error definition
+Native_Functor_Release :: proc "system" (tag: ^Void)
 
 /**Callback function used with #ValueEnumElements().
 * return TRUE to continue enumeration
@@ -693,7 +726,7 @@ Sciter_Image_Encoding :: enum u32 {
 Image_Write_Function :: proc "system" (prm: Lpvoid, data: [^]Byte, data_length: Uint) -> Bool32
 
 // imagePaint callback:
-Image_Paint_Function :: proc "system" (prm: Lpvoid, hgfx: Hgfx, width: Uint, height: Uint) -> Void
+Image_Paint_Function :: proc "system" (prm: Lpvoid, hgfx: Hgfx, width: Uint, height: Uint)
 
 Sciter_Pixmap_Format :: enum u32 {
 	IGNORE_ALPHA = 0,
@@ -1321,11 +1354,11 @@ Request_State :: enum u32 {
 Sciter_Request_Api :: struct {
 	RequestUse:                     proc "system" (rq: Hrequest) -> Request_Result,
 	RequestUnUse:                   proc "system" (rq: Hrequest) -> Request_Result,
-	RequestUrl:                     proc "system" (rq: Hrequest, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestContentUrl:              proc "system" (rq: Hrequest, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestUrl:                     proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestContentUrl:              proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetRequestType:          proc "system" (rq: Hrequest, pType: ^Lpcstr) -> Request_Result,
 	RequestGetRequestedDataType:    proc "system" (rq: Hrequest, pData: ^Sciter_Resource_Type) -> Request_Result,
-	RequestGetReceivedDataType:     proc "system" (rq: Hrequest, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetReceivedDataType:     proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetNumberOfParameters:   proc "system" (rq: Hrequest, pNumber: ^Uint) -> Request_Result,
 	RequestGetNthParameterName:     proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetNthParameterValue:    proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
@@ -1337,7 +1370,7 @@ Sciter_Request_Api :: struct {
 	RequestGetNthRspHeaderName:     proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetNthRspHeaderValue:    proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetCompletionStatus:     proc "system" (rq: Hrequest, pState: ^Request_State, pCompletionStatus: ^Uint) -> Request_Result,
-	RequestGetProxyHost:            proc "system" (rq: Hrequest, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetProxyHost:            proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
 	RequestGetProxyPort:            proc "system" (rq: Hrequest, pPort: ^Uint) -> Request_Result,
 	RequestSetSucceeded:            proc "system" (rq: Hrequest, status: Uint, dataOrNull: Bytes, dataLength: Uint) -> Request_Result,
 	RequestSetFailed:               proc "system" (rq: Hrequest, status: Uint, dataOrNull: Bytes, dataLength: Uint) -> Request_Result,
@@ -1672,7 +1705,7 @@ Url_Data :: struct {
 	dataLength:    Uint,
 }
 
-Url_Data_Receiver :: proc "system" (pUrlData: ^Url_Data, param: Lpvoid) -> Void
+Url_Data_Receiver :: proc "system" (pUrlData: ^Url_Data, param: Lpvoid)
 
 Sciter_Create_Window_Flag :: enum u32 {
 	CHILD        = 0, // child window only, if this flag is set all other flags ignored
@@ -1702,7 +1735,7 @@ Output_Severity :: enum u32 {
 	ERROR   = 2,
 }
 
-Debug_Output_Proc :: proc "system" (param: Lpvoid, subsystem: Output_Subsytems /*OUTPUT_SUBSYTEMS*/, severity: Output_Severity, text: Wide_String, text_length: Uint) -> Void /*OUTPUT_SUBSYTEMS*/
+Debug_Output_Proc :: proc "system" (param: Lpvoid, subsystem: Output_Subsytems /*OUTPUT_SUBSYTEMS*/, severity: Output_Severity, text: Wide_String, text_length: Uint) /*OUTPUT_SUBSYTEMS*/
 
 /** #SCITER_X_MSG_CODE message/function identifier */
 Sciter_X_Msg_Code :: enum u32 {
@@ -1812,7 +1845,7 @@ _Isciter_Api :: struct {
 	SciterProcND:           Lpvoid, // NULL
 	SciterLoadFile:         proc "system" (hWndSciter: rawptr, filename: Wide_String) -> Bool32,
 	SciterLoadHtml:         proc "system" (hWndSciter: rawptr, html: Bytes, htmlSize: Uint, baseUrl: Wide_String) -> Bool32,
-	SciterSetCallback:      proc "system" (hWndSciter: rawptr, cb: Lpsciter_Host_Callback, cbParam: Lpvoid) -> Void,
+	SciterSetCallback:      proc "system" (hWndSciter: rawptr, cb: Lpsciter_Host_Callback, cbParam: Lpvoid),
 	SciterSetMasterCSS:     proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
 	SciterAppendMasterCSS:  proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
 	SciterSetCSS:           proc "system" (hWndSciter: rawptr, utf8: Bytes, numBytes: Uint, baseUrl: Wide_String, mediaType: Wide_String) -> Bool32,
@@ -1822,10 +1855,10 @@ _Isciter_Api :: struct {
 	SciterGetMinHeight:     proc "system" (hWndSciter: rawptr, width: Uint) -> Uint,
 	SciterCall:             proc "system" (hWnd: rawptr, functionName: Lpcstr, argc: Uint, argv: ^Sciter_Value, retval: ^Sciter_Value) -> Bool32,
 	SciterEval:             proc "system" (hwnd: rawptr, script: Wide_String, scriptLength: Uint, pretval: ^Sciter_Value) -> Bool32,
-	SciterUpdateWindow:     proc "system" (hwnd: rawptr) -> Void,
+	SciterUpdateWindow:     proc "system" (hwnd: rawptr),
 	SciterTranslateMessage: Lpvoid, // NULL
 	SciterSetOption:        proc "system" (hWnd: rawptr, option: Sciter_Rt_Options, value: Uint_Ptr) -> Bool32,
-	SciterGetPPI:           proc "system" (hWndSciter: rawptr, px: ^Uint, py: ^Uint) -> Void,
+	SciterGetPPI:           proc "system" (hWndSciter: rawptr, px: ^Uint, py: ^Uint),
 	SciterGetViewExpando:   proc "system" (hwnd: rawptr, pval: ^Value) -> Bool32,
 	SciterRenderD2D:        Lpvoid, // N/A
 	SciterD2DFactory:       Lpvoid, // N/A
@@ -1835,7 +1868,7 @@ _Isciter_Api :: struct {
 	SciterCreateNSView:     Lpvoid, // NULL
 	SciterCreateWidget:     Lpvoid, // NULL
 	SciterCreateWindow:     proc "system" (creationFlags: Sciter_Create_Window_Flags, frame: Lprect, _: Lpvoid, _: Lpvoid, parent: rawptr) -> rawptr,
-	SciterSetupDebugOutput: proc "system" (hwndOrNull: rawptr, param: Lpvoid, pfOutput: Debug_Output_Proc) -> Void,
+	SciterSetupDebugOutput: proc "system" (hwndOrNull: rawptr, param: Lpvoid, pfOutput: Debug_Output_Proc),
 
 	//|
 	//| DOM Element API
@@ -1852,14 +1885,14 @@ _Isciter_Api :: struct {
 	SciterGetElementTextCB:          proc "system" (he: Helement, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterSetElementText:            proc "system" (he: Helement, utf16: Wide_String, length: Uint) -> Scdom_Result,
 	SciterGetAttributeCount:         proc "system" (he: Helement, p_count: Lpuint) -> Scdom_Result,
-	SciterGetNthAttributeNameCB:     proc "system" (he: Helement, n: Uint, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
+	SciterGetNthAttributeNameCB:     proc "system" (he: Helement, n: Uint, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterGetNthAttributeValueCB:    proc "system" (he: Helement, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterGetAttributeByNameCB:      proc "system" (he: Helement, name: Lpcstr, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterSetAttributeByName:        proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
 	SciterClearAttributes:           proc "system" (he: Helement) -> Scdom_Result,
 	SciterGetElementIndex:           proc "system" (he: Helement, p_index: Lpuint) -> Scdom_Result,
 	SciterGetElementType:            proc "system" (he: Helement, p_type: ^Lpcstr) -> Scdom_Result,
-	SciterGetElementTypeCB:          proc "system" (he: Helement, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
+	SciterGetElementTypeCB:          proc "system" (he: Helement, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterGetStyleAttributeCB:       proc "system" (he: Helement, name: Lpcstr, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
 	SciterSetStyleAttribute:         proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
 	SciterGetElementLocation:        proc "system" (he: Helement, p_location: Lprect, areas: Uint /*ELEMENT_AREAS*/) -> Scdom_Result, /*ELEMENT_AREAS*/
@@ -1944,33 +1977,33 @@ _Isciter_Api :: struct {
 	//|
 	//| Value API
 	//|
-	ValueInit:               proc "system" (pval: ^Value) -> Uint,
-	ValueClear:              proc "system" (pval: ^Value) -> Uint,
-	ValueCompare:            proc "system" (pval1: ^Value, pval2: ^Value) -> Uint,
-	ValueCopy:               proc "system" (pdst: ^Value, psrc: ^Value) -> Uint,
-	ValueIsolate:            proc "system" (pdst: ^Value) -> Uint,
-	ValueType:               proc "system" (pval: ^Value, pType: ^Value_Type, pUnits: ^Uint) -> Uint,
-	ValueStringData:         proc "system" (pval: ^Value, pChars: ^Wide_String, pNumChars: ^Uint) -> Uint,
-	ValueStringDataSet:      proc "system" (pval: ^Value, chars: Wide_String, numChars: Uint, units: Uint) -> Uint,
-	ValueIntData:            proc "system" (pval: ^Value, pData: ^Int) -> Uint,
-	ValueIntDataSet:         proc "system" (pval: ^Value, data: Int, type: Uint, units: Uint) -> Uint,
-	ValueInt64Data:          proc "system" (pval: ^Value, pData: ^Int64) -> Uint,
-	ValueInt64DataSet:       proc "system" (pval: ^Value, data: Int64, type: Uint, units: Uint) -> Uint,
-	ValueFloatData:          proc "system" (pval: ^Value, pData: ^f64) -> Uint,
-	ValueFloatDataSet:       proc "system" (pval: ^Value, data: f64, type: Uint, units: Uint) -> Uint,
-	ValueBinaryData:         proc "system" (pval: ^Value, pBytes: ^Bytes, pnBytes: ^Uint) -> Uint,
-	ValueBinaryDataSet:      proc "system" (pval: ^Value, pBytes: Bytes, nBytes: Uint, type: Uint, units: Uint) -> Uint,
-	ValueElementsCount:      proc "system" (pval: ^Value, pn: ^Int) -> Uint,
-	ValueNthElementValue:    proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Uint,
-	ValueNthElementValueSet: proc "system" (pval: ^Value, n: Int, pval_to_set: ^Value) -> Uint,
-	ValueNthElementKey:      proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Uint,
-	ValueEnumElements:       proc "system" (pval: ^Value, penum: Key_Value_Callback, param: Lpvoid) -> Uint,
-	ValueSetValueToKey:      proc "system" (pval: ^Value, pkey: ^Value, pval_to_set: ^Value) -> Uint,
-	ValueGetValueOfKey:      proc "system" (pval: ^Value, pkey: ^Value, pretval: ^Value) -> Uint,
-	ValueToString:           proc "system" (pval: ^Value, how: Uint) -> Uint,                                    /*VALUE_STRING_CVT_TYPE*/
-	ValueFromString:         proc "system" (pval: ^Value, str: Wide_String, strLength: Uint, how: Uint) -> Uint, /*VALUE_STRING_CVT_TYPE*/
-	ValueInvoke:             proc "system" (pval: ^Value, pthis: ^Value, argc: Uint, argv: ^Value, pretval: ^Value, url: Wide_String) -> Uint,
-	ValueNativeFunctorSet:   proc "system" (pval: ^Value, pinvoke: Native_Functor_Invoke, prelease: Native_Functor_Release, tag: ^Void) -> Uint,
+	ValueInit:               proc "system" (pval: ^Value) -> Value_Result,
+	ValueClear:              proc "system" (pval: ^Value) -> Value_Result,
+	ValueCompare:            proc "system" (pval1: ^Value, pval2: ^Value) -> Value_Result,
+	ValueCopy:               proc "system" (pdst: ^Value, psrc: ^Value) -> Value_Result,
+	ValueIsolate:            proc "system" (pdst: ^Value) -> Value_Result,
+	ValueType:               proc "system" (pval: ^Value, pType: ^Value_Type, pUnits: ^Uint) -> Value_Result,
+	ValueStringData:         proc "system" (pval: ^Value, pChars: ^Wide_String, pNumChars: ^Uint) -> Value_Result,
+	ValueStringDataSet:      proc "system" (pval: ^Value, chars: Wide_String, numChars: Uint, units: Uint) -> Value_Result,
+	ValueIntData:            proc "system" (pval: ^Value, pData: ^Int) -> Value_Result,
+	ValueIntDataSet:         proc "system" (pval: ^Value, data: Int, type: Value_Type, units: Uint) -> Value_Result,
+	ValueInt64Data:          proc "system" (pval: ^Value, pData: ^Int64) -> Value_Result,
+	ValueInt64DataSet:       proc "system" (pval: ^Value, data: Int64, type: Value_Type, units: Uint) -> Value_Result,
+	ValueFloatData:          proc "system" (pval: ^Value, pData: ^f64) -> Value_Result,
+	ValueFloatDataSet:       proc "system" (pval: ^Value, data: f64, type: Value_Type, units: Uint) -> Value_Result,
+	ValueBinaryData:         proc "system" (pval: ^Value, pBytes: ^Bytes, pnBytes: ^Uint) -> Value_Result,
+	ValueBinaryDataSet:      proc "system" (pval: ^Value, pBytes: Bytes, nBytes: Uint, type: Value_Type, units: Uint) -> Value_Result,
+	ValueElementsCount:      proc "system" (pval: ^Value, pn: ^Int) -> Value_Result,
+	ValueNthElementValue:    proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
+	ValueNthElementValueSet: proc "system" (pval: ^Value, n: Int, pval_to_set: ^Value) -> Value_Result,
+	ValueNthElementKey:      proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
+	ValueEnumElements:       proc "system" (pval: ^Value, penum: Key_Value_Callback, param: Lpvoid) -> Value_Result,
+	ValueSetValueToKey:      proc "system" (pval: ^Value, pkey: ^Value, pval_to_set: ^Value) -> Value_Result,
+	ValueGetValueOfKey:      proc "system" (pval: ^Value, pkey: ^Value, pretval: ^Value) -> Value_Result,
+	ValueToString:           proc "system" (pval: ^Value, how: Value_String_Cvt_Type) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
+	ValueFromString:         proc "system" (pval: ^Value, str: Wide_String, strLength: Uint, how: Value_String_Cvt_Type) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
+	ValueInvoke:             proc "system" (pval: ^Value, pthis: ^Value, argc: Uint, argv: ^Value, pretval: ^Value, url: Wide_String) -> Value_Result,
+	ValueNativeFunctorSet:   proc "system" (pval: ^Value, pinvoke: Native_Functor_Invoke, prelease: Native_Functor_Release, tag: ^Void) -> Value_Result,
 	ValueIsNativeFunctor:    proc "system" (pval: ^Value) -> Bool32,
 
 	// used to be script VM API
@@ -1991,7 +2024,7 @@ _Isciter_Api :: struct {
 	SciterRenderOnDirectXTexture:     Lpvoid,
 	SciterProcX:                      proc "system" (hwnd: rawptr, pMsg: ^Sciter_X_Msg) -> Bool32,                        // returns TRUE if handled
 	SciterAtomValue:                  proc "system" (name: cstring) -> Uint64,                                            //
-	SciterAtomNameCB:                 proc "system" (atomv: Uint64, rcv: Cstring_Receiver, rcv_param: Lpvoid) -> Bool32,
+	SciterAtomNameCB:                 proc "system" (atomv: Uint64, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Bool32,
 	SciterSetGlobalAsset:             proc "system" (pass: ^Som_Asset_T) -> Bool32,
 	SciterGetElementAsset:            proc "system" (el: Helement, nameAtom: Uint64, ppass: ^^Som_Asset_T) -> Scdom_Result,
 	SciterSetVariable:                proc "system" (hwndOrNull: rawptr, name: Lpcstr, pvalToSet: ^Value) -> Uint,

@@ -1,0 +1,28 @@
+<html>
+<head>
+  <title>odin-sciter: archive</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>archive</h1>
+  <p>
+    This document, its stylesheet and the logo below were read out of a single compressed blob
+    embedded in the executable &mdash; produced by the SDK's <code>packfolder</code> and pulled in at
+    compile time with Odin's <code>#load</code>.
+  </p>
+  <img src="logo.svg" />
+  <p>
+    Nothing here was read from disk. Every URL below started as a relative reference in this file and
+    was resolved against the <code>this://app/</code> base:
+  </p>
+  <pre id="served">…</pre>
+  <p class="muted">
+    <code>this://app/</code> is a host convention, not an engine feature &mdash; Odin matched the
+    prefix and answered from the archive.
+  </p>
+  <p id="from-script"></p>
+
+  <!-- A nested path, so the example proves subdirectory lookup and not just the root. -->
+  <script type="module" src="script/app.js"></script>
+</body>
+</html>

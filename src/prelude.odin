@@ -173,12 +173,45 @@ load :: proc(
 	return .None, candidates[:]
 }
 
+// Takes an ISciterAPI table that something else already has, instead of opening the library.
+//
+// This is what a **native extension** calls. An extension is a shared library that the engine itself
+// loads, in response to script's `sciter.loadLibrary("name")`, through one exported entry point:
+//
+//	SBOOL SCAPI SciterLibraryInit(ISciterAPI* psapi, SCITER_VALUE* plibobject)
+//
+// The host hands over the table there - the library is already open, and `load` would be both wrong
+// and wasteful. Everything after this call works exactly as if `load` had succeeded: `api()` returns
+// the table, and every wrapper built on it works unchanged.
+//
+// The version check is the same one `load` makes, and matters more here rather than less: the host
+// decides which engine is running, so an extension can be handed a table it was not generated against.
+//
+// See `examples/extension.odin`.
+adopt :: proc(table: ^Isciter_Api) -> Load_Error {
+	if g_api != nil {
+		return .Already_Loaded
+	}
+	if table == nil {
+		return .Null_Api
+	}
+	if table.version != EXPECTED_API_VERSION {
+		return .Version_Mismatch
+	}
+	g_api = table
+	return .None
+}
+
 // Releases the shared library. Rarely needed - the engine is normally kept for the life of the process.
 unload :: proc() {
 	if g_api == nil {
 		return
 	}
 	g_api = nil
-	dynlib.unload_library(g_library)
-	g_library = {}
+
+	// Nothing to unload when the table came from `adopt`: the host owns the library, not us.
+	if g_library != nil {
+		dynlib.unload_library(g_library)
+		g_library = {}
+	}
 }

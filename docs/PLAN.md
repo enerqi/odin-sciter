@@ -1,9 +1,17 @@
 # odin-sciter — findings and implementation plan
 
-Status as of 2026-08-09: **the bindings generate, compile, and run.** `just bindgen` produces
-`sciter.odin` from the vendored headers, `just example api_map` verifies all 189 `ISciterAPI` slots
-against the shipped engine, and `just example hello_window` opens a window with HTML and CSS in it.
-What remains is the ergonomic layer, the guides, and the rest of the examples.
+Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
+top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
+verifies all 189 `ISciterAPI` slots against the shipped engine, and eight examples build and run —
+covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events and the
+inspector. `just example-tests` runs 10 `@(test)` procs. What remains is two examples
+(`custom_loader`, `archive`), the guides in `docs/`, and Windows.
+
+**Running a windowed example on X11**: this machine's engine build segfaults in `XSetICFocus`, inside
+libsciter's X input-method handling, shortly after a window takes focus — 3 runs out of 3. Running with
+`XMODIFIERS=@im=none` stops the engine creating the input context and the crash goes away (0 out of 3).
+It is inside the vendored binary, not the bindings; `just example api_map` is the check that would
+catch a real slot mismatch.
 
 Target: Odin bindings for [Sciter.JS](https://sciter.com/) — the JavaScript (QuickJS) generation of the
 Sciter HTML/CSS/JS UI engine. Not the TIScript generation, not the TypeScript wrapper.
@@ -274,7 +282,15 @@ odin-sciter/
   bindgen.sjson                   # bindgen configuration
   src/prelude.odin                # hand-written; pasted into sciter.odin by bindgen
   src/flatten_headers.py          # headers -> build/sciter.h
-  src/postprocess_bindings.py     # proc "c" -> proc "system"
+  src/postprocess_bindings.py     # proc "c" -> proc "system"; drops the `-> Void` returns
+  sciter_app/                     # hand-written ergonomic layer - package sciter_app
+    sciter_app.odin               # errors, UTF-16 conversion
+    app.odin                      # load_engine, init, run, stop, debug output
+    window.odin                   # create, load, eval, call, set_global, state
+    value.odin                    # VALUE construction/extraction, arrays, maps, native functors
+    dom.odin                      # selectors, traversal, text, HTML, attributes
+    events.odin                   # Event_Handler, typed event params, synthesised events
+    host.odin                     # SC_LOAD_DATA host callback - custom resource loading
   external/sciter/
     include/                      # vendored headers, unmodified
     LICENSE                       # BSD 3-Clause (SDK contents)
@@ -282,14 +298,28 @@ odin-sciter/
     VENDORED.md                   # pinned version, what was left out, licensing
   lib/linux/x64/libsciter.so      # the engine, 25 MB
   examples/
-    hello_window.odin             # window + HTML + CSS + app loop
+    hello_window.odin             # window + HTML + CSS + app loop, raw bindings only
     api_map.odin                  # ISciterAPI slot/symbol verification
+    load_file.odin                # load from disk, base URLs, relative references
+    eval.odin                     # JS from Odin, Value round-trips (+6 headless tests)
+    call_odin_from_js.odin        # native functors: script calling into Odin
+    dom_walk.odin                 # selectors, traversal, text/attributes (+4 tests)
+    events.odin                   # ELEMENT_EVENT_PROC, subscriptions, phases
+    custom_loader.odin            # SC_LOAD_DATA: serving CSS and images from memory
+    archive.odin                  # packfolder blob + #load, resources inside the executable
+    single_binary.odin            # archive + the engine embedded too - one file, Linux x64 only
+    inspector.odin                # SW_ENABLE_DEBUG + SCITER_SET_DEBUG_MODE
+    extension.odin                # NOT an app - a native extension .so, see section 11
+    assets/                       # hello.htm + css + svg; extension/index.htm
+      app/                        # the folder packfolder packs, for `archive`
+      app.pak                     # COMMITTED 2 KB archive, so `archive` needs no SDK
   spike/smoke/main.odin           # minimal ABI handshake, no generated code
   docs/
 ```
 
 `src/prelude.odin` is the hand-written half. It has no `foreign import` — the library is opened at
-runtime — and provides `load()`, `api()`, `loaded()` and `unload()`. `load` searches, in order:
+runtime — and provides `load()`, `adopt()`, `api()`, `loaded()` and `unload()`. `load` searches, in
+order:
 
 1. an explicit path argument
 2. `SCITER_LIB` (a file or a directory)
@@ -390,15 +420,17 @@ types that are already right, or the same conversions get written twice.
 5. ~~Verify the generated struct against the shipped engine~~ **done** (`examples/api_map`)
 6. ~~First window~~ **done** (`examples/hello_window`)
 7. ~~Idiomatic types — §7~~ **done**
-8. **Ergonomic layer** — `package sciter_app`: window, load, eval, call, `Value` conversions to and from
-   Odin types, event handler registration. `Value` is reference-counted with explicit
-   `ValueInit`/`ValueClear`/`ValueCopy`, so this is where the memory bugs will live and where the tests
-   should concentrate.
-9. **Examples and guides** — §9.
+8. ~~Ergonomic layer — `package sciter_app`~~ **done**: window, load, eval, call, `Value` conversions,
+   native functors, DOM access, event handler registration. `Value` is reference-counted with explicit
+   `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
+9. **Examples and guides** — §9. ~~All ten examples~~ **done** and each runs. The guides in `docs/`
+   remain.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
     macOS ships untested and should say so.
-11. **Housekeeping** — reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes,
-    which still assume the root package has a `main`. (Done already: `git init`; `.gitignore`
+11. ~~Native extensions (`SciterLibraryInit`)~~ **done** — not in the original plan. See §11 below.
+12. **Housekeeping** — ~~reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes,
+    `run_*` / `rerun_*` / `sanitize` / `test` recipes~~ **done**: they now take an example name and
+    keep their build profiles. (Done already: `git init`; `.gitignore`
     negations so the skeleton's `*.so` / `*.dll` / `*.dylib` build-artifact patterns do not silently
     exclude the vendored engine; `.gitattributes` already marks those extensions `binary`.)
 
@@ -428,14 +460,14 @@ predate 6.x in places, so check anything platform-specific against the SDK.
 
 1. ~~`hello_window`~~ — done
 2. ~~`api_map`~~ — done (diagnostic rather than tutorial, but it belongs here)
-3. `load_file` — load an `.htm` from disk, `SciterSetHomeURL`
-4. `eval` — run JS from Odin, read the result back as a `Value`
-5. `call_odin_from_js` — expose an Odin proc to script
-6. `dom_walk` — find elements, read and write text and attributes
-7. `events` — button clicks and input via `ElementEventProc`
-8. `custom_loader` — the `SC_LOAD_DATA` host callback, serving resources from memory
-9. `archive` — `packfolder` + `SciterOpenArchive`, single-binary deployment
-10. `inspector` — `SW_ENABLE_DEBUG` and attaching the SDK inspector
+3. ~~`load_file`~~ — done: loading from disk, base URLs, relative references
+4. ~~`eval`~~ — done, with 6 headless `Value` round-trip tests
+5. ~~`call_odin_from_js`~~ — done, via native functors
+6. ~~`dom_walk`~~ — done, with 4 display-gated DOM tests
+7. ~~`events`~~ — done
+8. ~~`custom_loader`~~ — done: the `SC_LOAD_DATA` host callback, serving CSS and images from memory
+9. ~~`archive`~~ — done: `packfolder` + `SciterOpenArchive`, resources inside the executable
+10. ~~`inspector`~~ — done
 
 Testing is example-driven — there is no engine source to unit-test against. Follow odin-dds and put
 `@(test)` procs inside `examples/*.odin`. Headless-testable: library loading, the version handshake,
@@ -447,7 +479,48 @@ ASan does not.
 
 ---
 
-## 10. Open questions
+## 11. Native extensions — the third architecture
+
+Not in the original plan, and cheap enough once §8 existed to be worth doing: `scapp` and
+[Quark](https://quark.sciter.com/) are a JavaScript-only path, and a native extension is the escape
+hatch from it.
+
+Three architectures, all supported by the same engine:
+
+| | Who owns `main` | Your code is |
+| --- | --- | --- |
+| Embedding | your Odin executable | Odin, hosting the engine |
+| scapp / Quark | the SDK's prebuilt `scapp` | JavaScript only |
+| Native extension | `scapp`, or any Sciter host | an Odin shared library |
+
+The contract is one exported symbol, declared in `sciter-x-api.h` and confirmed against the shipped
+`sciter-sqlite.so` (`nm -D` shows exactly one `T SciterLibraryInit`):
+
+```c
+SBOOL SCAPI SciterLibraryInit(ISciterAPI* psapi, SCITER_VALUE* plibobject);
+```
+
+The host **hands over the API table**, so `load()` is wrong here — it would open a second copy of a
+library that is already loaded. `sciter.adopt()` in `src/prelude.odin` takes the supplied table
+instead, applying the same version check, after which every wrapper in `sciter_app` works unchanged.
+`unload()` learned to skip the `dlclose` when the table was adopted, because the host owns the library.
+
+Verified end to end under the SDK's `scapp`: the extension is loaded, `adopt` succeeds, and script
+receives Odin-built values back —
+
+```
+ext.greet('scapp')  -> hello, scapp - from Odin, inside a Sciter extension
+ext.version()       -> 6.0.4.9      (read through the adopted table)
+ext.calls()         -> 3
+ext.calls()         -> 4            (state persists inside the .so)
+```
+
+`scapp` is not vendored, so `just extension-run` needs `SCITER_SDK` pointing at a checkout. It
+assembles a throwaway app folder under `target/` rather than writing into the SDK.
+
+---
+
+## 12. Open questions
 
 - **Repo size.** `lib/linux/x64/libsciter.so` is 25 MB, and Windows plus macOS would add ~50 MB more.
   Vendoring buys `git clone && just example hello_window` working offline, which is the single biggest
