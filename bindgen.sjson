@@ -1,0 +1,87 @@
+// odin-c-bindgen configuration for the Sciter.JS C ABI.
+//
+// Run with `just bindgen` (which invokes ../odin-c-bindgen/bindgen.bin on this folder).
+//
+// Only `sciter-x-api.h` is fed in: it transitively includes sciter-x-types.h, sciter-x-def.h,
+// sciter-x-dom.h, sciter-x-request.h, sciter-x-msg.h and value.h, which between them carry the whole
+// C ABI. The remaining headers in external/sciter/include are C++ conveniences (aux-*.h, *.hpp) or
+// optional subsystems, and feeding the whole folder in would generate a file per header plus a lot of
+// noise from the C++-only ones.
+//
+// The `clang_defines` below are the important part - see docs/PLAN.md section 5:
+//
+//   LINUX      - pick a platform branch in sciter-x-primitives.h / sciter-x-types.h. Without one of
+//                WINDOWS/OSX/LINUX/ANDROID defined, none of the primitive typedefs (SBOOL, WCHAR,
+//                UINT_PTR, RECT, ...) exist at all.
+//   WINDOWLESS - skips the `#include <gtk/gtk.h>` that the LINUX branch would otherwise do, and makes
+//                HWINDOW a `void*` instead of `GtkWidget*`. HWINDOW is a rawptr in Odin either way, and
+//                libgtk-3-dev is then not needed to generate bindings.
+//
+// Defining WINDOWLESS is safe for layout: there are ZERO `#if defined(WINDOWLESS)` guards inside the
+// ISciterAPI struct body (verified - the only WINDOWLESS uses are the HWINDOW typedef, the
+// SCITER_DLL_NAME choice, and the SCITER_API_VERSION value). The generated struct is byte-identical to
+// the one a windowed build would produce.
+//
+// Consequence to be aware of: the platform-specific slots that Sciter NULL-pads on non-native platforms
+// (SciterProc, SciterProcND, SciterTranslateMessage, SciterRenderD2D, SciterD2DFactory, SciterDWFactory,
+// the three DirectX entry points, SciterCreateNSView) come out as `rawptr` rather than typed procs.
+// That is correct for every platform's layout; typed accessors for the few that are actually useful are
+// hand-written in src/prelude.odin.
+
+inputs = [
+	"build/sciter.h"
+]
+
+clang_include_paths = [
+	"external/sciter/include"
+]
+
+// Two of these patch over genuine gaps in the headers when they are parsed as C (libclang parses .h as
+// C, so every `#ifdef __cplusplus` branch is skipped):
+//
+//   char16_t - a built-in type in C++, but in C it needs `#include <uchar.h>`, which sciter-x-primitives.h
+//              never does. (The header even has a commented-out `//#define char16_t uint16_t` where the
+//              author hit this.) `__CHAR16_TYPE__` is a clang built-in macro, always defined, and expands
+//              to the correct 16-bit unsigned type without needing any include.
+//   INT_PTR  - used by SciterExec/SciterWindowExec in sciter-x-def.h and sciter-x-api.h, but the
+//              non-Windows branches of sciter-x-primitives.h only ever typedef UINT_PTR. Upstream bug.
+//              `intptr_t` is the right stand-in: bindgen maps that spelling to Odin `c.intptr_t`,
+//              which is pointer-sized everywhere. src/flatten_headers.py adds the <stdint.h> it needs.
+clang_defines = {
+	"LINUX" = "1"
+	"char16_t" = "__CHAR16_TYPE__"
+}
+
+// Output folder: one .odin file per processed header.
+output_folder = "."
+
+package_name = "sciter"
+
+// Code pasted near the top of the generated file: the dynamic loader, the `api()` accessor and the
+// typed wrappers for the slots that come out as rawptr above.
+imports_file = "src/prelude.odin"
+
+force_ada_case_types = true
+
+// Retype a few C typedefs onto Odin types of the same size but better behaviour.
+type_overrides = {
+	// `typedef int SBOOL` - a 4-byte C int, so it must NOT become Odin's 1-byte `bool`. `b32` is the
+	// same 4 bytes and makes the API usable: `if api.SciterLoadHtml(...)` instead of `... != 0`, and
+	// `api.SciterVersion(true)` instead of `api.SciterVersion(1)`.
+	"SBOOL" = "b32"
+
+	// `const BYTE*` / `BYTE*` are always buffer pointers here (HTML source, CSS source, resource
+	// blobs), never pointers to one byte. `[^]u8` is the Odin spelling for that, and it is what
+	// `raw_data(some_string)` and `raw_data(some_slice)` produce.
+	"LPCBYTE" = "[^]u8"
+	"LPBYTE" = "[^]u8"
+
+	// Same reasoning for UTF-16 strings: LPCWSTR is a pointer to a NUL-terminated run of code units.
+	"LPCWSTR" = "[^]u16"
+	"LPWSTR" = "[^]u16"
+
+	// `typedef size_t UINT_PTR` comes out as `c.size_t` (Odin `uint`). It is pointer-sized either way,
+	// but half its uses are genuinely pointers passed through SciterExec / SciterPostCallback / the
+	// SCITER_APP_INIT argv, and `uintptr` lets those be written as one cast instead of two.
+	"UINT_PTR" = "uintptr"
+}
