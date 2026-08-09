@@ -455,13 +455,17 @@ bindgen:
 
 # `-no-entry-point` for the two library packages, which have no `main`. The examples do have one, and
 # are checked by building them - `odin check` on a `-file` target is not meaningfully cheaper.
+#
+# `docs/snippets` is every Odin code block in the guides, wrapped just enough to compile. Documentation
+# drifts silently, so it is checked like anything else.
 # ---
-# type check both packages and build every example
+# type check both packages and the guides' snippets, and build every example
 check: mktarget_dirs
 	#!/usr/bin/env bash
 	set -euo pipefail
 	odin check . -no-entry-point
 	odin check sciter_app -no-entry-point
+	odin check docs/snippets -no-entry-point
 	for f in examples/*.odin; do
 	    if [ "$f" = "examples/extension.odin" ]; then
 	        # Not an application: a native extension, so it has no `main` and builds as a shared library.
@@ -470,7 +474,7 @@ check: mktarget_dirs
 	        odin build "$f" -file -out:{{ target_path("debug", "check.exe") }}
 	    fi
 	done
-	echo "ok: both packages type check, all $(ls examples/*.odin | wc -l) examples build"
+	echo "ok: both packages and the doc snippets type check, all $(ls examples/*.odin | wc -l) examples build"
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
 # repository root so the loader finds lib/<platform>/ - see `load` in src/prelude.odin for the full

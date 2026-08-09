@@ -20,6 +20,20 @@
 Verified against the shipped library rather than assumed - `just example api_map` walks all 189
 `ISciterAPI` slots and resolves each function pointer back to its symbol name.
 
+### Binaries
+
+| File | Size | SHA-256 |
+| --- | --- | --- |
+| `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
+
+Recorded so a binary obtained out of band can be checked against the one these bindings were verified
+against, and so a future download-instead-of-vendor step has something to verify against. Regenerate
+with `sha256sum lib/linux/x64/libsciter.so`.
+
+Upgrading the pinned version is a procedure with one non-negotiable step in it - see
+[`docs/UPGRADING.md`](../../docs/UPGRADING.md), which also covers our tagging and the repository-size
+budget.
+
 > **Use GitLab, not GitHub.** The `c-smile/sciter-js-sdk` mirror on GitHub is abandoned: its last commit
 > is 2022-04-19, engine 4.4.8.33, `SCITER_API_VERSION` 9. Its headers and binaries are also internally
 > inconsistent - `sciter-x-api.h` there declares `SciterExec` and `SciterWindowExec` at the end of

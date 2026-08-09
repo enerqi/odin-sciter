@@ -2,10 +2,11 @@
 
 Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and eight examples build and run —
-covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events and the
-inspector. `just example-tests` runs 10 `@(test)` procs. What remains is two examples
-(`custom_loader`, `archive`), the guides in `docs/`, and Windows.
+verifies all 189 `ISciterAPI` slots against the shipped engine, and twelve examples build and run —
+covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events, custom
+resource loading, archives, one-file shipping, the inspector and a native extension.
+`just example-tests` runs 10 `@(test)` procs, and the nine guides in `docs/` are written. What remains
+is Windows.
 
 **Running a windowed example on X11**: this machine's engine build segfaults in `XSetICFocus`, inside
 libsciter's X input-method handling, shortly after a window takes focus — 3 runs out of 3. Running with
@@ -423,8 +424,7 @@ types that are already right, or the same conversions get written twice.
 8. ~~Ergonomic layer — `package sciter_app`~~ **done**: window, load, eval, call, `Value` conversions,
    native functors, DOM access, event handler registration. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. **Examples and guides** — §9. ~~All ten examples~~ **done** and each runs. The guides in `docs/`
-   remain.
+9. ~~**Examples and guides** — §9~~ **done**: all ten examples run, and the nine guides are written.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
     macOS ships untested and should say so.
 11. ~~Native extensions (`SciterLibraryInit`)~~ **done** — not in the original plan. See §11 below.
@@ -441,20 +441,28 @@ types that are already right, or the same conversions get written twice.
 Source material: <https://sciter.com/tutorials/> and <https://docs.sciter.com/docs/intro>. Note both
 predate 6.x in places, so check anything platform-specific against the SDK.
 
-**Guides** (`docs/`)
+**Guides** (`docs/`) — all nine **done**. Written against the source rather than from memory, and
+against the SDK's own `docs/md/` tree for the HTML/CSS/JS material, which is the only complete
+description of what the engine actually implements.
 
-- `getting-started.md` — install, where the library must live, first window, what to do when it will not
-  load
-- `architecture.md` — the vtable, why there is one entry point, why it is dynamic-only, BSD vs EULA and
-  what you owe
-- `html-css-js.md` — what Sciter's HTML/CSS/JS is and is not (not a browser: a large subset plus
-  Sciter-specific extensions)
-- `calling-between-odin-and-js.md` — `SciterCall`, `SciterEval`, native functors, `Value` lifecycle
-- `dom.md` — element handles, `Sciter_UseElement`/`Sciter_UnuseElement` refcounting, traversal
-- `events.md` — `SciterAttachEventHandler`, `EVENT_GROUPS`, `ElementEventProc`
-- `resources.md` — `packfolder` and `SciterOpenArchive`/`SciterGetArchiveItem` for one-binary shipping
-- `deployment.md` — what to ship per platform, the About-box attribution, runtime dependencies
-- `api.md` — the idiomatic-Odin API guide, mirroring odin-dds's
+- ~~`getting-started.md`~~ — install, the five calls in order, the debug output, the search path, and a
+  troubleshooting section covering the XIM segfault and `Version_Mismatch`
+- ~~`architecture.md`~~ — the vtable, why there is one entry point, why it is dynamic-only, threading,
+  the two packages, how the generated half is produced, the three architectures, BSD vs EULA
+- ~~`html-css-js.md`~~ — flow/flex instead of flexbox and grid, native behaviors, style sets, QuickJS
+  ES2020, the `@sciter`/`@sys`/`@storage` runtime, URL schemes, and a porting checklist
+- ~~`calling-between-odin-and-js.md`~~ — `Value` ownership first, then `eval`/`call`, native functors,
+  why `set_global` evaluates an assignment function, and a table of the usual mistakes
+- ~~`dom.md`~~ — handles and `use_element`, selectors, traversal, text/HTML/attributes, state bits,
+  when to use `eval` instead, and the `context` rule for raw callbacks
+- ~~`events.md`~~ — the four rules (immovable handler, subscription mask, phase bits, engine thread),
+  typed parameters, why synthesised events are not user input
+- ~~`resources.md`~~ — the `SC_LOAD_DATA` callback, the two meanings of `.OK`, archives, why
+  `this://app/` is a host convention, and the embedded engine
+- ~~`deployment.md`~~ — what ships per platform, the runtime search order, one file vs two, the
+  attribution, the upgrade procedure, and a pre-ship checklist
+- ~~`api.md`~~ — conventions (errors, allocators, strings, ownership) then every area of `sciter_app`,
+  plus what to reach for the raw table for
 
 **Examples** (`examples/`), each runnable with `just example NAME`, ordered by difficulty:
 
@@ -522,16 +530,21 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
 
 ## 12. Open questions
 
-- **Repo size.** `lib/linux/x64/libsciter.so` is 25 MB, and Windows plus macOS would add ~50 MB more.
-  Vendoring buys `git clone && just example hello_window` working offline, which is the single biggest
-  thing that makes a bindings library approachable. The alternative is headers-only plus a mandatory
-  `just fetch-sdk` with pinned checksums. Recommendation: vendor, but decide before the first commit —
-  it is much easier now than after the binaries are in history.
+- ~~**Repo size.**~~ **decided: vendor.** Offline `git clone && just example hello_window` is worth the
+  bytes. Measured cost is ~40 MB of permanent history per engine bump once all three platforms are
+  vendored (11 MB Linux, 8 MB Windows, 20 MB macOS, compressed), against 11 MB of `.git` today. The
+  mitigations — upgrade deliberately, tell users to `--depth 1`, never keep two engine versions in the
+  tree, record SHA-256s so a fetch-based fallback stays possible, and squash history onto an orphan
+  branch if `.git` passes ~500 MB — are in [`UPGRADING.md`](./UPGRADING.md), along with why Git LFS and
+  a binaries submodule are the wrong trade for a library whose pitch is "clone it and run an example".
 - **Naming.** `sciter.SciterCreateWindow` maps 1-to-1 onto upstream documentation, which is worth a lot
   for a library whose users will be reading sciter.com. `sciter.create_window` reads better. The
   intended answer is both, in two packages: generated `package sciter` stays 1-to-1, ergonomic
   `package sciter_app` is snake_case and Odin-shaped.
-- **Version pin policy.** Pinned at `6.0.4.9-bis` today. The tag cadence is roughly weekly, so a policy
-  is needed — probably "pin, and re-run `api_map` on every bump".
+- ~~**Version pin policy.**~~ **decided**, in [`UPGRADING.md`](./UPGRADING.md): pin one engine version
+  at a time, upgrade when there is a reason rather than on upstream's roughly-weekly tag cadence, and
+  tag releases after the engine they vendor — `v6.0.4.9`, with a `-N` suffix for bindings-only releases
+  on the same engine. `api_map` on every bump is step 6 of a nine-step procedure, and is the step the
+  procedure exists for.
 - **Windowless / lite.** `bin/linux/x64/lite-sciter-sdl` and `sciter-x-lite.hpp` exist. Out of scope for
   v1, but the layout invariance means supporting it later costs little.

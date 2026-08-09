@@ -312,6 +312,25 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 > [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md).
 
 
+## Guides
+
+| Guide | |
+| --- | --- |
+| [`getting-started.md`](docs/getting-started.md) | install, the smallest program, and what to do when the window does not appear |
+| [`architecture.md`](docs/architecture.md) | the vtable, dynamic-only loading, threading, and how the bindings are generated |
+| [`html-css-js.md`](docs/html-css-js.md) | what Sciter's HTML/CSS/JS is and is not — flow layout, behaviors, the runtime |
+| [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md) | `eval`, `call`, native functors, and the `Value` lifetime rules |
+| [`dom.md`](docs/dom.md) | element handles, selectors, traversal, text and attributes, state |
+| [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, synthesised events |
+| [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
+| [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
+| [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
+| [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
+
+Every Odin code block in those guides lives in [`docs/snippets/`](docs/snippets/) as well, and is type
+checked by `just check` — documentation drifts silently otherwise.
+
+
 ## Further reading
 
 - [`docs/PLAN.md`](docs/PLAN.md) — findings, design decisions, and what is planned next
