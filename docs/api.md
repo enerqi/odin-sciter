@@ -72,6 +72,8 @@ calling `context` at attach time, because the engine calls back as `proc "system
 | `set_debug_mode(enabled := true, window = nil) -> Error` | lets the SDK's inspector attach; pairs with the window's `.ENABLE_DEBUG` flag |
 | `set_default_debug_output(window: Window = nil)` | routes CSS/script diagnostics to stderr |
 | `set_debug_output(handler, param, window)` | the same, with your own `proc "system"` |
+| `set_master_css(css) -> Error` | the sheet under every document in the process. **Replaces**; `""` is refused. |
+| `append_master_css(css) -> Error` | adds to it, keeping what is there |
 
 Install the debug output before loading anything. Without it a CSS typo, a bad URL and a script
 exception are all completely silent.
@@ -84,12 +86,16 @@ exception are all completely silent.
 | `load_html(window, html: string, base_url := "") -> Error` | UTF-8 HTML. Without a base URL, relative references have nowhere to look. |
 | `load_file(window, url: string) -> Error` | a path, `file://`, `http://`, or `this://app/...` |
 | `set_home_url(window, url) -> Error` | the base for relative references |
-| `set_css(window, css, base_url := "", media_type := "") -> Error` | adds to the *master* stylesheet, under every document's own CSS |
+| `set_css(window, css, base_url := "", media_type := "") -> Error` | this window's sheet, under the document's own CSS and over the master one |
+| `set_media_type(window, media_type) -> Error` | `"screen"` (default), `"print"`, … — **only the first call on a window takes** |
+| `set_media_vars(window, vars: ^Value) -> Error` | media *flags*: `{dark: true}` makes `@media dark` match. Merges; switches every time. |
+| `update_window(window)` | repaint what is dirty now, rather than at the next turn of the pump |
 | `show` / `hide` / `close` / `activate` | window state; a window is created hidden |
 | `window_state` / `set_window_state` | the full `Sciter_Window_State` |
 | `eval(window, script) -> (Value, Error)` | script in the global scope |
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |
 | `set_global(window, name: string, value: ^Value) -> Error` | publishes into `globalThis`; redo after every load |
+| `global(window, name) -> (Value, Error)` | reads one back; a name nobody set is undefined, not an error |
 | `root(window) -> (Element, Error)` | the `<html>` element |
 
 `Window_Options` is `{x, y, width, height: i32, flags: sciter.Sciter_Create_Window_Flags, parent: Window}`.
@@ -104,11 +110,18 @@ remains is `.CHILD`, `.MAIN`, `.POPUP`, `.ENABLE_DEBUG`. **The window title come
 Lifecycle: `value_init`, `value_clear`, `value_copy`, `value_isolate`, `value_equal`.
 
 Inspection: `value_type` → `(sciter.Value_Type, units: u32)`, `value_is_undefined`, `value_is_null`,
-`value_is_function`.
+`value_is_function`, `value_is_error` (a string carrying the `.ERROR` unit — how the engine reports a
+parse failure and how script reports a thrown one).
 
 Construction — each returns a `Value` you own: `value_from_bool`, `value_from_int` (i32),
 `value_from_i64`, `value_from_f64`, `value_from_string`, `value_from_bytes`, `value_make_array`, and
 the `value_from` overload group over all of them.
+
+Parsing — `value_parse(s, how := .JSON_LITERAL)` reads text *as* a value, where `value_from_string`
+stores the text in one. `.SIMPLE` parses one terminal value the way an attribute would and never fails;
+`.JSON_LITERAL` and `.XJSON_LITERAL` parse documents; `.JSON_MAP` resumes an object whose `{` has
+already been consumed, so it wants `a:1}` and rejects `{"a":1}`. A failure is `.Parse_Failed`, and the
+Value that comes back **is the engine's message** — `value_to_string` it, and clear it like any other.
 
 Extraction: `value_to_bool`, `value_to_int`, `value_to_i64`, `value_to_f64`, `value_to_string`,
 `value_to_bytes`, and `value_to_display_string(v, how := .SIMPLE)` which renders *any* value — pass
@@ -116,6 +129,14 @@ Extraction: `value_to_bool`, `value_to_int`, `value_to_i64`, `value_to_f64`, `va
 
 Containers, arrays and maps being the same machinery: `value_len`, `value_at`, `value_key_at`,
 `value_set_at`, `value_get`, `value_set`, `value_get_key`, `value_set_key`.
+
+`value_each(v, visit, user_data)` walks a container in one call instead of one per element, and hands
+back no reference to clear. An array's keys are *undefined*, not indexes — count if the position
+matters. Anything that is not a container is `.INCOMPATIBLE_TYPE` rather than an empty walk.
+
+```odin
+Value_Visitor :: proc(key: ^Value, value: ^Value, user_data: rawptr) -> bool   // false stops
+```
 
 Functions: `value_from_function(fn: Native_Function, user_data: rawptr = nil, allocator)` wraps an Odin
 procedure so script can call it; `value_invoke(fn, this = nil, args = nil)` calls one you hold.
@@ -136,11 +157,24 @@ do not clear it.
 | `use_element` / `unuse_element` | reference counting, needed only to hold a handle past the current callback |
 | `select_first(el, selector) -> (Element, Error)` | `.Not_Found` if nothing matched |
 | `select_all(el, selector, allocator) -> ([]Element, Error)` | document order; `delete` the slice |
+| `select_parent(el, selector, depth := 0) -> (Element, Error)` | `closest()`: nearest ancestor **or self**; `depth` counts from the element, 0 is unlimited |
 | `child_count` / `child` / `parent` | traversal, elements only |
+| `element_index(el) -> (int, Error)` | position among the parent's *elements*; text nodes do not shift it |
 | `tag(el) -> (string, Error)` | borrowed — do not free |
 | `text` / `set_text` | text content |
 | `html(el, outer := false)` / `set_html(el, html, where_ := .SIH_REPLACE_CONTENT)` | markup |
 | `attribute` / `set_attribute` | `""` reads an absent attribute and removes an existing one |
+| `attribute_count` / `attribute_at(el, n, allocator)` | markup order; past the end is `.INVALID_PARAMETER` |
+| `attributes(el, allocator) -> ([]Attribute, Error)` | all of them; `delete_attributes` frees names, values and slice |
+| `clear_attributes(el)` | removes every attribute, `class` and `id` included |
+| `style(el, name, allocator)` | the **used** value, resolved — not just what was set inline |
+| `set_style(el, name, value)` | inline; `""` removes; does **not** touch the `style` attribute |
+| `element_to_value(el)` / `element_from_value(&v)` | an element as a script `Element`, and back |
+| `show_popup(popup, anchor, placement := .Bottom)` | the element out of flow, against an anchor. Needs a **shown** window. |
+| `show_popup_at(popup, pos: [2]i32, placement := .Top_Left)` | the same, at a point in window coordinates |
+| `hide_popup(popup)` | takes the popup or something inside it — **not** the anchor |
+| `update_element(el, render := false)` | re-runs style and layout; what makes a stale cascade re-resolve |
+| `refresh_element_area(el, area: Rect)` / `request_paint(el)` | repaint only: an area in the element's own coordinates, or all of it |
 | `element_state` / `set_element_state` | the CSS pseudo-class bits as a `bit_set` |
 | `element_value` / `set_element_value` | script's `element.value`, typed by the attached behavior |
 | `make_element(tag, text := "")` | detached; **the reference is yours**, inserted or not |
@@ -189,6 +223,23 @@ The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`.
 | `make_text_node` / `make_comment_node` | detached, and yours until inserted |
 | `node_insert(node, where_, what)` | `.BEFORE`, `.AFTER`, `.APPEND`, `.PREPEND` |
 | `node_remove(node, finalize := true)` | `false` detaches instead of destroying — that is a move |
+| `node_to_value` / `node_from_value` | the node half of `element_to_value`; an element's Value unwraps either way |
+
+## Atoms — `atom.odin`
+
+`Atom` is a distinct `u64`: the engine's interned name, and the currency of the SOM side of the API
+(`SciterGetElementAsset` takes one where a name would read more naturally).
+
+| | |
+| --- | --- |
+| `atom(name) -> Atom` | never fails — an unseen name is interned there and then |
+| `atom_name(a, allocator) -> (string, ok: bool)` | `ok` is false when the engine reports no name |
+
+Three things to know, all measured: the mapping is stable **within one process** and meaningless
+outside it, so never persist or hard-code one; names are bytes rather than text, so anything outside
+ASCII does not round-trip; and `atom_name` must only be given an atom `atom` returned — an invented
+integer segfaults inside the engine before `init` has run, and the number space is shared with an
+encoding of immediates besides (1, 2, 3 decode to `"null"`, `"false"`, `"true"`).
 
 ## Events — `events.odin`
 
@@ -226,6 +277,11 @@ on the element it was set on. See [`events.md`](./events.md#timers).
 Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `post_event(...)`. These
 bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
 [`events.md`](./events.md#synthesising-events).
+
+Mouse capture: `set_capture(el)` / `release_capture(el)`. While an element holds it every mouse event
+goes to that element wherever the pointer is, which is what a `.MOUSE_DOWN`-to-`.MOUSE_UP` drag needs.
+Taking it from another element, and releasing when nothing was captured, both succeed;
+`.INVALID_HWND` is what an element outside any document gets.
 
 ## Graphics — `graphics.odin`
 
@@ -358,9 +414,8 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter_app.Window` is a distinct `rawptr`, `Element` a distinct `sciter.Helement`, and `Value` is
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
-Things you will reach for the raw table for today: mouse capture (`SciterSetCapture` /
-`SciterReleaseCapture`), `SciterUpdateElement` / `SciterRefreshElementArea`,
-`SciterSetHighlightedElement`, and `gGetNativeDC` in the graphics table.
+Things you will reach for the raw table for today: `SciterSetHighlightedElement`,
+`SciterGetFocusElement`, `SciterFireEvent`, and `gGetNativeDC` in the graphics table.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

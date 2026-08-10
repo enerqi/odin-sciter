@@ -91,12 +91,12 @@ ldd bin/linux/x64/libsciter.so | grep -i "not found"    # empty
 
 ```sh
 nm -D --defined-only libsciter.so | grep -w SciterAPI   # 00000000007e4a19 T SciterAPI
-nm -D --defined-only libsciter.so | wc -l               # ~17000
+nm -D --defined-only libsciter.so | wc -l               # 52051
 ```
 
-17,000 exported symbols, but they are vendored third-party internals (QuickJS, libjpeg, Skia). Exactly
-one is the documented API. That confirms the vtable is not a convenience wrapper — it is the only way
-in.
+52,051 exported symbols, but they are vendored third-party internals (Skia, QuickJS, libwebp, libjpeg)
+and the engine's own C++ classes. Exactly one is the documented API. That confirms the vtable is not a
+convenience wrapper — it is the only way in. What the rest of them are is in [`ENGINE.md`](./ENGINE.md).
 
 The same tool answered a question that shaped the whole generation pipeline. The headers declare ~163
 flat prototypes (`UINT SCAPI ValueInit(VALUE*)`, `HWINDOW SCAPI SciterCreateWindow(...)`). Are they

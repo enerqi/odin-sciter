@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and fifteen examples, 86 tests and ten guides
+> engine, there is an Odin-shaped layer on top of them, and fifteen examples, 114 tests and eleven guides
 > cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -78,14 +78,18 @@ is not a fault in the bindings: `just example api_map` is the check that catches
 
 This is worth reading before anything else, because Sciter's shape drives every design decision here.
 
-Sciter's shared library exports **exactly one symbol**: `SciterAPI()`. It returns a pointer to
-`ISciterAPI`, a C struct of 189 function pointers. Every call in these bindings is a field of that
+Sciter's shared library has **exactly one entry point you can use**: `SciterAPI()`. It returns a pointer
+to `ISciterAPI`, a C struct of 189 function pointers. Every call in these bindings is a field of that
 struct. There is nothing else to link against.
 
 ```
 $ nm -D --defined-only lib/linux/x64/libsciter.so | grep -w SciterAPI
 00000000007e4a19 T SciterAPI
 ```
+
+The library does export plenty else — 52,051 dynamic symbols, because Skia, QuickJS and zlib are
+compiled into it and visible — but none of it is API. [`ENGINE.md`](docs/ENGINE.md) is the tour of
+what is in there.
 
 Three consequences:
 
@@ -324,10 +328,12 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | --- | --- |
 | [`getting-started.md`](docs/getting-started.md) | install, the smallest program, and what to do when the window does not appear |
 | [`architecture.md`](docs/architecture.md) | the vtable, dynamic-only loading, threading, and how the bindings are generated |
+| [`ENGINE.md`](docs/ENGINE.md) | what the engine is built from — Skia, QuickJS, its own X11/Wayland layer — and what it loads at runtime |
 | [`html-css-js.md`](docs/html-css-js.md) | what Sciter's HTML/CSS/JS is and is not — flow layout, behaviors, the runtime |
 | [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md) | `eval`, `call`, native functors, and the `Value` lifetime rules |
 | [`dom.md`](docs/dom.md) | element handles, selectors, traversal, text and attributes, state, geometry |
 | [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, timers, synthesised events |
+| [`graphics.md`](docs/graphics.md) | images, paths, text and the 2D renderer, and painting inside a `DRAW` event |
 | [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |

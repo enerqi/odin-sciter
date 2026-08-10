@@ -6,7 +6,7 @@ verifies all 189 `ISciterAPI` slots against the shipped engine, and fifteen exam
 covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events,
 drag-and-drop, graphics, custom resource loading (including the request API), archives, one-file
 shipping, the inspector and a native extension.
-`just example-tests` runs 86 `@(test)` procs, and the ten guides in `docs/` are written. What remains
+`just example-tests` runs 114 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -66,8 +66,9 @@ $ nm -D --defined-only bin/linux/x64/libsciter.so | grep -w SciterAPI
 00000000007e4a19 T SciterAPI
 ```
 
-The library exports ~17,000 dynamic symbols, but they are vendored third-party internals (QuickJS,
-libjpeg, Skia). Exactly one is the API.
+The library exports 52,051 dynamic symbols, but they are vendored third-party internals (Skia, QuickJS,
+libwebp, libjpeg) and the engine's own C++ classes. Exactly one is the API — see
+[`ENGINE.md`](./ENGINE.md).
 
 ### The layout is identical on every platform
 
@@ -436,7 +437,9 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all ten examples run, and the nine guides are written.
+9. ~~**Examples and guides** — §9~~ **done**: all fifteen examples run, and the eleven guides are
+   written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
+   written against the headers.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
     macOS ships untested and should say so. Prepared without the machine: everything type checks for
     `windows_amd64` and `darwin_amd64` (`odin check -target:`), `examples/api_map.odin` was rewritten
@@ -459,7 +462,7 @@ types that are already right, or the same conversions get written twice.
 Source material: <https://sciter.com/tutorials/> and <https://docs.sciter.com/docs/intro>. Note both
 predate 6.x in places, so check anything platform-specific against the SDK.
 
-**Guides** (`docs/`) — all nine **done**. Written against the source rather than from memory, and
+**Guides** (`docs/`) — all eleven **done**. Written against the source rather than from memory, and
 against the SDK's own `docs/md/` tree for the HTML/CSS/JS material, which is the only complete
 description of what the engine actually implements.
 
@@ -479,8 +482,13 @@ description of what the engine actually implements.
   `this://app/` is a host convention, and the embedded engine
 - ~~`deployment.md`~~ — what ships per platform, the runtime search order, one file vs two, the
   attribution, the upgrade procedure, and a pre-ship checklist
+- ~~`graphics.md`~~ — why a context is only ever handed to you, the `DRAW` event and its three layers,
+  state/transforms/shapes, paths, text, images, and the reference-counting rules
 - ~~`api.md`~~ — conventions (errors, allocators, strings, ownership) then every area of `sciter_app`,
   plus what to reach for the raw table for
+- ~~`ENGINE.md`~~ — what the shipped binary is built from (Skia, QuickJS, HarfBuzz, its own `wing::`
+  X11/Wayland layer), what it links and dlopens at runtime, and the consequences for a host
+  application. Measured with `readelf`/`nm`/`strings`, not quoted from sciter.com
 
 **Examples** (`examples/`), each runnable with `just example NAME`, ordered by difficulty:
 
@@ -494,9 +502,18 @@ description of what the engine actually implements.
 7. ~~`events`~~ — done, with 21 tests: the parameter accessors and the code/phase split headless,
    the trampoline, the subscription reply, both propagation phases and the element timers
    display-gated
-8. ~~`custom_loader`~~ — done: the `SC_LOAD_DATA` host callback, serving CSS and images from memory
-9. ~~`archive`~~ — done: `packfolder` + `SciterOpenArchive`, resources inside the executable
-10. ~~`inspector`~~ — done
+8. ~~`drag_and_drop`~~ — done, with 3 decoding tests; no test can stage a system drag, so the sequence
+   was established by driving a real X11 drag by hand
+9. ~~`graphics`~~ — done, with 12 tests: paths, text, images and the 2D renderer
+10. ~~`custom_loader`~~ — done: the `SC_LOAD_DATA` host callback, serving CSS and images from memory
+11. ~~`request_loader`~~ — done, with 5 tests: the request API behind the callback, including every
+    wrapper's answer to a nil handle
+12. ~~`archive`~~ — done, with 6 tests: `packfolder` + `SciterOpenArchive`, resources inside the
+    executable
+13. ~~`single_binary`~~ — done, with 7 tests: the embedded engine, its cache naming and write-once
+    behaviour
+14. ~~`inspector`~~ — done
+15. ~~`extension`~~ — done: Odin as a native extension the engine loads, via `adopt` (§11)
 
 Testing is example-driven — there is no engine source to unit-test against. Follow odin-dds and put
 `@(test)` procs inside `examples/*.odin`. Headless-testable: library loading, the version handshake,

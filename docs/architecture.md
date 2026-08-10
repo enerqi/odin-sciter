@@ -12,10 +12,11 @@ $ nm -D --defined-only lib/linux/x64/libsciter.so | grep -w SciterAPI
 00000000007e4a19 T SciterAPI
 ```
 
+It exports 52,051 dynamic symbols in total — Skia, QuickJS and zlib are compiled in and visible — and
+none of the rest is API. [`ENGINE.md`](./ENGINE.md) is what the engine is actually built from.
+
 `SciterAPI()` returns a pointer to `ISciterAPI` — a plain C struct of 189 function pointers with a
-leading `version` field. Every call in these bindings is a field of that struct. The library exports
-~17,000 dynamic symbols, but they are vendored third-party internals (QuickJS, libjpeg, Skia). Exactly
-one is the API.
+leading `version` field. Every call in these bindings is a field of that struct.
 
 ```odin
 api := sciter.api()
@@ -76,8 +77,8 @@ than `#ifdef`-ing them out:
 Every padded slot is pointer-sized, so **one Odin struct definition serves Windows, Linux and macOS**,
 and the bindings can be generated on whichever platform is most convenient. 16 of the 189 slots are
 NULL on Linux: 12 platform-padded, plus 4 `reserved` left over from the removed script-VM API. One of
-those NULLs is load-bearing for this library — `SciterGetViewExpando` is gone, which is why
-`set_global` evaluates a one-line assignment function instead of writing into `globalThis` directly.
+those NULLs is load-bearing for this library — `SciterGetViewExpando` is gone, so there is no
+`globalThis` object to assign into and `set_global` publishes through `SciterSetVariable` instead.
 
 ## Sciter 6 owns the application lifecycle
 
