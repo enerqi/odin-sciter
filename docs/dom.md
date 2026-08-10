@@ -158,6 +158,58 @@ all take one, defaulting to `context.allocator`. Pass `context.temp_allocator` f
 Element *tags* are the exception: `tag` returns a borrowed `string` over the engine's own storage, so
 there is nothing to free.
 
+## Building and moving elements
+
+`set_html` replaces a subtree with markup. This is the other way round — make the element, then put it
+where it goes — which is what content coming from data wants, and the only way to *move* an element
+rather than re-create it.
+
+```odin
+item, _ := sciter_app.make_element("li", "third")   // plain text, not parsed
+defer sciter_app.unuse_element(item)                // yours, inserted or not
+sciter_app.insert_element(item, list)               // no index: appended
+```
+
+**`make_element` and `clone_element` hand back a reference that is yours, and inserting does not
+consume it** — the document takes its own. An element that is created and never unused leaks inside
+the engine, where Odin's allocator tracking cannot see it. `remove_element(el, finalize = false)`
+hands back a reference the same way; see below.
+
+```odin
+sciter_app.insert_element(el, parent, 0)      // at the front; the default appends
+sciter_app.insert_element(el, other_parent)   // a move — the engine disconnects it first
+sciter_app.swap_elements(a, b)                // exchanges both indexes and parents
+sciter_app.remove_element(el)                 // destroyed, behaviors and all
+sciter_app.remove_element(el, finalize = false)   // detached and kept — see below
+sciter_app.sort_children(list, by_length)     // in place, comparator runs before this returns
+```
+
+### What a detached element can do
+
+An element that is not in a document is more limited than it looks, and each limit was measured:
+
+- **`insert_element` works between two detached elements.** Assembling a subtree offline and inserting
+  the outer element brings the whole thing in. This is the way to build.
+- **`set_html` does not.** It needs a document and fails with `INVALID_HWND`. Insert first, then set
+  the markup.
+- **Its descendants are passive handles.** They read fine, but writing to one returns
+  `PASSIVE_HANDLE`, and `use_element` does not change that — the element you hold a reference to is
+  writable, the tree underneath it is not. Insert, then edit.
+
+### Detaching without destroying
+
+`remove_element(el, finalize = false)` takes the element out of the document and **takes a reference
+for you**. That is a deliberate difference from the C API: a bare `SciterDetachElement` drops the last
+reference to an element nobody else is holding, and the next use of the handle is a segfault rather
+than an error code. Unuse it once it has been re-inserted, or to throw it away.
+
+### Identity
+
+`element_uid(el)` returns an integer that survives being stored where a handle cannot go. Its partner
+`element_by_uid(window, uid)` **does not work on the vendored 6.x engine** — every UID the engine
+hands out is refused with `OPERATION_FAILED`, whichever window handle is used and whether or not the
+element has been `use_element`ed. Treat UIDs as opaque labels for now, not as a way back to an element.
+
 ## State
 
 Sciter's CSS pseudo-class bits are readable and writable from the host, which browsers do not offer:

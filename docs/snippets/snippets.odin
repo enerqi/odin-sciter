@@ -15,6 +15,7 @@ import sciter "../.."
 import "../../sciter_app"
 import "base:runtime"
 import "core:fmt"
+import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
 // getting-started.md, block 1
@@ -257,6 +258,27 @@ dom9 :: proc(window: sciter_app.Window) {
 	_ = v
 }
 
+dom9b :: proc(list: sciter_app.Element) {
+	item, _ := sciter_app.make_element("li", "third")
+	defer sciter_app.unuse_element(item)
+	sciter_app.insert_element(item, list)
+}
+
+dom9c :: proc(el, parent, other_parent, a, b, list: sciter_app.Element) {
+	sciter_app.insert_element(el, parent, 0)
+	sciter_app.insert_element(el, other_parent)
+	sciter_app.swap_elements(a, b)
+	sciter_app.remove_element(el)
+	sciter_app.remove_element(el, finalize = false)
+	sciter_app.sort_children(list, by_length)
+}
+
+by_length :: proc(a, b: sciter_app.Element, user_data: rawptr) -> int {
+	first, _ := sciter_app.text(a, context.temp_allocator)
+	second, _ := sciter_app.text(b, context.temp_allocator)
+	return len(first) - len(second)
+}
+
 dom10 :: proc(el: sciter_app.Element) {
 	box, _ := sciter_app.location(el)
 	size, _ := sciter_app.location(el, .Border, .Self)
@@ -362,6 +384,23 @@ ev5b :: proc(el: sciter_app.Element) {
 
 ev6 :: proc(window: sciter_app.Window) {
 	sciter_app.eval(window, "document.$('#ok').click()")
+}
+
+MY_TIMER :: 1
+
+ev7 :: proc(el: sciter_app.Element) {
+	sciter_app.set_timer(el, 100 * time.Millisecond, MY_TIMER)
+	sciter_app.stop_timer(el, MY_TIMER)
+}
+
+ev8 :: proc(event: sciter_app.Event) -> bool {
+	if te, ok := sciter_app.timer_event(event); ok {
+		if te.id == MY_TIMER {
+			// tick()
+		}
+		return true
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------------------------------

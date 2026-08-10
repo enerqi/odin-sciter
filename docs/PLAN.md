@@ -5,7 +5,7 @@ top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, 
 verifies all 189 `ISciterAPI` slots against the shipped engine, and twelve examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events, custom
 resource loading, archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 50 `@(test)` procs, and the nine guides in `docs/` are written. What remains
+`just example-tests` runs 66 `@(test)` procs, and the nine guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -488,10 +488,11 @@ description of what the engine actually implements.
 3. ~~`load_file`~~ — done: loading from disk, base URLs, relative references
 4. ~~`eval`~~ — done, with 9 headless `Value` round-trip tests
 5. ~~`call_odin_from_js`~~ — done, via native functors
-6. ~~`dom_walk`~~ — done, with 13 display-gated tests: selectors, traversal, nodes, and the geometry
-   queries in `layout.odin`
-7. ~~`events`~~ — done, with 15 tests: the parameter accessors and the code/phase split headless,
-   the trampoline, the subscription reply and both propagation phases display-gated
+6. ~~`dom_walk`~~ — done, with 23 display-gated tests: selectors, traversal, nodes, the geometry
+   queries, and building/moving/sorting elements
+7. ~~`events`~~ — done, with 21 tests: the parameter accessors and the code/phase split headless,
+   the trampoline, the subscription reply, both propagation phases and the element timers
+   display-gated
 8. ~~`custom_loader`~~ — done: the `SC_LOAD_DATA` host callback, serving CSS and images from memory
 9. ~~`archive`~~ — done: `packfolder` + `SciterOpenArchive`, resources inside the executable
 10. ~~`inspector`~~ — done

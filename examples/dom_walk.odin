@@ -136,6 +136,37 @@ main :: proc() {
 	html, _ := sciter_app.html(summary, true, context.temp_allocator)
 	fmt.println("#summary is now:", html)
 
+	// --- building elements ----------------------------------------------------------------------
+	//
+	// The other way round from set_html: make the element, then put it where it goes. This is what
+	// content coming from data wants, and the only way to *move* an element rather than re-create it.
+
+	// The reference that comes back is yours and stays yours after the insert, so unuse it either way.
+	extra, eerr := sciter_app.make_element("li", "written by Odin, not by markup")
+	if eerr == nil {
+		defer sciter_app.unuse_element(extra)
+		sciter_app.set_attribute(extra, "class", "todo")
+		sciter_app.insert_element(extra, list) // no index: appended
+	}
+
+	// Moving is an insert - the engine disconnects it from its old parent first. Re-creating it would
+	// lose whatever state and behaviors it had.
+	if moved, merr := sciter_app.child(list, 0); merr == nil {
+		sciter_app.insert_element(moved, list, 2)
+	}
+
+	// And ordering is done in place, by a comparator that runs before this returns.
+	sciter_app.sort_children(list, by_length)
+
+	fmt.println("#tasks after building, moving and sorting:")
+	if n, cerr := sciter_app.child_count(list); cerr == nil {
+		for i in 0 ..< n {
+			item, _ := sciter_app.child(list, i)
+			line, _ := sciter_app.text(item, context.temp_allocator)
+			fmt.printfln("  %d %s", i, line)
+		}
+	}
+
 	// --- geometry -------------------------------------------------------------------------------
 	//
 	// Where layout put things. `location` takes a box and an origin because the C API packs both into
@@ -160,6 +191,14 @@ main :: proc() {
 	sciter_app.show(window)
 	sciter_app.run()
 	sciter_app.shutdown()
+}
+
+// Shortest first. The comparator returns the usual negative / zero / positive, and runs on the calling
+// thread with the calling context - `sort_children` does not return until it is done.
+by_length :: proc(a, b: sciter_app.Element, user_data: rawptr) -> int {
+	first, _ := sciter_app.text(a, context.temp_allocator)
+	second, _ := sciter_app.text(b, context.temp_allocator)
+	return len(first) - len(second)
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -600,4 +639,428 @@ test_scroll_to_view_is_accepted :: proc(t: ^testing.T) {
 
 	// The document element scrolls too, and asking it to scroll itself into view is not an error.
 	testing.expect_value(t, sciter_app.scroll_to_view(root), nil)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Building and moving elements
+//
+// `set_html` replaces a subtree with markup; this is the other way round - build the element, then put
+// it where it goes. The ownership rule is the one thing to get right and the one thing nothing else
+// checks: `make_element` and `clone_element` hand back a reference that stays the caller's even after
+// the element is inserted, so every test below unuses what it made.
+
+@(test)
+test_make_element_and_insert :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+
+	before, cerr := sciter_app.child_count(list)
+	testing.expect_value(t, cerr, nil)
+
+	item, merr := sciter_app.make_element("li", "fifth")
+	testing.expect_value(t, merr, nil)
+	testing.expect(t, item != nil)
+	defer sciter_app.unuse_element(item)
+
+	// Made, but nowhere: the document does not know about it until it is inserted.
+	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before)
+
+	testing.expect_value(t, sciter_app.insert_element(item, list), nil)
+
+	after, _ := sciter_app.child_count(list)
+	testing.expect_value(t, after, before + 1)
+
+	// The default index appends, and what came back is the element that was made.
+	appended, _ := sciter_app.child(list, after - 1)
+	testing.expect_value(t, appended, item)
+
+	tag, _ := sciter_app.tag(item)
+	testing.expect_value(t, tag, "li")
+
+	// And it is genuinely in the document, not merely reachable through the handle.
+	found, ferr := sciter_app.select_first(root, "#tasks li:last-child")
+	testing.expect_value(t, ferr, nil)
+	text, _ := sciter_app.text(found, context.temp_allocator)
+	testing.expect_value(t, text, "fifth")
+}
+
+// The text of a new element is plain text. The C API says the call does no parsing, and it is worth
+// pinning: markup arriving from data would otherwise be a way into the document.
+@(test)
+test_make_element_does_not_parse_its_text :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+
+	item, _ := sciter_app.make_element("li", "<b>not bold</b>")
+	defer sciter_app.unuse_element(item)
+	testing.expect_value(t, sciter_app.insert_element(item, list), nil)
+
+	text, _ := sciter_app.text(item, context.temp_allocator)
+	testing.expect_value(t, text, "<b>not bold</b>")
+
+	// Nothing was created from it.
+	_, berr := sciter_app.select_first(item, "b")
+	testing.expect_value(t, berr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+}
+
+@(test)
+test_insert_at_an_index :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	before, _ := sciter_app.child_count(list)
+
+	first, _ := sciter_app.make_element("li", "zeroth")
+	defer sciter_app.unuse_element(first)
+	testing.expect_value(t, sciter_app.insert_element(first, list, 0), nil)
+
+	at_zero, _ := sciter_app.child(list, 0)
+	testing.expect_value(t, at_zero, first)
+
+	// Past the end is not an error - it lands at the end. `max(int)` is the interesting one: handed
+	// to the engine as written it segfaults rather than appending, so `insert_element` clamps to the
+	// child count and this is the regression test for that.
+	tail, _ := sciter_app.make_element("li", "way past")
+	defer sciter_app.unuse_element(tail)
+	testing.expect_value(t, sciter_app.insert_element(tail, list, max(int)), nil)
+
+	after, _ := sciter_app.child_count(list)
+	testing.expect_value(t, after, before + 2)
+	at_end, _ := sciter_app.child(list, after - 1)
+	testing.expect_value(t, at_end, tail)
+
+	// And a moderate over-run behaves the same way.
+	spare, _ := sciter_app.make_element("li", "also past")
+	defer sciter_app.unuse_element(spare)
+	testing.expect_value(t, sciter_app.insert_element(spare, list, 9999), nil)
+	count, _ := sciter_app.child_count(list)
+	last_now, _ := sciter_app.child(list, count - 1)
+	testing.expect_value(t, last_now, spare)
+}
+
+// Inserting an element that already has a parent moves it. Re-creating it instead would lose whatever
+// state and behaviors it had picked up, so this is the operation to reach for.
+@(test)
+test_insert_moves_an_element_that_already_has_a_parent :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	moving, _ := sciter_app.child(list, 0)
+	text_before, _ := sciter_app.text(moving, context.temp_allocator)
+	list_before, _ := sciter_app.child_count(list)
+	summary_before, _ := sciter_app.child_count(summary)
+
+	testing.expect_value(t, sciter_app.insert_element(moving, summary), nil)
+
+	list_after, _ := sciter_app.child_count(list)
+	summary_after, _ := sciter_app.child_count(summary)
+	testing.expect_value(t, list_after, list_before - 1)
+	testing.expect_value(t, summary_after, summary_before + 1)
+
+	// The same element, not a copy of it: same handle, same content, new parent.
+	parent, perr := sciter_app.parent(moving)
+	testing.expect_value(t, perr, nil)
+	testing.expect_value(t, parent, summary)
+
+	text_after, _ := sciter_app.text(moving, context.temp_allocator)
+	testing.expect_value(t, text_after, text_before)
+}
+
+@(test)
+test_clone_is_a_detached_deep_copy :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	original_count, _ := sciter_app.child_count(list)
+
+	copy, cerr := sciter_app.clone_element(list)
+	testing.expect_value(t, cerr, nil)
+	defer sciter_app.unuse_element(copy)
+
+	testing.expect(t, copy != list, "a clone is a different element")
+
+	// Deep: the children came with it, and they read the same.
+	copy_count, _ := sciter_app.child_count(copy)
+	testing.expect_value(t, copy_count, original_count)
+
+	copy_first, _ := sciter_app.child(copy, 0)
+	copied_text, _ := sciter_app.text(copy_first, context.temp_allocator)
+	testing.expect_value(t, copied_text, "vendor the headers")
+
+	// In no document until it is put in one, and then it is a second list.
+	body, _ := sciter_app.select_first(root, "body")
+	testing.expect_value(t, sciter_app.insert_element(copy, body), nil)
+
+	lists, lerr := sciter_app.select_all(root, "ul")
+	testing.expect_value(t, lerr, nil)
+	defer delete(lists)
+	testing.expect_value(t, len(lists), 2)
+
+	// Independent: writing to the copy leaves the original alone, which is the whole point of a copy
+	// rather than a second handle to the same element.
+	testing.expect_value(t, sciter_app.set_text(copy_first, "changed in the copy"), nil)
+
+	original_first, _ := sciter_app.child(list, 0)
+	original_text, _ := sciter_app.text(original_first, context.temp_allocator)
+	testing.expect_value(t, original_text, "vendor the headers")
+}
+
+// What a detached element can and cannot do, all of it measured. The short version: build a subtree
+// out of elements you made, and do the markup and the editing once it is in the document.
+@(test)
+test_what_a_detached_element_allows :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+
+	// Assembling a subtree offline works: `insert_element` is happy with two detached elements, and
+	// inserting the outer one brings the whole thing in.
+	outer, _ := sciter_app.make_element("div", "")
+	defer sciter_app.unuse_element(outer)
+	inner, _ := sciter_app.make_element("span", "inner")
+	defer sciter_app.unuse_element(inner)
+
+	testing.expect_value(t, sciter_app.insert_element(inner, outer), nil)
+	testing.expect_value(t, sciter_app.child_count(outer) or_else -1, 1)
+
+	testing.expect_value(t, sciter_app.insert_element(outer, list), nil)
+	html, _ := sciter_app.html(outer, true, context.temp_allocator)
+	testing.expect_value(t, html, "<div><span>inner</span></div>")
+
+	// Markup does not: `set_html` needs a document, and says so with INVALID_HWND rather than quietly
+	// doing nothing. Insert first, then set the markup.
+	orphan, _ := sciter_app.make_element("li", "")
+	defer sciter_app.unuse_element(orphan)
+	testing.expect_value(
+		t,
+		sciter_app.set_html(orphan, "<b>bold</b>"),
+		sciter_app.Error(sciter.Scdom_Result.INVALID_HWND),
+	)
+	testing.expect_value(t, sciter_app.child_count(orphan) or_else -1, 0)
+
+	testing.expect_value(t, sciter_app.insert_element(orphan, list), nil)
+	testing.expect_value(t, sciter_app.set_html(orphan, "<b>bold</b>"), nil)
+	testing.expect_value(t, sciter_app.child_count(orphan) or_else -1, 1)
+
+	// And a detached element's *descendants* are passive handles: readable, not writable, and
+	// `use_element` does not change that. The element you hold a reference to is writable - it is the
+	// tree underneath it that is not.
+	copy, _ := sciter_app.clone_element(list)
+	defer sciter_app.unuse_element(copy)
+
+	child, _ := sciter_app.child(copy, 0)
+	readable, rerr := sciter_app.text(child, context.temp_allocator)
+	testing.expect_value(t, rerr, nil)
+	testing.expect(t, readable != "", "a detached element's children are readable")
+
+	testing.expect_value(t, sciter_app.set_text(child, "nope"), sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
+	testing.expect_value(t, sciter_app.use_element(child), nil)
+	testing.expect_value(
+		t,
+		sciter_app.set_text(child, "still nope"),
+		sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE),
+	)
+	testing.expect_value(t, sciter_app.unuse_element(child), nil)
+
+	// The clone itself, though, takes an attribute while detached.
+	testing.expect_value(t, sciter_app.set_attribute(copy, "id", "clone"), nil)
+}
+
+@(test)
+test_remove_element_destroys_or_detaches :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	summary, _ := sciter_app.select_first(root, "#summary")
+	before, _ := sciter_app.child_count(list)
+
+	// finalize = true: gone, and the handle with it.
+	doomed, _ := sciter_app.child(list, 0)
+	testing.expect_value(t, sciter_app.remove_element(doomed), nil)
+	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before - 1)
+
+	// finalize = false: out of the document but still alive, holding the reference this call took on
+	// the caller's behalf. Without that reference the handle would be dangling here, and reading it
+	// would be a segfault rather than an error - which is why the wrapper takes it.
+	detached, _ := sciter_app.child(list, 0)
+	text_before, _ := sciter_app.text(detached, context.temp_allocator)
+	testing.expect_value(t, sciter_app.remove_element(detached, finalize = false), nil)
+	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before - 2)
+
+	still_there, rerr := sciter_app.text(detached, context.temp_allocator)
+	testing.expect_value(t, rerr, nil)
+	testing.expect_value(t, still_there, text_before)
+
+	// And it goes back into the document somewhere else, content intact. That is the move.
+	testing.expect_value(t, sciter_app.insert_element(detached, summary), nil)
+	parent, _ := sciter_app.parent(detached)
+	testing.expect_value(t, parent, summary)
+
+	text_after, _ := sciter_app.text(detached, context.temp_allocator)
+	testing.expect_value(t, text_after, text_before)
+
+	// The reference is the caller's either way.
+	testing.expect_value(t, sciter_app.unuse_element(detached), nil)
+}
+
+@(test)
+test_swap_elements :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+
+	first, _ := sciter_app.child(list, 0)
+	last, _ := sciter_app.child(list, 3)
+	first_text, _ := sciter_app.text(first, context.temp_allocator)
+	last_text, _ := sciter_app.text(last, context.temp_allocator)
+
+	testing.expect_value(t, sciter_app.swap_elements(first, last), nil)
+
+	now_first, _ := sciter_app.child(list, 0)
+	now_last, _ := sciter_app.child(list, 3)
+	testing.expect_value(t, now_first, last)
+	testing.expect_value(t, now_last, first)
+
+	// The elements moved, not their contents.
+	a, _ := sciter_app.text(now_first, context.temp_allocator)
+	b, _ := sciter_app.text(now_last, context.temp_allocator)
+	testing.expect_value(t, a, last_text)
+	testing.expect_value(t, b, first_text)
+}
+
+@(private = "file")
+Sort_State :: struct {
+	calls:      int,
+	user_index: int, // context.user_index as seen from inside the comparator
+}
+
+@(private = "file")
+by_text_descending :: proc(a, b: sciter_app.Element, user_data: rawptr) -> int {
+	state := (^Sort_State)(user_data)
+	state.calls += 1
+	state.user_index = context.user_index
+
+	first, _ := sciter_app.text(a, context.temp_allocator)
+	second, _ := sciter_app.text(b, context.temp_allocator)
+	return strings.compare(second, first)
+}
+
+@(test)
+test_sort_children :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	SENTINEL :: 0x5027
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+
+	state: Sort_State
+	{
+		// The comparator runs on this thread before `sort_children` returns, so it runs on this
+		// context - the sentinel is how that is checked rather than assumed.
+		context.user_index = SENTINEL
+		testing.expect_value(t, sciter_app.sort_children(list, by_text_descending, &state), nil)
+	}
+
+	testing.expect(t, state.calls > 0, "the comparator must be called")
+	testing.expect_value(t, state.user_index, SENTINEL)
+
+	texts := make([dynamic]string, 0, 4, context.temp_allocator)
+	n, _ := sciter_app.child_count(list)
+	for i in 0 ..< n {
+		item, _ := sciter_app.child(list, i)
+		text, _ := sciter_app.text(item, context.temp_allocator)
+		append(&texts, text)
+	}
+
+	testing.expect_value(t, len(texts), 4)
+	for i in 1 ..< len(texts) {
+		testing.expectf(t, texts[i - 1] >= texts[i], "not descending: %v", texts[:])
+	}
+
+	// A range sorts only that range: `last` is one past the end, so this leaves the tail alone. The
+	// reload starts from the document's own order again - and every handle from before it, `root`
+	// included, is dead the moment it happens.
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+	reloaded_root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	list2, _ := sciter_app.select_first(reloaded_root, "#tasks")
+	untouched_before, _ := sciter_app.child(list2, 3)
+	tail_text_before, _ := sciter_app.text(untouched_before, context.temp_allocator)
+
+	partial: Sort_State
+	testing.expect_value(t, sciter_app.sort_children(list2, by_text_descending, &partial, 0, 3), nil)
+
+	untouched_after, _ := sciter_app.child(list2, 3)
+	tail_text_after, _ := sciter_app.text(untouched_after, context.temp_allocator)
+	testing.expect_value(t, tail_text_after, tail_text_before)
+
+	// An empty range is not a failure, and the comparator is never called for it.
+	empty: Sort_State
+	testing.expect_value(t, sciter_app.sort_children(list2, by_text_descending, &empty, 2, 2), nil)
+	testing.expect_value(t, empty.calls, 0)
+
+	// A nil comparator is refused rather than crashing in the engine.
+	testing.expect_value(
+		t,
+		sciter_app.sort_children(list, nil),
+		sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER),
+	)
+}
+
+// `SciterGetElementUID` works; `SciterGetElementByUID` does not resolve what it produces on the
+// vendored 6.x engine. Every combination fails with OPERATION_FAILED - the element's own window handle
+// and the root one, an element that has been `use_element`ed and one that has not, a freshly made
+// element and the document root - and the UIDs themselves come back near the top of the u32 range
+// (0xFFFFFC31 and neighbours), which suggests the two calls no longer share a numbering.
+//
+// So this test pins both halves. If the lookup ever starts working, the second half fails and that is
+// the signal to delete this comment rather than a regression.
+@(test)
+test_element_uid_is_readable_but_not_resolvable :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	uid, uerr := sciter_app.element_uid(summary)
+	testing.expect_value(t, uerr, nil)
+	testing.expect(t, uid != 0, "a UID identifies the element")
+
+	// Two elements are two UIDs, so the numbers do mean something.
+	other, _ := sciter_app.select_first(root, "#tasks")
+	other_uid, oerr := sciter_app.element_uid(other)
+	testing.expect_value(t, oerr, nil)
+	testing.expect(t, other_uid != uid)
+
+	// The lookup, however, refuses a UID this engine just handed out.
+	back, berr := sciter_app.element_by_uid(window, uid)
+	testing.expect_value(t, berr, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+	testing.expect_value(t, back, sciter_app.Element(nil))
+
+	// And an invented one fails the same way, which is why the failure above is not a diagnosis.
+	_, missing := sciter_app.element_by_uid(window, 0xFFFF_FFF0)
+	testing.expect(t, missing != nil)
 }

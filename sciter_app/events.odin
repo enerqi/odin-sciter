@@ -10,6 +10,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:time"
 
 // What the engine reports. `params` points at the group's own parameter struct - use the typed
 // accessors below rather than casting it by hand.
@@ -200,6 +201,63 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 			raw = p,
 		},
 		true
+}
+
+Timer_Event :: struct {
+	id:  uintptr, // the id given to `set_timer`; 0 for the element's unnamed timer
+	raw: ^sciter.Timer_Params,
+}
+
+timer_event :: proc(event: Event) -> (te: Timer_Event, ok: bool) {
+	if event.group != {.TIMER} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Timer_Params)(event.params)
+	return Timer_Event{id = p.timerId, raw = p}, true
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Timers
+//
+// A timer belongs to an element and delivers a `.TIMER` event to the handlers on it. It is the engine's
+// own clock rather than a thread: the event arrives on the engine's thread, inside the message pump,
+// so a handler can touch the DOM directly and needs no synchronisation.
+//
+// The return value of `on_event` means something different here, and it is the one place in this
+// package where returning false is not the safe default:
+//
+//	if te, ok := sciter_app.timer_event(event); ok {
+//		tick(te.id)
+//		return true    // keep the timer running; false stops it
+//	}
+//
+// A handler that ends in `return false` - the advice for every other group, so that nothing is
+// swallowed - stops the timer after its first tick.
+
+// Starts, or restarts, a timer on `element`. The element must stay in the document: a timer goes away
+// with the element it belongs to.
+//
+// `id` distinguishes several timers on one element and arrives back as `Timer_Event.id`. Calling this
+// again with the same `id` replaces that timer rather than adding a second one, so it doubles as
+// "change the interval".
+//
+// The engine counts in whole milliseconds. A positive `interval` shorter than one millisecond is
+// raised to one rather than rounded down, because rounding down to zero would stop the timer - see
+// `stop_timer`, which is what that spelling means.
+set_timer :: proc(element: Element, interval: time.Duration, id: uintptr = 0) -> Error {
+	ms := i64(interval / time.Millisecond)
+	if interval > 0 && ms < 1 {
+		ms = 1
+	}
+	if ms < 0 {
+		ms = 0
+	}
+	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), u32(ms), id))
+}
+
+// Stops the timer `id` on `element`. Stopping one that is not running is not an error.
+stop_timer :: proc(element: Element, id: uintptr = 0) -> Error {
+	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), 0, id))
 }
 
 // ---------------------------------------------------------------------------------------------------

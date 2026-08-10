@@ -23,6 +23,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "core:time"
 
 DOC :: `<html>
 <head><style>
@@ -43,6 +44,7 @@ DOC :: `<html>
     <span class="count" id="count">0</span>
   </p>
   <p><input id="name" type="text" placeholder="type here" /></p>
+  <p>timer: <span class="count" id="uptime">0.0s</span></p>
   <div id="log">No script in this document. Every line below was written by Odin.</div>
 </body>
 </html>`
@@ -54,8 +56,13 @@ App :: struct {
 	handler: sciter_app.Event_Handler,
 	window:  sciter_app.Window,
 	count:   int,
+	ticks:   int,
 	lines:   [dynamic]string,
 }
+
+// Timers are told apart by an id, so give the one this example uses a name rather than a bare 1.
+UPTIME_TIMER :: 1
+TICK :: 100 * time.Millisecond
 
 main :: proc() {
 	if !sciter_app.load_engine() {
@@ -95,8 +102,8 @@ main :: proc() {
 	app.handler = sciter_app.Event_Handler {
 		// BEHAVIOR_EVENT carries the synthetic, meaningful events - a button click, a value change.
 		// KEY is the raw input underneath them; subscribing to both shows the same interaction
-		// arriving at two levels.
-		subscription = {.BEHAVIOR_EVENT, .KEY},
+		// arriving at two levels. TIMER is the engine's own clock, below.
+		subscription = {.BEHAVIOR_EVENT, .KEY, .TIMER},
 		on_event     = on_event,
 		user_data    = &app,
 	}
@@ -105,6 +112,14 @@ main :: proc() {
 		os.exit(1)
 	}
 	defer sciter_app.detach_handler(root, &app.handler)
+
+	// A timer belongs to an element and is delivered to the handlers on *that* element - it does not
+	// bubble, so this one is set on the same `root` the handler is attached to.
+	if err := sciter_app.set_timer(root, TICK, UPTIME_TIMER); err != nil {
+		fmt.eprintln("could not start the timer:", err)
+		os.exit(1)
+	}
+	defer sciter_app.stop_timer(root, UPTIME_TIMER)
 
 	fmt.println("click the buttons and type in the box; every event is logged to stdout too")
 
@@ -170,6 +185,17 @@ on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) ->
 		return false
 	}
 
+	// The timer. Note the return value: everywhere else in this file `true` means "handled, and I have
+	// dealt with it", but for a timer it means "keep running" - returning false here stops the clock
+	// after one tick, which is the trap this group carries.
+	if te, ok := sciter_app.timer_event(event); ok {
+		if te.id == UPTIME_TIMER {
+			app.ticks += 1
+			update_uptime(app)
+		}
+		return true
+	}
+
 	// A raw key event. `key_code` is a virtual key for KEY_DOWN/KEY_UP and a character for KEY_CHAR.
 	if ke, ok := sciter_app.key_event(event); ok {
 		if ke.phase == .Bubbling && ke.code == .DOWN {
@@ -203,6 +229,17 @@ log :: proc(app: ^App, line: string) {
 
 	joined := join_lines(app.lines[:], context.temp_allocator)
 	sciter_app.set_text(box, joined)
+}
+
+update_uptime :: proc(app: ^App) {
+	root, err := sciter_app.root(app.window)
+	if err != nil {
+		return
+	}
+	if label, serr := sciter_app.select_first(root, "#uptime"); serr == nil {
+		seconds := f64(app.ticks) * time.duration_seconds(TICK)
+		sciter_app.set_text(label, fmt.tprintf("%.1fs", seconds))
+	}
 }
 
 update_count :: proc(app: ^App) {
@@ -364,6 +401,24 @@ test_key_event_maps_the_params :: proc(t: ^testing.T) {
 	testing.expect(t, ke.raw == &params)
 }
 
+@(test)
+test_timer_event_maps_the_params :: proc(t: ^testing.T) {
+	params := sciter.Timer_Params {
+		timerId = 42,
+	}
+
+	te, ok := sciter_app.timer_event({group = {.TIMER}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, te.id, uintptr(42))
+	testing.expect(t, te.raw == &params)
+
+	// Zero is the element's unnamed timer, not a missing one - `set_timer` defaults to it.
+	zero: sciter.Timer_Params
+	unnamed, uok := sciter_app.timer_event({group = {.TIMER}, params = &zero})
+	testing.expect(t, uok)
+	testing.expect_value(t, unnamed.id, uintptr(0))
+}
+
 // The group is the only thing that says which struct `params` points at, so an accessor that cast
 // first and asked later would read past the end of a smaller struct - Key_Params is four fields,
 // Mouse_Params is ten.
@@ -382,6 +437,12 @@ test_typed_params_refuse_the_wrong_group :: proc(t: ^testing.T) {
 	_, from_behavior := sciter_app.key_event({group = {.BEHAVIOR_EVENT}, params = &behavior})
 	testing.expect(t, !from_behavior, "key_event must refuse a BEHAVIOR_EVENT")
 
+	timer: sciter.Timer_Params
+	_, from_timer := sciter_app.behavior_event({group = {.TIMER}, params = &timer})
+	testing.expect(t, !from_timer, "behavior_event must refuse a TIMER event")
+	_, timer_from_key := sciter_app.timer_event({group = {.KEY}, params = &key})
+	testing.expect(t, !timer_from_key, "timer_event must refuse a KEY event")
+
 	// The engine names exactly one group per call. A set with two in it is not a struct anything can
 	// point at, so it is not a BEHAVIOR_EVENT either.
 	_, two_groups := sciter_app.behavior_event({group = {.BEHAVIOR_EVENT, .MOUSE}, params = &behavior})
@@ -398,6 +459,8 @@ test_typed_params_refuse_the_wrong_group :: proc(t: ^testing.T) {
 	testing.expect(t, !no_mouse_params)
 	_, no_key_params := sciter_app.key_event({group = {.KEY}, params = nil})
 	testing.expect(t, !no_key_params)
+	_, no_timer_params := sciter_app.timer_event({group = {.TIMER}, params = nil})
+	testing.expect(t, !no_timer_params)
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -472,11 +535,39 @@ Seen :: struct {
 @(private = "file")
 Recorder :: struct {
 	handler:        sciter_app.Event_Handler,
-	seen:           [16]Seen,
+	seen:           [64]Seen,
 	count:          int, // every call, including ones with nothing to decode
 	claim:          bool, // what on_event returns
 	tag_ok:         bool, // the handler came back as the one that was attached
 	ctx_user_index: int, // context.user_index as seen from inside the callback
+}
+
+// How many of the events this recorder saw are the one the test sent. Counting every delivery instead
+// would make these tests depend on what else the engine happens to deliver - once anything runs the
+// message pump, queued events from an earlier test arrive in the middle of a later one.
+@(private = "file")
+sent_count :: proc(r: ^Recorder) -> (n: int) {
+	for entry in r.seen[:min(r.count, len(r.seen))] {
+		if entry.group == {.BEHAVIOR_EVENT} && entry.code == u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) {
+			n += 1
+		}
+	}
+	return
+}
+
+@(private = "file")
+sent :: proc(r: ^Recorder, i: int) -> (entry: Seen, ok: bool) {
+	n := 0
+	for candidate in r.seen[:min(r.count, len(r.seen))] {
+		if candidate.group == {.BEHAVIOR_EVENT} &&
+		   candidate.code == u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) {
+			if n == i {
+				return candidate, true
+			}
+			n += 1
+		}
+	}
+	return {}, false
 }
 
 @(private = "file")
@@ -636,13 +727,15 @@ test_send_event_arrives_in_both_phases :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	testing.expect(t, !handled, "nothing claimed it, so it is not handled")
 
-	testing.expect_value(t, r.count, 2)
-	if r.count != 2 {return}
+	testing.expect_value(t, sent_count(&r), 2)
+	sinking, has_sinking := sent(&r, 0)
+	bubbling, has_bubbling := sent(&r, 1)
+	if !has_sinking || !has_bubbling {return}
 
-	testing.expect_value(t, r.seen[0].phase, sciter_app.Event_Phase.Sinking)
-	testing.expect_value(t, r.seen[1].phase, sciter_app.Event_Phase.Bubbling)
+	testing.expect_value(t, sinking.phase, sciter_app.Event_Phase.Sinking)
+	testing.expect_value(t, bubbling.phase, sciter_app.Event_Phase.Bubbling)
 
-	for entry, i in r.seen[:2] {
+	for entry, i in ([]Seen{sinking, bubbling}) {
 		testing.expectf(t, entry.group == {.BEHAVIOR_EVENT}, "event %d: group %v", i, entry.group)
 
 		// The code with the phase bits already off. `cmd` itself differs between the two.
@@ -675,10 +768,12 @@ test_claiming_an_event_marks_it_handled :: proc(t: ^testing.T) {
 
 	testing.expect(t, send(t, tick, reset), "a handler returning true must be reported as handled")
 
-	testing.expect_value(t, r.count, 2)
-	if r.count != 2 {return}
-	testing.expect_value(t, r.seen[0].phase, sciter_app.Event_Phase.Sinking)
-	testing.expect_value(t, r.seen[1].phase, sciter_app.Event_Phase.Handled)
+	testing.expect_value(t, sent_count(&r), 2)
+	sinking, has_sinking := sent(&r, 0)
+	claimed, has_claimed := sent(&r, 1)
+	if !has_sinking || !has_claimed {return}
+	testing.expect_value(t, sinking.phase, sciter_app.Event_Phase.Sinking)
+	testing.expect_value(t, claimed.phase, sciter_app.Event_Phase.Handled)
 }
 
 // The engine calls back as `proc "system"`, where Odin's implicit context does not exist. Without the
@@ -707,7 +802,7 @@ test_the_attach_time_context_is_restored :: proc(t: ^testing.T) {
 	testing.expect(t, context.user_index != SENTINEL)
 
 	send(t, tick, reset)
-	testing.expect(t, r.count > 0, "nothing was delivered, so the context was never restored")
+	testing.expect(t, sent_count(&r) > 0, "nothing was delivered, so the context was never restored")
 	testing.expect_value(t, r.ctx_user_index, SENTINEL)
 	testing.expect(t, r.tag_ok, "the handler must come back as the one that was attached")
 }
@@ -724,7 +819,7 @@ test_unsubscribed_groups_are_not_delivered :: proc(t: ^testing.T) {
 	attach_recorder(t, root, &r, {.MOUSE})
 
 	send(t, tick, reset)
-	testing.expect_value(t, r.count, 0)
+	testing.expect_value(t, sent_count(&r), 0)
 
 	testing.expect_value(t, sciter_app.detach_handler(root, &r.handler), nil)
 
@@ -735,7 +830,7 @@ test_unsubscribed_groups_are_not_delivered :: proc(t: ^testing.T) {
 	defer sciter_app.detach_handler(root, &subscribed.handler)
 
 	send(t, tick, reset)
-	testing.expect(t, subscribed.count > 0, "a subscribed handler must receive the event")
+	testing.expect(t, sent_count(&subscribed) > 0, "a subscribed handler must receive the event")
 }
 
 @(test)
@@ -746,13 +841,13 @@ test_a_detached_handler_stops_hearing :: proc(t: ^testing.T) {
 	r: Recorder
 	attach_recorder(t, root, &r)
 	send(t, tick, reset)
-	testing.expect(t, r.count > 0, "attached, so it hears the event")
+	testing.expect(t, sent_count(&r) > 0, "attached, so it hears the event")
 
 	testing.expect_value(t, sciter_app.detach_handler(root, &r.handler), nil)
 	r.count = 0
 
 	send(t, tick, reset)
-	testing.expect_value(t, r.count, 0)
+	testing.expect_value(t, sent_count(&r), 0)
 }
 
 // A handler with no `on_event` is a legitimate thing to attach - it is how you subscribe to a group
@@ -791,13 +886,13 @@ test_window_handler_hears_the_document :: proc(t: ^testing.T) {
 
 	r.count = 0
 	send(t, tick, reset)
-	testing.expect(t, r.count > 0, "a window handler must hear an element inside the document")
+	testing.expect(t, sent_count(&r) > 0, "a window handler must hear an element inside the document")
 
 	testing.expect_value(t, sciter_app.detach_window_handler(window, &r.handler), nil)
 	r.count = 0
 
 	send(t, tick, reset)
-	testing.expect_value(t, r.count, 0)
+	testing.expect_value(t, sent_count(&r), 0)
 }
 
 // `post_event` queues rather than delivers. Nothing runs the queue here, which is the point: the call
@@ -813,5 +908,195 @@ test_post_event_does_not_deliver_synchronously :: proc(t: ^testing.T) {
 
 	err := sciter_app.post_event(tick, sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE, source = reset)
 	testing.expect_value(t, err, nil)
-	testing.expect_value(t, r.count, 0)
+	testing.expect_value(t, sent_count(&r), 0)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Timers
+//
+// A timer is the engine's own clock rather than a thread: it delivers a `.TIMER` event on the engine's
+// thread, inside the message pump, which is why these tests drive `heartbeat` rather than sleeping.
+//
+// The return value means the opposite of everywhere else - true keeps the timer running, false stops
+// it - so the tests below pin that down in both directions.
+
+@(private = "file")
+Ticks :: struct {
+	handler: sciter_app.Event_Handler,
+	ids:     [64]uintptr,
+	count:   int,
+	keep:    bool, // what on_event returns: true to let the timer carry on
+}
+
+@(private = "file")
+count_ticks :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	tk := (^Ticks)(handler.user_data)
+	te, ok := sciter_app.timer_event(event)
+	if !ok {
+		return false
+	}
+	if tk.count < len(tk.ids) {
+		tk.ids[tk.count] = te.id
+	}
+	tk.count += 1
+	return tk.keep
+}
+
+@(private = "file")
+attach_ticks :: proc(t: ^testing.T, element: sciter_app.Element, tk: ^Ticks, keep := true) {
+	tk.keep = keep
+	tk.handler = sciter_app.Event_Handler {
+		subscription = {.TIMER},
+		on_event     = count_ticks,
+		user_data    = tk,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(element, &tk.handler), nil)
+}
+
+// Timer events are delivered from the pump, so nothing arrives unless the pump runs. `heartbeat`
+// services timers without touching input, which is exactly what is wanted with no window shown.
+@(private = "file")
+pump :: proc(d: time.Duration) {
+	start := time.now()
+	for time.since(start) < d {
+		sciter_app.heartbeat()
+	}
+}
+
+// How many ticks a PUMP-long run should produce at INTERVAL. Asserted loosely - this is a real clock
+// and the test machine is not the only thing running.
+@(private = "file")
+INTERVAL :: 10 * time.Millisecond
+@(private = "file")
+PUMP :: 150 * time.Millisecond
+
+@(test)
+test_a_timer_ticks_until_it_is_stopped :: proc(t: ^testing.T) {
+	root, _, _, ok := test_elements(t)
+	if !ok {return}
+
+	tk: Ticks
+	attach_ticks(t, root, &tk)
+	defer sciter_app.detach_handler(root, &tk.handler)
+
+	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 7), nil)
+	pump(PUMP)
+
+	testing.expectf(t, tk.count >= 3, "expected several ticks in %v, got %d", PUMP, tk.count)
+	for id in tk.ids[:min(tk.count, len(tk.ids))] {
+		testing.expect_value(t, id, uintptr(7))
+	}
+
+	// Stopping is a real stop, not a pause: nothing more arrives.
+	testing.expect_value(t, sciter_app.stop_timer(root, 7), nil)
+	stopped_at := tk.count
+	pump(PUMP)
+	testing.expect_value(t, tk.count, stopped_at)
+
+	// Stopping one that is not running is not an error.
+	testing.expect_value(t, sciter_app.stop_timer(root, 7), nil)
+}
+
+// The one place in this package where `return false` is not the safe default. Everywhere else it means
+// "I only looked at this"; here it means "stop", and a handler written to the usual advice gets exactly
+// one tick.
+@(test)
+test_returning_false_from_a_timer_stops_it :: proc(t: ^testing.T) {
+	root, _, _, ok := test_elements(t)
+	if !ok {return}
+
+	tk: Ticks
+	attach_ticks(t, root, &tk, keep = false)
+	defer sciter_app.detach_handler(root, &tk.handler)
+	defer sciter_app.stop_timer(root, 7)
+
+	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 7), nil)
+	pump(PUMP)
+
+	testing.expect_value(t, tk.count, 1)
+}
+
+// The id is what separates several timers on one element, and it comes back on the event so a handler
+// can tell them apart. Stopping one leaves the others running.
+@(test)
+test_several_timers_on_one_element :: proc(t: ^testing.T) {
+	root, _, _, ok := test_elements(t)
+	if !ok {return}
+
+	tk: Ticks
+	attach_ticks(t, root, &tk)
+	defer sciter_app.detach_handler(root, &tk.handler)
+	defer sciter_app.stop_timer(root, 1)
+	defer sciter_app.stop_timer(root, 2)
+
+	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 1), nil)
+	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 2), nil)
+	pump(PUMP)
+
+	first, second := count_id(&tk, 1), count_id(&tk, 2)
+	testing.expect(t, first >= 2, "the first timer must tick")
+	testing.expect(t, second >= 2, "the second timer must tick")
+
+	testing.expect_value(t, sciter_app.stop_timer(root, 1), nil)
+	tk.count = 0
+	pump(PUMP)
+
+	testing.expect_value(t, count_id(&tk, 1), 0)
+	testing.expect(t, count_id(&tk, 2) >= 2, "stopping one timer must not stop the other")
+}
+
+@(private = "file")
+count_id :: proc(tk: ^Ticks, id: uintptr) -> (n: int) {
+	for seen in tk.ids[:min(tk.count, len(tk.ids))] {
+		if seen == id {
+			n += 1
+		}
+	}
+	return
+}
+
+// A timer belongs to one element and is delivered to the handlers on *that* element. It does not
+// bubble, so a handler on `root` hears nothing about a timer set on a button inside it - which is the
+// opposite of how every other group in this file behaves, and looks exactly like a timer that never
+// started.
+@(test)
+test_a_timer_does_not_bubble :: proc(t: ^testing.T) {
+	root, tick, _, ok := test_elements(t)
+	if !ok {return}
+
+	on_root: Ticks
+	attach_ticks(t, root, &on_root)
+	defer sciter_app.detach_handler(root, &on_root.handler)
+
+	on_button: Ticks
+	attach_ticks(t, tick, &on_button)
+	defer sciter_app.detach_handler(tick, &on_button.handler)
+	defer sciter_app.stop_timer(tick, 9)
+
+	testing.expect_value(t, sciter_app.set_timer(tick, INTERVAL, 9), nil)
+	pump(PUMP)
+
+	testing.expect(t, on_button.count >= 3, "the element the timer was set on hears it")
+	testing.expect_value(t, on_root.count, 0)
+}
+
+// The engine counts whole milliseconds, and zero means stop - so a sub-millisecond interval that was
+// rounded down would silently be a stop. `set_timer` raises it to one millisecond instead.
+@(test)
+test_a_sub_millisecond_interval_still_runs :: proc(t: ^testing.T) {
+	root, _, _, ok := test_elements(t)
+	if !ok {return}
+
+	tk: Ticks
+	attach_ticks(t, root, &tk)
+	defer sciter_app.detach_handler(root, &tk.handler)
+	defer sciter_app.stop_timer(root, 3)
+
+	testing.expect_value(t, sciter_app.set_timer(root, 100 * time.Microsecond, 3), nil)
+	pump(PUMP)
+
+	// One tick is the whole claim: rounding the interval down to zero would have stopped the timer
+	// before it ever ran. How many arrive after that is the engine's business, and under a sanitizer
+	// it is a good deal fewer.
+	testing.expect(t, tk.count > 0, "a sub-millisecond interval must run, not stop")
 }

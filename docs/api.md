@@ -141,6 +141,13 @@ do not clear it.
 | `attribute` / `set_attribute` | `""` reads an absent attribute and removes an existing one |
 | `element_state` / `set_element_state` | the CSS pseudo-class bits as a `bit_set` |
 | `element_value` / `set_element_value` | script's `element.value`, typed by the attached behavior |
+| `make_element(tag, text := "")` | detached; **the reference is yours**, inserted or not |
+| `clone_element(el)` | detached deep copy, same ownership |
+| `insert_element(el, parent, index := -1)` | default appends; a move if `el` already had a parent |
+| `remove_element(el, finalize := true)` | `false` detaches **and takes a reference for you** |
+| `swap_elements(a, b)` | exchanges indexes and parents |
+| `sort_children(el, cmp, user_data, first, last)` | in place; `last` is one past the end |
+| `element_uid` / `element_by_uid` | `element_by_uid` is broken on 6.x — see [`dom.md`](./dom.md#identity) |
 | `eval_element(el, script)` | script with `this` bound to the element |
 | `call_method(el, method, args: ..Value)` | a method on the element's script object, including behavior methods |
 
@@ -200,8 +207,13 @@ engine's `SUBSCRIPTIONS_REQUEST`, which the wrapper replies to for you — a han
 nothing receives nothing.
 
 Decoding: `event_code(cmd)`, `event_phase(cmd)` → `Event_Phase{.Bubbling, .Sinking, .Handled}`, and
-the typed accessors `behavior_event`, `mouse_event`, `key_event`, each returning `ok = false` if the
-event is not of that group and each exposing `.raw` for what is not surfaced.
+the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, each returning
+`ok = false` if the event is not of that group and each exposing `.raw` for what is not surfaced.
+
+Timers: `set_timer(el, interval: time.Duration, id: uintptr = 0)` and `stop_timer(el, id)`. The event
+arrives in the `.TIMER` group as `Timer_Event{id, raw}`. **The return value is inverted for this
+group** — `true` keeps the timer running, `false` stops it — and a timer is delivered only to handlers
+on the element it was set on. See [`events.md`](./events.md#timers).
 
 Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `post_event(...)`. These
 bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
@@ -261,7 +273,7 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
 Things you will reach for the raw table for today: graphics (`SciterGraphics*`), the request API
-(`sciter-x-request.h`), element timers (`SciterSetTimer`), drag-and-drop,
+(`sciter-x-request.h`), drag-and-drop, mouse capture (`SciterSetCapture` / `SciterReleaseCapture`),
 `SciterSetHighlightedElement`, and `SciterUpdateElement` / `SciterRefreshElementArea`.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,

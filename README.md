@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twelve examples, 50 tests and nine guides
+> engine, there is an Odin-shaped layer on top of them, and twelve examples, 66 tests and nine guides
 > cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -324,7 +324,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`html-css-js.md`](docs/html-css-js.md) | what Sciter's HTML/CSS/JS is and is not — flow layout, behaviors, the runtime |
 | [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md) | `eval`, `call`, native functors, and the `Value` lifetime rules |
 | [`dom.md`](docs/dom.md) | element handles, selectors, traversal, text and attributes, state, geometry |
-| [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, synthesised events |
+| [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, timers, synthesised events |
 | [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |

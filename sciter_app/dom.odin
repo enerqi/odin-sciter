@@ -1,4 +1,4 @@
-// The DOM: finding elements, and reading and writing them.
+// The DOM: finding elements, reading and writing them, and building new ones.
 //
 // An element handle is a borrowed pointer into the engine's document tree. It stays valid as long as
 // the element is in the document, which for anything reached from `root` during an event handler or
@@ -6,6 +6,10 @@
 // message pump, in a struct that outlives the callback - take a reference with `use_element` and give
 // it back with `unuse_element`, or the handle turns into a dangling pointer the moment script removes
 // the element.
+//
+// The exception is an element you made rather than found: `make_element` and `clone_element` hand back
+// a reference that is already yours, and it stays yours after the element is inserted. See "Building
+// and moving elements" below.
 package sciter_app
 
 import sciter ".."
@@ -202,6 +206,160 @@ set_element_value :: proc(element: Element, value: ^Value) -> Error {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Building and moving elements
+//
+// `set_html` replaces a subtree with markup and is the right tool most of the time. This is the other
+// way: build the element, fill it in, and put it where it goes - which is what you want when the
+// content comes from data rather than from a template, and the only way to *move* an element rather
+// than re-create it.
+//
+// One rule, and it is the C API's rather than this package's: **`make_element` and `clone_element`
+// hand back an element with a reference already taken, and that reference is yours.** Inserting it
+// does not consume it - the document takes its own. So the shape is always
+//
+//	item := sciter_app.make_element("li", "third") or_return
+//	defer sciter_app.unuse_element(item)          // yours either way, inserted or not
+//	sciter_app.insert_element(item, list) or_return
+//
+// and an element that is created and never unused leaks inside the engine, where Odin's allocator
+// tracking cannot see it.
+
+// A new element, disconnected from any document. `text` is plain text and is not parsed - markup in it
+// is text, not elements.
+//
+// The returned element carries a reference that belongs to the caller: `unuse_element` it once it has
+// been inserted, or to throw it away.
+make_element :: proc(tag: string, text := "") -> (element: Element, err: Error) {
+	he: sciter.Helement
+
+	w: [^]u16
+	if text != "" {
+		w = raw_data(utf16_from_string(text, context.temp_allocator))
+	}
+
+	dom_err(sciter.api().SciterCreateElement(to_cstring(tag, context.temp_allocator), w, &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// A deep copy of `element`, disconnected from any document: children, attributes and all. Same
+// ownership as `make_element` - the copy carries a reference that is yours.
+clone_element :: proc(element: Element) -> (copy: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.api().SciterCloneElement(sciter.Helement(element), &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// Puts `element` into `parent` at `index`. The default appends: an index past the end is not an error,
+// it lands at the end.
+//
+// Inserting an element that already has a parent is a **move** - the engine disconnects it first.
+// Nothing else is needed to move an element around, and re-creating it would lose its state and its
+// attached behaviors.
+insert_element :: proc(element: Element, parent: Element, index := -1) -> Error {
+	// The index is clamped to the child count rather than handed over as given. The C API documents an
+	// index past the end as an append, and a moderate one behaves that way - but a very large one
+	// (`max(u32)`, the obvious spelling of "at the end") segfaults inside the engine rather than
+	// appending, so the count is what gets passed.
+	n := child_count(parent) or_return
+	at := n if index < 0 || index > n else index
+
+	return dom_err(sciter.api().SciterInsertElement(sciter.Helement(element), sciter.Helement(parent), u32(at)))
+}
+
+// Takes `element` out of its document. The same `finalize` flag, with the same meaning, as
+// `node_remove`.
+//
+// `finalize = true` destroys it, behaviors and all, and the handle is dead when this returns.
+//
+// `finalize = false` detaches it and **hands the caller a reference**, exactly like `make_element`:
+// unuse it once it has been inserted somewhere else, or to throw it away. That reference is taken here
+// rather than left to the caller because the C API does not take one - a bare `SciterDetachElement`
+// drops the last reference to an element nobody else is holding, and the next use of the handle is a
+// segfault rather than an error code.
+remove_element :: proc(element: Element, finalize := true) -> Error {
+	if finalize {
+		return dom_err(sciter.api().SciterDeleteElement(sciter.Helement(element)))
+	}
+
+	// Before, not after: after the detach there may be nothing left to take a reference to.
+	use_element(element) or_return
+	if err := dom_err(sciter.api().SciterDetachElement(sciter.Helement(element))); err != nil {
+		unuse_element(element)
+		return err
+	}
+	return nil
+}
+
+// Exchanges the positions of two elements - both their indexes and their parents, so this moves them
+// between containers as readily as within one.
+swap_elements :: proc(a, b: Element) -> Error {
+	return dom_err(sciter.api().SciterSwapElements(sciter.Helement(a), sciter.Helement(b)))
+}
+
+// Orders `element`'s children in place. Return a negative number, zero or a positive one, as with
+// every other comparator.
+Element_Comparator :: proc(a, b: Element, user_data: rawptr) -> int
+
+// Sorts the children in `[first, last)` - `last` is one past the end, and the default sorts all of
+// them. The comparator runs on this thread, with this context, before `sort_children` returns.
+sort_children :: proc(
+	element: Element,
+	cmp: Element_Comparator,
+	user_data: rawptr = nil,
+	first := 0,
+	last := -1,
+) -> Error {
+	if cmp == nil {
+		return sciter.Scdom_Result.INVALID_PARAMETER
+	}
+
+	stop := last
+	if stop < 0 {
+		stop = child_count(element) or_return
+	}
+	if first >= stop {
+		return nil // nothing to order, which is not a failure
+	}
+
+	sink := Sort_Sink {
+		ctx       = context,
+		cmp       = cmp,
+		user_data = user_data,
+	}
+	return dom_err(
+		sciter.api().SciterSortElements(sciter.Helement(element), u32(first), u32(stop), sort_callback, &sink),
+	)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Identity
+//
+// A UID is a plain integer that survives being stored somewhere a handle cannot go - a script value, a
+// map key, a message to another part of the program. It is only meaningful for as long as the element
+// is in its document, and only within the window it came from.
+
+element_uid :: proc(element: Element) -> (uid: u32, err: Error) {
+	dom_err(sciter.api().SciterGetElementUID(sciter.Helement(element), &uid)) or_return
+	return uid, nil
+}
+
+// The element a UID refers to. Returns `.Not_Found` for a UID this window does not know.
+element_by_uid :: proc(window: Window, uid: u32) -> (element: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), uid, &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Script, scoped to an element
 
 // Runs a script with `this` bound to the element. The result owns a reference; `value_clear` it.
@@ -293,4 +451,18 @@ all_callback :: proc "system" (he: sciter.Helement, param: rawptr) -> b32 {
 	context = sink.ctx
 	append(&sink.out, Element(he))
 	return false // keep going
+}
+
+@(private)
+Sort_Sink :: struct {
+	ctx:       runtime.Context,
+	cmp:       Element_Comparator,
+	user_data: rawptr,
+}
+
+@(private)
+sort_callback :: proc "system" (he1: sciter.Helement, he2: sciter.Helement, param: rawptr) -> i32 {
+	sink := (^Sort_Sink)(param)
+	context = sink.ctx
+	return i32(sink.cmp(Element(he1), Element(he2), sink.user_data))
 }

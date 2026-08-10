@@ -21,8 +21,9 @@ tag `6.0.4.9-bis`.
   DOM slots.
 - **`package sciter_app`** — hand-written, Odin-shaped: `string` in and out, an `Error` union that
   carries the engine's own result codes, and ownership rules stated rather than hidden. Covers the
-  application lifecycle, windows, `Value`, the DOM (elements and nodes), geometry and scrolling,
-  events, the host resource callback, archives, engine options, and embedding the engine itself.
+  application lifecycle, windows, `Value`, the DOM (elements and nodes, including building and moving
+  them), geometry and scrolling, events and element timers, the host resource callback, archives,
+  engine options, and embedding the engine itself.
 
 ### Loading
 
@@ -44,7 +45,7 @@ Windows.
 
 ### Tests
 
-50 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+66 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, archive lookup, the event parameter accessors and the
 event-code/phase split, the embedded engine's cache naming and write-once behaviour, and the host
 callback's serve / discard / not-ours decision — run anywhere. The windowed ones, including the event
@@ -73,8 +74,19 @@ checked by `just check`.
   inside the vendored engine binary, not the bindings.
 - **`SciterGetViewExpando` is NULL on every platform** in Sciter 6, so `set_global` evaluates a
   one-line assignment function instead of writing into `globalThis` directly.
-- Graphics, the request API, element timers and drag-and-drop have no wrapper yet, and are reached
-  through `sciter.api()`.
+- **`SciterGetElementByUID` refuses every UID `SciterGetElementUID` produces** on the vendored 6.x
+  engine — either window handle, used or not, made or found — so `element_by_uid` is present and
+  documented as non-functional rather than quietly wrong.
+- **`SciterInsertElement` segfaults on a very large index.** `max(u32)` is the obvious spelling of
+  "append" and crashes inside the engine, so `insert_element` clamps to the child count.
+- **A bare `SciterDetachElement` can free the element out from under the caller**, and the next use of
+  the handle is a segfault rather than an error. `remove_element(el, finalize = false)` takes a
+  reference first and hands it to the caller.
+- Graphics, the request API and drag-and-drop have no wrapper yet, and are reached through
+  `sciter.api()`.
+- **A `.TIMER` handler must return true to keep its timer running.** The return value is inverted for
+  that one group, so a handler ending in the usual `return false` gets exactly one tick. Timers are
+  also delivered only to handlers on the element they were set on — they do not bubble.
 - **`scroll_to_view` does nothing until the window has been shown and rendered at least once** — the
   call succeeds and the scroll position does not change. `set_scroll_pos` has no such requirement.
   Without `to_top` the scroll is also applied on the engine's own schedule, so reading the position

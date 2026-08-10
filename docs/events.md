@@ -130,6 +130,46 @@ What `true` does is tell intrinsic behaviors that someone dealt with it — and 
 subtle in one direction: swallowing a `.MOUSE` event that an intrinsic behavior needed makes a control
 stop responding for no visible reason. When in doubt, return `false` for anything you only observed.
 
+## Timers
+
+A timer belongs to an element and delivers a `.TIMER` event to the handlers on it. It is the engine's
+own clock rather than a thread: the event arrives on the engine's thread inside the message pump, so a
+handler can touch the DOM directly and needs no synchronisation.
+
+```odin
+sciter_app.set_timer(el, 100 * time.Millisecond, MY_TIMER)   // id tells several timers apart
+sciter_app.stop_timer(el, MY_TIMER)
+```
+
+```odin
+if te, ok := sciter_app.timer_event(event); ok {
+	if te.id == MY_TIMER {
+		tick()
+	}
+	return true          // keep it running; false stops it
+}
+```
+
+Three things about timers that are all invisible when they go wrong, because each one looks like a
+timer that never started:
+
+- **The return value is inverted for this group.** `true` keeps the timer running and `false` stops
+  it — the opposite of every other group, and the opposite of the advice above to return `false` for
+  anything you only observed. A handler ending in an unconditional `return false` gets exactly one
+  tick.
+- **A timer does not bubble.** It is delivered to handlers on the element it was set on and nowhere
+  else, so a handler on `root` hears nothing about a timer set on a button inside it. Set the timer on
+  the element the handler is attached to, or attach a handler to the element with the timer.
+- **Nothing arrives unless the pump runs.** `run` does it; when Sciter shares a thread, `heartbeat`
+  services timers without touching input.
+
+Calling `set_timer` again with the same `id` replaces that timer rather than adding a second one, so
+it doubles as "change the interval". The engine counts whole milliseconds and an interval of zero is
+what stops a timer, so `set_timer` raises a positive sub-millisecond interval to one millisecond
+instead of rounding it down to a silent stop — `stop_timer` is the way to spell stopping.
+
+`.TIMER` has to be in `subscription` like any other group.
+
 ## Which events exist
 
 - **`.BEHAVIOR_EVENT`** — the logical, semantic ones, emitted by the intrinsic behaviors:
