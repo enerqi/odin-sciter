@@ -13,7 +13,7 @@ The engine itself is vendored in `lib/linux/x64/libsciter.so`, so there is nothi
 system package to install.
 
 ```sh
-git clone <this repository>
+git clone --depth 1 https://github.com/enerqi/odin-sciter.git
 cd odin-sciter
 just example hello_window
 ```
@@ -125,7 +125,7 @@ output (above), and check whether relative URLs have a base to resolve against â
 `base_url` gives `<img src="logo.png">` nowhere to look. `load_file` sets the base for you.
 
 **A crash with no obvious cause, after an SDK upgrade.** Run `just example api_map`. It walks all 189
-`ISciterAPI` slots and resolves each function pointer back to its symbol name with `dladdr`; the
+`ISciterAPI` slots and resolves each function pointer back to the symbol and module it belongs to; the
 expected result is 189 slots, 16 null (platform-padded), 0 mismatches. This is the check that catches
 a header/binary mismatch, and it is how the abandoned GitHub mirror's broken table was found.
 
@@ -145,6 +145,7 @@ parallel by default. Every test recipe here passes `-define:ODIN_TEST_THREADS=1`
 | ship HTML/CSS/images inside the binary | [`resources.md`](./resources.md) |
 | ship the thing | [`deployment.md`](./deployment.md) |
 | look a procedure up | [`api.md`](./api.md) |
+| upgrade the engine, or cut a release | [`UPGRADING.md`](./UPGRADING.md) |
 
 The examples are ordered by difficulty and each is a single self-contained file with the explanation
 in its header comment. `just example NAME` runs one.

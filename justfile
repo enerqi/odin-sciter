@@ -41,6 +41,10 @@ packfolder_platform := if os() == "windows" { "windows" } else if os() == "macos
 
 # Where scapp lives inside an SDK checkout, per platform.
 scapp_platform := if os() == "windows" { "windows/x64" } else if os() == "macos" { "macosx" } else { "linux/x64" }
+
+# Suffix on the SDK's own tools. They are `packfolder`/`scapp` everywhere except Windows, where they
+# are `packfolder.exe`/`scapp.exe` - which is what `just pack` and `just extension-run` open.
+exe_ext := if os() == "windows" { ".exe" } else { "" }
 test_main_name := "test-main.exe"
 
 # `join`, not the `/` operator: `/` always emits a forward slash, and cmd.exe rejects a forward-slash
@@ -107,6 +111,7 @@ format:
 	odinfmt -w sciter.odin
 	odinfmt -w sciter_app
 	odinfmt -w examples
+	odinfmt -w docs/snippets
 	odinfmt -w spike
 
 
@@ -440,17 +445,30 @@ ols-config:
 # Path to a built odin-c-bindgen. Override with `just bindgen_bin=/path/to/bindgen.bin bindgen`.
 bindgen_bin := env_var_or_default("ODIN_C_BINDGEN", join(justfile_directory(), "..", "odin-c-bindgen", "bindgen.bin"))
 
-# Regenerate sciter.odin from the vendored headers. Three steps, each explained in the file it runs:
+# Regenerate sciter.odin from the vendored headers. Four steps, each explained in the file it runs:
 #   1. src/flatten_headers.py  - concatenate the C ABI headers into one self-contained build/sciter.h,
 #                                because bindgen only emits declarations found in the input file
 #   2. bindgen                 - the actual generation, configured by bindgen.sjson
 #   3. src/postprocess_bindings.py - rewrite `proc "c"` to `proc "system"` for 32-bit Windows
+#   4. odin check, odinfmt, odin check again
+#
+# The formatting pass runs only after the first check passes, so a generation that produced something
+# that does not compile is not also reformatted - the diff you have to read to find out why stays a
+# diff about the generator. The second check is one second and confirms the formatter did not break
+# what the generator got right.
+#
+# It is part of *this* recipe rather than left to `just format` because sciter.odin is generated:
+# bindgen's own line breaking is not odinfmt's, so without this every regeneration lands a few thousand
+# lines of formatting noise on top of whatever actually changed in the API, and `just format` then
+# quietly "changes" a file nobody edited.
 # ---
 # regenerate the bindings from external/sciter/include
 bindgen:
 	uv run --no-project -p 3.14 python src/flatten_headers.py
 	{{bindgen_bin}} .
 	uv run --no-project -p 3.14 python src/postprocess_bindings.py sciter.odin
+	odin check . -no-entry-point
+	odinfmt -w sciter.odin
 	odin check . -no-entry-point
 
 # `-no-entry-point` for the two library packages, which have no `main`. The examples do have one, and
@@ -505,7 +523,7 @@ pack:
 	    echo "packfolder is not vendored here; see external/sciter/VENDORED.md." >&2
 	    exit 1
 	fi
-	packfolder="$sdk/bin/{{ packfolder_platform }}/packfolder"
+	packfolder="$sdk/bin/{{ packfolder_platform }}/packfolder{{ exe_ext }}"
 	if [ ! -x "$packfolder" ]; then
 	    echo "no packfolder at $packfolder" >&2
 	    exit 1
@@ -541,7 +559,7 @@ extension-run: extension
 	    echo "scapp is not vendored here; see external/sciter/VENDORED.md." >&2
 	    exit 1
 	fi
-	scapp="$sdk/bin/{{ scapp_platform }}/scapp"
+	scapp="$sdk/bin/{{ scapp_platform }}/scapp{{ exe_ext }}"
 	if [ ! -x "$scapp" ]; then
 	    echo "no scapp at $scapp" >&2
 	    exit 1
@@ -551,8 +569,8 @@ extension-run: extension
 	cp "$scapp" "$app/"
 	cp {{ target_path("debug", "odin-ext" + shared_ext) }} "$app/"
 	cp examples/assets/extension/index.htm "$app/"
-	echo "running $app/scapp"
-	cd "$app" && ./scapp index.htm
+	echo "running $app/scapp{{ exe_ext }}"
+	cd "$app" && ./scapp{{ exe_ext }} index.htm
 
 # Run the `@(test)` procs that live inside the examples.
 #

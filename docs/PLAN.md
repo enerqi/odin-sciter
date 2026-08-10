@@ -5,8 +5,9 @@ top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, 
 verifies all 189 `ISciterAPI` slots against the shipped engine, and twelve examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events, custom
 resource loading, archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 10 `@(test)` procs, and the nine guides in `docs/` are written. What remains
-is Windows.
+`just example-tests` runs 21 `@(test)` procs, and the nine guides in `docs/` are written. What remains
+is Windows - and everything that could be prepared for it without the machine has been, including
+`api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
 **Running a windowed example on X11**: this machine's engine build segfaults in `XSetICFocus`, inside
 libsciter's X input-method handling, shortly after a window takes focus — 3 runs out of 3. Running with
@@ -91,7 +92,8 @@ script-VM API.
 
 ### Verified, not assumed
 
-`examples/api_map.odin` walks the table field by field and resolves each pointer with `dladdr`:
+`examples/api_map.odin` walks the table field by field and resolves each pointer back to the symbol and
+module it belongs to - `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on Windows:
 
 ```
 001 off=0008 SciterClassName                    -> SciterClassNameImp
@@ -190,14 +192,22 @@ Window creation flags shrank in 6.x, too. `SW_TITLEBAR`, `SW_RESIZEABLE`, `SW_CO
 
 ## 5. Generating the bindings
 
-`just bindgen` runs three steps. All of it is reproducible from a clean checkout.
+`just bindgen` runs four steps. All of it is reproducible from a clean checkout, and running it twice
+produces a byte-identical `sciter.odin`.
 
 ```
 uv run python src/flatten_headers.py      # -> build/sciter.h
 ../odin-c-bindgen/bindgen.bin .           # -> sciter.odin, per bindgen.sjson
 uv run python src/postprocess_bindings.py sciter.odin
 odin check . -no-entry-point
+odinfmt -w sciter.odin                    # bindgen's line breaking is not odinfmt's
+odin check . -no-entry-point
 ```
+
+The formatting pass is part of generation rather than left to `just format`, and it runs only after the
+first check passes. Without it, every regeneration lands a few thousand lines of formatting noise on
+top of whatever actually changed in the API, and `just format` then "changes" a file nobody edited.
+The second check confirms the formatter did not break what the generator got right.
 
 ### Why the flatten step exists
 
@@ -422,11 +432,18 @@ types that are already right, or the same conversions get written twice.
 6. ~~First window~~ **done** (`examples/hello_window`)
 7. ~~Idiomatic types — §7~~ **done**
 8. ~~Ergonomic layer — `package sciter_app`~~ **done**: window, load, eval, call, `Value` conversions,
-   native functors, DOM access, event handler registration. `Value` is reference-counted with explicit
+   native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
+   the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
 9. ~~**Examples and guides** — §9~~ **done**: all ten examples run, and the nine guides are written.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
-    macOS ships untested and should say so.
+    macOS ships untested and should say so. Prepared without the machine: everything type checks for
+    `windows_amd64` and `darwin_amd64` (`odin check -target:`), `examples/api_map.odin` was rewritten
+    to build on all three (it used `dladdr`, which does not exist on Windows, so the one tool the
+    upgrade procedure leads with would not have linked), the `dom_walk` tests no longer gate
+    themselves on `DISPLAY`/`WAYLAND_DISPLAY` on platforms that have neither, and `just pack` /
+    `just extension-run` look for `packfolder.exe` / `scapp.exe`. The rest is in
+    [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 11. ~~Native extensions (`SciterLibraryInit`)~~ **done** — not in the original plan. See §11 below.
 12. **Housekeeping** — ~~reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes,
     `run_*` / `rerun_*` / `sanitize` / `test` recipes~~ **done**: they now take an example name and

@@ -7,9 +7,11 @@ You write your UI in HTML and CSS, script it in JavaScript, and drive it from Od
 browser and not Electron: the whole engine is a single ~25 MB shared library with no Chromium, no
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
-> **Status: early but usable.** The generated bindings work and are verified against the shipped engine,
-> and there is an Odin-shaped layer on top of them. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what
-> is done and what is not. Linux x64 is the only platform vendored and tested so far.
+> **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
+> engine, there is an Odin-shaped layer on top of them, and twelve examples, 21 tests and nine guides
+> cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
+> been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
+> [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
 
 There are two packages, and you can mix them freely.
 
@@ -52,7 +54,7 @@ nothing else, if you want to see what the wrapper is doing.
 You need [Odin](https://odin-lang.org/docs/install/) and [just](https://just.systems/).
 
 ```sh
-git clone <this repository>
+git clone --depth 1 https://github.com/enerqi/odin-sciter.git
 cd odin-sciter
 just example hello_window
 ```
@@ -102,8 +104,9 @@ You can see the whole table for yourself:
 just example api_map
 ```
 
-That walks every slot and resolves each pointer back to its symbol name with the dynamic linker. It is
-also the regression test for a Sciter upgrade — 189 slots, 0 mismatches expected.
+That walks every slot and resolves each pointer back to the symbol and module it belongs to — `dladdr`
+on Linux and macOS, dbghelp plus `VirtualQuery` on Windows. It is also the regression test for a Sciter
+upgrade: 189 slots, 0 mismatches expected.
 
 
 ## Examples
@@ -326,6 +329,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
 | [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
+| [`WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) | what is already done for the Windows port, and the list to work through on the machine |
 
 Every Odin code block in those guides lives in [`docs/snippets/`](docs/snippets/) as well, and is type
 checked by `just check` — documentation drifts silently otherwise.
@@ -333,6 +337,7 @@ checked by `just check` — documentation drifts silently otherwise.
 
 ## Further reading
 
+- [`CHANGELOG.md`](CHANGELOG.md) — what each release contains, and how releases are versioned
 - [`docs/PLAN.md`](docs/PLAN.md) — findings, design decisions, and what is planned next
 - [`docs/RESEARCH-METHOD.md`](docs/RESEARCH-METHOD.md) — how all of it was established, including the
   part that went wrong

@@ -55,6 +55,44 @@ serve :: proc(request: ^Load_Request, data: []u8) -> Load_Result {
 	return .OK
 }
 
+// Answers a request the handler returned `.DELAYED` for.
+//
+// `.DELAYED` is what makes a loader that cannot answer immediately possible - one reading from a
+// database, a network cache, a decompressor - without blocking the message pump inside the callback.
+// The bargain is strict: **every delayed request must eventually be answered or it leaks**, per
+// sciter-x-def.h, and the answer has to carry the `request_id` the callback was given.
+//
+//	// inside on_load_data:
+//	app.pending = request.raw.requestId
+//	return .DELAYED
+//
+//	// later, back on the engine's thread:
+//	sciter_app.data_ready_async(window, uri, bytes, app.pending)
+//
+// Unlike `serve`, the engine copies the data here, so the buffer does not have to outlive the call.
+// Still call it from the engine's thread - see docs/architecture.md on threading.
+data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sciter.Hrequest) -> Error {
+	w := utf16_from_string(uri, context.temp_allocator)
+	ok := sciter.api().SciterDataReadyAsync(
+		rawptr(window),
+		raw_data(w),
+		raw_data(data),
+		u32(len(data)),
+		rawptr(request_id),
+	)
+	return nil if ok else Api_Error.Load_Failed
+}
+
+// Hands the engine data for a URL outside of a load callback, copying it immediately.
+//
+// This is the "push" half of the loader: it answers a request that is in flight, and is the safe way
+// to supply bytes whose lifetime you cannot guarantee for the duration of a `serve`.
+data_ready :: proc(window: Window, uri: string, data: []u8) -> Error {
+	w := utf16_from_string(uri, context.temp_allocator)
+	ok := sciter.api().SciterDataReady(rawptr(window), raw_data(w), raw_data(data), u32(len(data)))
+	return nil if ok else Api_Error.Load_Failed
+}
+
 // A host callback. Like `Event_Handler`, the engine stores its address, so it must not move and must
 // outlive the window it is attached to.
 Host_Handler :: struct {
@@ -81,10 +119,7 @@ set_host_handler :: proc(window: Window, handler: ^Host_Handler) {
 }
 
 @(private)
-host_trampoline :: proc "system" (
-	pns: ^sciter.Sciter_Callback_Notification,
-	param: rawptr,
-) -> u32 {
+host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, param: rawptr) -> u32 {
 	handler := (^Host_Handler)(param)
 	context = handler.ctx
 

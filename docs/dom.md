@@ -80,9 +80,57 @@ up, err   := sciter_app.parent(el)      // .Not_Found at the root
 name, _   := sciter_app.tag(el)         // "div", "button" - borrowed, valid for the element's life
 ```
 
-These walk *elements*. Text and comment nodes are `Node`, a separate handle type; the wrapper exposes
-the type but the node-level calls (`SciterNodeChildrenCount`, `SciterNodeCastFromElement`, …) are
-reached through `sciter.api()` for now.
+These walk *elements*, which is what an application wants nearly all of the time. Text and comment
+nodes are `Node`, a separate handle type with its own set of calls — see [Nodes](#nodes) below.
+
+## Nodes
+
+A document is really a tree of *nodes*: text and comments are nodes with no element around them.
+Elements are the useful view almost always, and the node view is what you need for the rest — reading
+the text around an inline `<b>` without flattening it, inserting text between two elements, or walking
+the document exactly as written.
+
+```odin
+node, err := sciter_app.node_from_element(el)   // every element is a node
+type, _  := sciter_app.node_type(node)          // .ELEMENT, .TEXT, .COMMENT
+
+child, cerr := sciter_app.node_first_child(node)
+if cerr == nil {
+	content, _ := sciter_app.node_text(child)    // the text a .TEXT node carries
+	defer delete(content)
+}
+```
+
+Traversal is `node_first_child`, `node_last_child`, `node_next_sibling`, `node_prev_sibling`,
+`node_child`, `node_child_count`, and `node_parent` — which returns an `Element`, since only an element
+can contain nodes. Each returns `.Not_Found` at the end of the walk rather than a nil handle, so the
+error is the loop's termination condition:
+
+```odin
+for child, err := sciter_app.node_first_child(node); err == nil; child, err = sciter_app.node_next_sibling(child) {
+	// ...
+}
+```
+
+`node_to_element` crosses back and fails with `.Not_Found` on a text or comment node — check
+`node_type` first when the distinction matters more than the failure.
+
+Creating and moving:
+
+```odin
+created, _ := sciter_app.make_text_node(" appended")   // detached: yours until inserted
+target, _  := sciter_app.node_from_element(summary)
+sciter_app.node_insert(target, .APPEND, created)       // .BEFORE .AFTER .APPEND .PREPEND
+```
+
+Two lifetime rules, both the C API's:
+
+- **Node handles are not reference counted on the way out.** `sciter-x-dom.h` says so outright. A
+  handle is valid while the node is in the document; holding one longer needs `node_add_ref` /
+  `node_release`, which is `use_element` under a different name.
+- **A detached node is yours.** `make_text_node` and `make_comment_node` return a node in no document.
+  Insert it or release it. `node_remove(node, finalize = false)` detaches rather than destroys, which
+  is what moving a node between two places wants.
 
 ## Text, HTML and attributes
 

@@ -1,0 +1,143 @@
+# Windows bring-up checklist
+
+Everything that could be established without a Windows machine has been. This is the part that cannot:
+the list to work through top to bottom when one is available, with the expected result of each step so
+that a surprise is recognisable as one.
+
+Status: **Linux x64 is the only platform vendored and run.** Windows is expected to work — the
+`ISciterAPI` layout is identical on every platform, the calling convention is already handled, and
+everything in this repository type checks for `windows_amd64` — but "type checks" is not "runs".
+
+## What was already done for Windows, without the machine
+
+- **`odin check -target:windows_amd64` passes** for `package sciter`, `package sciter_app`,
+  `docs/snippets`, and every example. That is the cheap half of a port and it is done:
+
+  ```sh
+  odin check . -no-entry-point -target:windows_amd64
+  odin check sciter_app -no-entry-point -target:windows_amd64
+  odin check docs/snippets -no-entry-point -target:windows_amd64
+  for f in examples/*.odin; do odin check "$f" -file -no-entry-point -target:windows_amd64; done
+  ```
+
+  Run these again after any change to platform-conditional code. `darwin_amd64` passes too.
+
+- **`examples/api_map.odin` was rewritten to build and mean something on Windows.** It previously used
+  `dladdr` through `foreign import dl "system:dl"`, which does not exist on Windows — the one tool the
+  upgrade procedure tells you to run first would not have linked. It now resolves symbols through
+  dbghelp, falls back to `VirtualQuery` + `GetModuleFileNameW` for module attribution, and prints the
+  null-slot list explicitly. See the header comment for why the Windows check is weaker than the Linux
+  one.
+
+- **`just pack` and `just extension-run` now look for `packfolder.exe` and `scapp.exe`** via a new
+  `exe_ext` variable. They would have failed to find the SDK's tools otherwise.
+
+- The justfile's other Windows handling came with the skeleton and is believed sound: `radlink` as the
+  default linker, `cmd.exe` as the shell, `.dll` for `shared_ext`, `windows/x64` for `scapp_platform`,
+  `windows` (no arch subfolder) for `packfolder_platform`.
+
+## Bring-up, in order
+
+**1. Vendor the binary.**
+
+```
+lib/windows/x64/sciter.dll        <- from the SDK's bin/windows/x64/
+```
+
+Use the plain `bin/windows/` build, not `bin/windows.d2d/` (a Direct2D variant) or `bin/windows.xp/`.
+Record its size and SHA-256 in `external/sciter/VENDORED.md` beside the Linux entry.
+
+Check `.gitattributes` marks `*.dll` binary — it already covers `*.so`/`*.dll`/`*.dylib`, but confirm
+before the first commit, because a `.dll` that goes through line-ending normalisation is a corrupt
+`.dll` and the failure looks like a broken engine rather than a broken checkout.
+
+**2. `just example api_map`.** The step everything else depends on.
+
+Expected: **189 slots**, `ISciterAPI version 10`, and a *different* null list from Linux —
+`SciterProc`, `SciterProcND`, `SciterTranslateMessage` and the D2D/DirectX entries should now be
+**present**, while `SciterCreateWidget` (Linux/GTK-era) and `SciterCreateNSView` (macOS) should be
+**null**. `SciterGetViewExpando` and `reserved1..4` are null everywhere.
+
+Most slots will print `sciter.dll+0x...` rather than a name: sciter.dll exports only `SciterAPI`, so
+there is nothing for dbghelp to resolve without a PDB. **That is expected and is not a failure.** What
+matters is that every non-null slot lands inside `sciter.dll`. A slot pointing into some *other*
+module, or `<unmapped>`, is a real problem.
+
+Record the null list in the header comment of `api_map.odin`, where the Linux one already is.
+
+**3. `just example hello_window`.** A window with rendered HTML and CSS. The Linux XIM segfault
+(`XSetICFocus`, worked around with `XMODIFIERS=@im=none`) is X11-specific and should not appear.
+
+**4. `just check`.** Both packages, the doc snippets and all twelve examples build.
+
+**5. `just test`.** All tests, with `-define:ODIN_TEST_THREADS=1` already in the recipe. The tests that
+need a display gate themselves on `DISPLAY`/`WAYLAND_DISPLAY`, **which are POSIX environment variables
+that do not exist on Windows** — so check whether those tests skip themselves (wrong, but harmless) or
+run (correct). Fix the gate to treat Windows as always-having-a-display if they skip.
+
+**6. `just example eval`, `dom_walk`, `events`, `call_odin_from_js`.** The core paths: script, DOM,
+events, native functors. Watch for anything UTF-16-shaped going wrong — Windows is where an
+encoding-conversion bug would show up differently, though the C API is UTF-16 on every platform so
+there is no separate code path to get wrong.
+
+**7. `just example custom_loader` and `archive`.** Resource loading. `archive` uses the committed
+`app.pak` and needs no SDK.
+
+**8. `just example single_binary`.** This one **will not compile as-is**: `ENGINE` is behind
+`when ODIN_OS == .Linux && ODIN_ARCH == .amd64`, with a deliberate `#panic` otherwise. Extend the
+`when` to cover Windows once the DLL is vendored, then check the interesting parts:
+
+- the cache directory resolves to `%LOCALAPPDATA%\odin-sciter\<hash>\sciter.dll`
+- the file is written once and reused on the second run
+- **anti-malware does not quarantine it.** A freshly written DLL is exactly the heuristic pattern, and
+  this is the single most likely Windows-specific failure in the repository. If it trips, that is a
+  finding for `docs/deployment.md`, not necessarily a bug to fix.
+
+**9. `just example inspector`.** Needs the SDK's `inspector.exe` running; `SCITER_SET_DEBUG_MODE` and
+`.ENABLE_DEBUG` are already set by the example.
+
+**10. `just extension` and `SCITER_SDK=... just extension-run`.** Builds `odin-ext.dll` and runs it
+under `scapp.exe`. `loadLibrary("odin-ext")` looks for `odin-ext.dll` beside the executable, and
+`-out:` already names it exactly. The `.exe` suffixes fixed above are what make this recipe find the
+SDK's tools at all.
+
+**11. `just sanitize hello_window`.** ASan on Windows is genuinely different from Linux: it does not
+intercept Odin's `HeapAlloc`-based allocator the way it intercepts the Linux one, so it catches less.
+The justfile's own comments cover this. Do not treat a clean Windows ASan run as equivalent to a clean
+Linux one.
+
+## Things to look at specifically
+
+**Recipes with a bash shebang.** `pack`, `extension-run`, `check` and a few others are `#!/usr/bin/env
+bash` scripts. `just` runs those through the shebang rather than `windows-shell`, so they need bash in
+`PATH` — Git for Windows provides it. If they fail with something like "The system cannot find the file
+specified", that is what happened.
+
+**`os.rename` over an existing file.** `embed.odin` writes to a temporary name and renames into place.
+Windows `MoveFile` fails when the destination exists, unlike POSIX. The code already treats a failed
+rename as "someone else won the race" and verifies the destination's size, so the behaviour should be
+correct either way — but confirm the *second* run of `single_binary` does not error, since that is the
+path where the destination exists.
+
+**Executable permission bits.** `write_engine` sets read+execute permissions, which mean nothing on
+Windows. Harmless, but if a DLL fails to load from the cache directory, permissions are not the reason
+— look at anti-malware and at `LoadLibrary` dependency resolution instead.
+
+**Dependent DLL resolution.** `sciter.dll` links only system libraries, so loading it from a cache
+directory should be fine. If it is not, that is `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)`
+territory, in `core:dynlib`, and worth reporting upstream rather than working around here.
+
+**Path separators.** `examples/load_file.odin`'s `file_url` already converts `C:\x\y` to
+`file:///C:/x/y`. Confirm it, since it is the only place in the repository that builds a URL from a
+filesystem path.
+
+## After it works
+
+- update the platform table in `README.md` (Windows row: vendored yes, tested yes)
+- update `external/sciter/VENDORED.md` with the DLL's size and SHA-256
+- update `docs/PLAN.md` milestone 10
+- update `docs/deployment.md`'s status note, which currently says Windows is unverified
+- record the Windows null-slot list in `examples/api_map.odin`
+- per `docs/UPGRADING.md`, this is when the repository's history cost goes from ~11 MB to ~19 MB per
+  engine bump. Nothing to do about it now, but it is the moment the row-10 hybrid (Linux committed,
+  Windows on releases) stops being hypothetical.

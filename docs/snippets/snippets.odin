@@ -379,10 +379,7 @@ res3 :: proc() {
 	_, _, _ = err, data, found
 }
 
-res4_on_load_data :: proc(
-	h: ^sciter_app.Host_Handler,
-	r: ^sciter_app.Load_Request,
-) -> sciter_app.Load_Result {
+res4_on_load_data :: proc(h: ^sciter_app.Host_Handler, r: ^sciter_app.Load_Request) -> sciter_app.Load_Result {
 	app := (^Res_App)(h.user_data)
 	if result, handled := sciter_app.serve_archive(r, app.archive); handled {
 		return result
@@ -423,4 +420,52 @@ api6 :: proc() {
 	api := sciter.api()
 	api.SciterSetOption(nil, .SET_DEBUG_MODE, 1)
 	api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// dom.md, Nodes
+
+dom_nodes :: proc(el: sciter_app.Element) {
+	node, err := sciter_app.node_from_element(el)
+	type, _ := sciter_app.node_type(node)
+
+	child, cerr := sciter_app.node_first_child(node)
+	if cerr == nil {
+		content, _ := sciter_app.node_text(child)
+		defer delete(content)
+	}
+	_, _ = err, type
+}
+
+dom_node_walk :: proc(node: sciter_app.Node) {
+	for child, err := sciter_app.node_first_child(node); err == nil; child, err = sciter_app.node_next_sibling(child) {
+		_ = child
+	}
+}
+
+dom_node_insert :: proc(summary: sciter_app.Element) {
+	created, _ := sciter_app.make_text_node(" appended")
+	target, _ := sciter_app.node_from_element(summary)
+	sciter_app.node_insert(target, .APPEND, created)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// resources.md, the .DELAYED answer
+
+Delayed_App :: struct {
+	pending: sciter.Hrequest,
+}
+
+delayed_on_load_data :: proc(
+	handler: ^sciter_app.Host_Handler,
+	request: ^sciter_app.Load_Request,
+) -> sciter_app.Load_Result {
+	app := (^Delayed_App)(handler.user_data)
+
+	app.pending = request.raw.requestId
+	return .DELAYED
+}
+
+delayed_answer :: proc(window: sciter_app.Window, uri: string, bytes: []u8, app: ^Delayed_App) {
+	sciter_app.data_ready_async(window, uri, bytes, app.pending)
 }

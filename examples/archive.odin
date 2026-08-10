@@ -30,10 +30,12 @@
 // Delete `examples/assets/app/` after building and this still runs: nothing is read from disk.
 package main
 
+import sciter ".."
 import "../sciter_app"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:testing"
 
 // The archive, embedded at compile time. Relative to *this source file*, not to the working directory.
 RESOURCES :: #load("assets/app.pak")
@@ -77,11 +79,7 @@ main :: proc() {
 	defer sciter_app.close_archive(archive)
 	app.archive = archive
 
-	fmt.printfln(
-		"archive opened: %d bytes embedded, header %q",
-		len(resources),
-		string(resources[:4]),
-	)
+	fmt.printfln("archive opened: %d bytes embedded, header %q", len(resources), string(resources[:4]))
 
 	// Lookup works straight away, before any window exists - the archive is just an index.
 	if index, found := sciter_app.archive_item(archive, "index.htm"); found {
@@ -108,11 +106,7 @@ main :: proc() {
 		os.exit(1)
 	}
 
-	fmt.printfln(
-		"%d resources requested, %d missing from the archive",
-		len(app.requested),
-		app.missing,
-	)
+	fmt.printfln("%d resources requested, %d missing from the archive", len(app.requested), app.missing)
 
 	// Report the list back into the document - which is itself a file out of the archive.
 	if root, err := sciter_app.root(window); err == nil {
@@ -126,10 +120,7 @@ main :: proc() {
 	sciter_app.shutdown()
 }
 
-on_load_data :: proc(
-	handler: ^sciter_app.Host_Handler,
-	request: ^sciter_app.Load_Request,
-) -> sciter_app.Load_Result {
+on_load_data :: proc(handler: ^sciter_app.Host_Handler, request: ^sciter_app.Load_Request) -> sciter_app.Load_Result {
 	app := (^App)(handler.user_data)
 
 	// One call does the whole job: match the prefix, look the path up, fill the request in.
@@ -147,4 +138,130 @@ on_load_data :: proc(
 
 	// Not ours - the engine's own built-ins come through here too, and have to be left alone.
 	return .OK
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tests
+//
+//   just test1 archive
+//
+// All headless: an archive is indexed and read with no window, no display and no message pump, so
+// these are the part of the resource path that can be checked anywhere - including on a machine that
+// has just been handed a new engine binary and has not opened a window on it yet.
+//
+// `serve_archive` gets its own tests because its three outcomes are a decision the host makes, not the
+// engine: served, refused, or not ours. Getting the third one wrong breaks the engine's own built-ins
+// (`sciter:window-frame.js` and friends) in a way that is invisible until a document uses one.
+
+@(private = "file")
+engine_loaded :: proc(t: ^testing.T) -> bool {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	return true
+}
+
+@(test)
+test_archive_open_and_read :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, err := sciter_app.open_archive(RESOURCES)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.close_archive(archive)
+
+	index, found := sciter_app.archive_item(archive, "index.htm")
+	testing.expect(t, found, "index.htm should be in the archive")
+	testing.expect(t, strings.contains(string(index), "<html"), "index.htm should be HTML")
+
+	// A nested path, because a flat lookup that happens to work on the root would hide a broken one.
+	script, script_found := sciter_app.archive_item(archive, "script/app.js")
+	testing.expect(t, script_found, "script/app.js should be in the archive")
+	testing.expect(t, len(script) > 0)
+}
+
+@(test)
+test_archive_missing_item :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, err := sciter_app.open_archive(RESOURCES)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.close_archive(archive)
+
+	_, found := sciter_app.archive_item(archive, "nope.htm")
+	testing.expect(t, !found, "a missing path must report not-found, not empty data")
+
+	// A leading slash is the easy mistake: paths are relative to the packed folder.
+	_, slashed := sciter_app.archive_item(archive, "/index.htm")
+	testing.expect(t, !slashed, "paths are relative to the packed folder, with no leading slash")
+}
+
+@(test)
+test_archive_open_empty_blob :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, err := sciter_app.open_archive(nil)
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+	testing.expect_value(t, archive, sciter_app.Archive(nil))
+}
+
+// The three outcomes of serve_archive, built by hand rather than by loading a document: a Load_Request
+// is a URL, a type and the engine's own struct, and the engine only ever reads `outData` back out.
+@(private = "file")
+fake_request :: proc(uri: string, raw: ^sciter.Scn_Load_Data) -> sciter_app.Load_Request {
+	raw^ = {}
+	return sciter_app.Load_Request{uri = uri, type = .RAW, raw = raw}
+}
+
+@(test)
+test_serve_archive_serves_a_matching_url :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, _ := sciter_app.open_archive(RESOURCES)
+	defer sciter_app.close_archive(archive)
+
+	raw: sciter.Scn_Load_Data
+	request := fake_request(sciter_app.ARCHIVE_URL_PREFIX + "index.htm", &raw)
+
+	result, handled := sciter_app.serve_archive(&request, archive)
+	testing.expect(t, handled)
+	testing.expect_value(t, result, sciter_app.Load_Result.OK)
+
+	// `.OK` alone means "engine, load it yourself" - the data pointer is what makes it an answer.
+	testing.expect(t, raw.outData != nil, "a served request must carry the data")
+	testing.expect(t, raw.outDataSize > 0)
+}
+
+@(test)
+test_serve_archive_discards_a_missing_url :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, _ := sciter_app.open_archive(RESOURCES)
+	defer sciter_app.close_archive(archive)
+
+	raw: sciter.Scn_Load_Data
+	request := fake_request(sciter_app.ARCHIVE_URL_PREFIX + "typo.css", &raw)
+
+	result, handled := sciter_app.serve_archive(&request, archive)
+	testing.expect(t, handled, "a URL under our prefix is ours even when it is missing")
+	testing.expect_value(t, result, sciter_app.Load_Result.DISCARD)
+	testing.expect(t, raw.outData == nil)
+}
+
+@(test)
+test_serve_archive_ignores_other_urls :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	archive, _ := sciter_app.open_archive(RESOURCES)
+	defer sciter_app.close_archive(archive)
+
+	// The engine asks for its own built-ins through the same callback. Claiming them breaks them.
+	for uri in ([]string{"sciter:window-frame.js", "file:///tmp/x.css", "https://example.com/a.png"}) {
+		raw: sciter.Scn_Load_Data
+		request := fake_request(uri, &raw)
+
+		result, handled := sciter_app.serve_archive(&request, archive)
+		testing.expect(t, !handled, uri)
+		testing.expect_value(t, result, sciter_app.Load_Result.OK)
+		testing.expect(t, raw.outData == nil)
+	}
 }

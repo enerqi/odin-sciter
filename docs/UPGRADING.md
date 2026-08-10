@@ -32,6 +32,29 @@ repository's packaging detail and do not change the engine's API version.
 The Odin ecosystem has no package manager to satisfy, so the tag is for humans and for
 `git checkout`. No `latest` tag, no moving tags.
 
+## Cutting a release
+
+A release here is a git tag and nothing else — there is no package manager to publish to, and Odin
+consumers vendor or submodule the repository or import it by path.
+
+1. `just check` — both packages, the guides' snippets, all twelve examples
+2. `just test` — every `@(test)`, and `just test_sanitize eval` for the `Value` refcounting under ASan
+3. `just example api_map` — 189 slots, 0 mismatches, against the engine actually vendored
+4. run the windowed examples by hand on every platform that claims to be tested
+5. move the `## Unreleased` heading in [`CHANGELOG.md`](../CHANGELOG.md) to the version being cut, and
+   check the platform table in it and in `README.md` still tell the truth
+6. confirm `external/sciter/VENDORED.md` names the right tag, commit, engine version, API version and
+   SHA-256
+7. tag and push:
+
+   ```sh
+   git tag -a v6.0.4.9 -m "bindings for Sciter 6.0.4.9"
+   git push origin v6.0.4.9
+   ```
+
+If the release attaches binaries as GitHub release assets rather than committing them, that is row 9
+or 10 of the options table below — a change of strategy, not a step to add quietly here.
+
 ## Upgrade procedure
 
 Work on a branch. Every step is cheap except the last, which is the point of the list.
@@ -138,7 +161,9 @@ git clone --depth 1 <repo>
 
 That fetches one copy of the current binaries and nothing else, so history size is a maintainer
 problem, not a user problem. This belongs in the README's quick start once the repository is
-published.
+published. Someone who wants the history but not the dead binaries can use a blobless partial clone
+instead — `git clone --filter=blob:none <repo>` — which keeps every commit and fetches file contents
+on demand.
 
 **3. Never keep two engine versions in the tree.** Replace the file; do not add
 `lib/linux/x64/libsciter-6.0.5.so` beside the old one. The tag says which engine a checkout carries.
@@ -161,17 +186,51 @@ This is disruptive exactly once and is a normal thing for a repository that vend
 on a threshold, with the old history kept under a tag, is much better than doing it in a panic with
 `filter-repo` and a force-push.
 
-### What we deliberately do not do
+### Options considered
 
-**Git LFS.** It moves the bytes rather than removing them, needs server-side support and quota, and
-breaks the offline-clone property that vendoring exists to provide — an LFS clone still has to reach a
-server for the actual binary. For a repository whose whole pitch is "clone it and run an example", that
-is the wrong trade.
+The whole menu, so that revisiting this decision later is a matter of picking a different row rather
+than re-deriving the field. **Rows 1, 2 and 5 are what this repository does**; 3 is offered to users;
+everything else is a documented fallback, not a rejection on principle.
 
-**A binaries submodule.** Same objection: a clone that needs a second network fetch is not offline, and
-it adds a submodule's failure modes to every user's first five minutes.
+| # | Strategy | History cost | Offline `clone && run` | Main cost |
+| --- | --- | --- | --- | --- |
+| **1** | **Vendor binaries in git** ← *current* | ~40 MB per bump, three platforms | yes | permanent growth |
+| **2** | **Upgrade deliberately, not on upstream's cadence** ← *current* | multiplies row 1 by 2–3/year instead of ~50 | yes | you sit on known upstream fixes longer |
+| **3** | Document `--depth 1` for consumers ← *offered* | unchanged server-side; user downloads tip only | yes | no `git log`, no old tags without `--unshallow` |
+| 4 | Document `--filter=blob:none` (blobless partial clone) | unchanged server-side; blobs on demand | yes, for the tip | history operations need network |
+| **5** | **Orphan-branch squash at a threshold** ← *current, at ~500 MB* | resets to ~40 MB | yes | disruptive once per reset; old history lives under an archive tag |
+| 6 | `git filter-repo` rewrite dropping old binaries | drops them retroactively | yes | rewrites every SHA, force-push, breaks forks and existing clones |
+| 7 | Vendor compressed (`libsciter.so.zst`, decompressed by `just`) | ~9 MB instead of ~11 MB per platform-bump | after a decompress step | extra build step; `#load` and `single_binary` want the raw file |
+| 8 | Binaries on an orphan `binaries` branch in this repo | unchanged server-side, excluded from `--single-branch` clones | only if the user fetches that branch | surprising, and two-step |
+| 9 | Our own GitHub Releases + `just fetch-sdk` + pinned SHA-256 | **zero** | no — first run downloads | network failure mode on first run; we host and version the assets |
+| 10 | Hybrid: Linux committed, Windows/macOS on releases | ~11 MB per bump | Linux only | two mechanisms to maintain |
+| 11 | Fetch straight from upstream's GitLab release archive, pinned SHA | **zero** | no | upstream URLs can move; no hosting burden for us |
+| 12 | Git LFS | pointers only | no — LFS fetch on clone | quota and bandwidth billing, server support required |
+| 13 | Submodule pointing at a binaries repo | zero here | no | submodule failure modes in everyone's first five minutes; the other repo grows identically |
+| 14 | Sibling repo, tags in lockstep, no submodule | zero here | no | manual pairing, version-skew risk |
+| 15 | Headers only; user supplies the engine via `SCITER_LIB` | zero | no | every user needs the SDK before anything runs |
+| 16 | Expect a system or distro package | zero | depends | nothing packages Sciter; version drift meets a `Version_Mismatch` refusal |
+| 17 | Nix flake / container image carries the engine | zero | yes, for those users | only helps users already in that ecosystem |
+| 18 | Ship the engine only inside our own release *binaries* (`single_binary`) | zero | no, for library consumers | fine for an application, useless for a bindings library |
+| 19 | Vendor one platform, document the others as fetch-yourself | ~11 MB per bump | Linux only | pushes the work onto Windows and macOS users |
 
-**Fetch-on-demand as the default.** This is the fallback if the numbers get worse than projected — the
-SHA-256 records exist so it can be added without ceremony — but it turns the first run into a download
-with a pinned-checksum failure mode, and that is exactly the friction vendoring is buying its way out
-of.
+Facts that cut across the table:
+
+- Anything from row 9 down only pays off if the binaries were **never committed**. Publishing a release
+  asset for a blob already in a pack shrinks nothing — that is why rows 5 and 6 exist as the only
+  retroactive fixes.
+- Rows 3 and 4 reduce what a *user downloads*, never the server-side repository. Only 5, 6, and never
+  committing reduce that.
+- GitHub hard-rejects a single file over 100 MB and warns over 50 MB; release assets allow 2 GB per
+  file and are not counted against repository size. `libsciter.dylib` at 47.7 MB is the closest any of
+  our files comes to a limit.
+- Every fetch-based row needs the SHA-256 records in `VENDORED.md`. Keeping those current is what makes
+  9, 10 and 11 available at any time without a flag day.
+- The EULA permits redistributing the engine binary in any of these forms. The About-box attribution is
+  the only obligation and does not vary by mechanism.
+
+Why the current choice and not the cheaper ones: `git clone && just example hello_window` working with
+no network, no SDK and no download step is the single biggest thing that makes a bindings library
+approachable, and every zero-history-cost row buys its savings by breaking exactly that. Row 10 is the
+most likely first concession if the budget bites — it keeps the offline property on the platform most
+people land on while cutting the per-bump cost by three quarters.

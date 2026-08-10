@@ -32,7 +32,8 @@ import "core:path/filepath"
 import "core:strings"
 
 // The name of the shared library on each platform, from SCITER_DLL_NAME in sciter-x-types.h.
-LIBRARY_NAME :: "sciter.dll" when ODIN_OS == .Windows else "libsciter.dylib" when ODIN_OS == .Darwin else "libsciter.so"
+LIBRARY_NAME ::
+	"sciter.dll" when ODIN_OS == .Windows else "libsciter.dylib" when ODIN_OS == .Darwin else "libsciter.so"
 
 // Accepted values of `Isciter_Api.version`. A value outside this set means the ISciterAPI struct these
 // bindings were generated from is not the one the loaded library implements: the field offsets would be
@@ -55,11 +56,11 @@ EXPECTED_API_VERSION :: SCITER_API_VERSION
 // The `#define`s themselves are removed in bindgen.sjson, so this is the only spelling of them.
 Scdom_Result :: enum Int {
 	OK                = 0,
-	INVALID_HWND      = 1,  // invalid HWINDOW
-	INVALID_HANDLE    = 2,  // invalid HELEMENT
-	PASSIVE_HANDLE    = 3,  // attempt to use an HELEMENT not marked by Sciter_UseElement()
-	INVALID_PARAMETER = 4,  // parameter is invalid, e.g. a null pointer
-	OPERATION_FAILED  = 5,  // operation failed, e.g. invalid html in SciterSetElementHtml()
+	INVALID_HWND      = 1, // invalid HWINDOW
+	INVALID_HANDLE    = 2, // invalid HELEMENT
+	PASSIVE_HANDLE    = 3, // attempt to use an HELEMENT not marked by Sciter_UseElement()
+	INVALID_PARAMETER = 4, // parameter is invalid, e.g. a null pointer
+	OPERATION_FAILED  = 5, // operation failed, e.g. invalid html in SciterSetElementHtml()
 	OK_NOT_HANDLED    = -1, // not an error: the call succeeded and nothing consumed it
 }
 
@@ -104,13 +105,7 @@ loaded :: proc() -> bool {
 //
 // On failure `tried` lists every candidate that was attempted, so the caller can print something
 // actionable. It is allocated with `allocator`.
-load :: proc(
-	path := "",
-	allocator := context.allocator,
-) -> (
-	err: Load_Error,
-	tried: []string,
-) {
+load :: proc(path := "", allocator := context.allocator) -> (err: Load_Error, tried: []string) {
 	if g_api != nil {
 		return .Already_Loaded, nil
 	}
@@ -245,27 +240,27 @@ SCITER_VERSION_3 :: 9
 
 Bool32 :: b32
 
-TRUE  :: (1)
+TRUE :: (1)
 FALSE :: (0)
 
-Uint               :: u32
-Int                :: i32
-Uint32             :: u32
-Int32              :: i32
-Uint64             :: u64
-Int64              :: i64
-Int_Ptr            :: c.intptr_t
-Uint_Ptr           :: uintptr
-Byte               :: u8
-Wchar              :: u16
-Wide_String        :: [^]u16
+Uint :: u32
+Int :: i32
+Uint32 :: u32
+Int32 :: i32
+Uint64 :: u64
+Int64 :: i64
+Int_Ptr :: c.intptr_t
+Uint_Ptr :: uintptr
+Byte :: u8
+Wchar :: u16
+Wide_String :: [^]u16
 Wide_String_Buffer :: [^]u16
-Char               :: i8
-Lpcstr             :: cstring
-Void               :: struct {}
+Char :: i8
+Lpcstr :: cstring
+Void :: struct {}
 
 /* duplicate INT_PTR typedef; removed by src/flatten_headers.py */
-Lpvoid  :: rawptr
+Lpvoid :: rawptr
 Lpcvoid :: rawptr
 
 Tag_Rect :: struct {
@@ -275,8 +270,8 @@ Tag_Rect :: struct {
 	bottom: Int,
 }
 
-Lprect  :: ^Tag_Rect
-Rect    :: Tag_Rect
+Lprect :: ^Tag_Rect
+Rect :: Tag_Rect
 Lpcrect :: ^Rect
 
 Tag_Point :: struct {
@@ -284,9 +279,9 @@ Tag_Point :: struct {
 	y: Int,
 }
 
-Point   :: Tag_Point
+Point :: Tag_Point
 Lppoint :: ^Tag_Point
-Ppoint  :: ^Tag_Point
+Ppoint :: ^Tag_Point
 
 Tag_Size :: struct {
 	cx: Int,
@@ -294,25 +289,25 @@ Tag_Size :: struct {
 }
 
 Lpsize :: ^Tag_Size
-Size   :: Tag_Size
-Psize  :: ^Tag_Size
+Size :: Tag_Size
+Psize :: ^Tag_Size
 Lpuint :: ^Uint
-Bytes  :: [^]u8
+Bytes :: [^]u8
 
 /**callback function used with various get*** functions */
 Wide_String_Receiver :: proc "system" (str: Wide_String, str_length: Uint, param: Lpvoid)
-Utf8_Receiver        :: proc "system" (str: [^]u8, str_length: Uint, param: Lpvoid)
-Bytes_Receiver       :: proc "system" (str: Bytes, num_bytes: Uint, param: Lpvoid)
+Utf8_Receiver :: proc "system" (str: [^]u8, str_length: Uint, param: Lpvoid)
+Bytes_Receiver :: proc "system" (str: Bytes, num_bytes: Uint, param: Lpvoid)
 
 Gfx_Layer :: enum u32 {
-	GDI               = 1,  /*Mac OS*/
-	CG                = 1,  /*Mac OS*/
-	CAIRO             = 1,  /*GTK*/
+	GDI               = 1, /*Mac OS*/
+	CG                = 1, /*Mac OS*/
+	CAIRO             = 1, /*GTK*/
 	SKIA              = 4,
 	SKIA_RASTER       = 4,
 	SKIA_OPENGL       = 5,
 	SKIA_VULKAN       = 6,
-	SKIA_GPU          = 9,  // best GPU layer for the platform:
+	SKIA_GPU          = 9, // best GPU layer for the platform:
 
 	// Windows: DX12 -> VULKAN -> OPENGL -> RASTER
 	// OSX: METAL -> [VULKAN] -> OPENGL -> RASTER
@@ -325,8 +320,8 @@ Gfx_Layer :: enum u32 {
 	AUTO              = 65535,
 }
 
-HINSTANCE       :: Lpvoid //
-HDC             :: Lpvoid       // cairo_t
+HINSTANCE :: Lpvoid //
+HDC :: Lpvoid // cairo_t
 SCITER_DLL_NAME :: "libsciter.so"
 
 Value_Result :: enum i32 {
@@ -349,9 +344,9 @@ Value_Type :: enum u32 {
 	INT       = 3,
 	FLOAT     = 4,
 	STRING    = 5,
-	DATE      = 6,  // INT64 - contains a 64-bit value representing the number of 100-nanosecond intervals since January 1, 1601 (UTC), a.k.a. FILETIME on Windows
-	BIG_INT   = 7,  // INT64
-	LENGTH    = 8,  // length units, value is int or float, units are VALUE_UNIT_TYPE
+	DATE      = 6, // INT64 - contains a 64-bit value representing the number of 100-nanosecond intervals since January 1, 1601 (UTC), a.k.a. FILETIME on Windows
+	BIG_INT   = 7, // INT64
+	LENGTH    = 8, // length units, value is int or float, units are VALUE_UNIT_TYPE
 	ARRAY     = 9,
 	MAP       = 10,
 	FUNCTION  = 11, // named tuple , like array but with name tag
@@ -365,18 +360,18 @@ Value_Type :: enum u32 {
 }
 
 Value_Unit_Type :: enum u32 {
-	UT_EM             = 1,  //height of the element's font. 
-	UT_EX             = 2,  //height of letter 'x' 
-	UT_PR             = 3,  //%
-	UT_SP             = 4,  //%% "springs", a.k.a. flex units
+	UT_EM             = 1, //height of the element's font.
+	UT_EX             = 2, //height of letter 'x'
+	UT_PR             = 3, //%
+	UT_SP             = 4, //%% "springs", a.k.a. flex units
 	reserved1         = 5,
 	reserved2         = 6,
-	UT_PX             = 7,  //pixels
-	UT_IN             = 8,  //inches (1 inch = 2.54 centimeters). 
-	UT_CM             = 9,  //centimeters. 
-	UT_MM             = 10, //millimeters. 
-	UT_PT             = 11, //points (1 point = 1/72 inches). 
-	UT_PC             = 12, //picas (1 pica = 12 points). 
+	UT_PX             = 7, //pixels
+	UT_IN             = 8, //inches (1 inch = 2.54 centimeters).
+	UT_CM             = 9, //centimeters.
+	UT_MM             = 10, //millimeters.
+	UT_PT             = 11, //points (1 point = 1/72 inches).
+	UT_PC             = 12, //picas (1 pica = 12 points).
 	UT_DIP            = 13,
 	reserved3         = 14,
 	reserved4         = 15,
@@ -392,9 +387,9 @@ Value_Unit_Type :: enum u32 {
 }
 
 Value_Unit_Type_Date :: enum u32 {
-	HAS_DATE    = 1,  // date contains date portion
-	HAS_TIME    = 2,  // date contains time portion HH:MM
-	HAS_SECONDS = 4,  // date contains time and seconds HH:MM:SS
+	HAS_DATE    = 1, // date contains date portion
+	HAS_TIME    = 2, // date contains time portion HH:MM
+	HAS_SECONDS = 4, // date contains time and seconds HH:MM:SS
 	UTC         = 16, // T_DATE is known to be UTC. Otherwise it is local date/time
 }
 
@@ -410,19 +405,19 @@ Value_Unit_Type_Object :: enum u32 {
 }
 
 Value_Unit_Undefined :: enum u32 {
-	UT_NOTHING = 1, // T_UNDEFINED && UT_NOTHING -  'nothing' a.k.a. 'void' value in script 
+	UT_NOTHING = 1, // T_UNDEFINED && UT_NOTHING -  'nothing' a.k.a. 'void' value in script
 }
 
 // Sciter or TIScript specific
 Value_Unit_Type_String :: enum u32 {
-	STRING = 0,     // string
-	ERROR  = 1,     // is an error string
-	SECURE = 2,     // secure string ("wiped" on destroy)
+	STRING = 0, // string
+	ERROR  = 1, // is an error string
+	SECURE = 2, // secure string ("wiped" on destroy)
 	SYMBOL = 65535, // symbol/name[token]
 }
 
 // Native functor
-Native_Functor_Invoke  :: proc "system" (tag: ^Void, argc: Uint, argv: ^Value, retval: ^Value) // retval may contain error definition
+Native_Functor_Invoke :: proc "system" (tag: ^Void, argc: Uint, argv: ^Value, retval: ^Value) // retval may contain error definition
 Native_Functor_Release :: proc "system" (tag: ^Void)
 
 /**Callback function used with #ValueEnumElements().
@@ -431,15 +426,15 @@ Native_Functor_Release :: proc "system" (tag: ^Void)
 Key_Value_Callback :: proc "system" (param: Lpvoid, pkey: ^Value, pval: ^Value) -> Bool32
 
 Value_String_Cvt_Type :: enum u32 {
-	SIMPLE        = 0, ///< simple conversion of terminal values 
-	JSON_LITERAL  = 1, ///< json literal parsing/emission 
-	JSON_MAP      = 2, ///< json parsing/emission, it parses as if token '{' already recognized 
+	SIMPLE        = 0, ///< simple conversion of terminal values
+	JSON_LITERAL  = 1, ///< json literal parsing/emission
+	JSON_MAP      = 2, ///< json parsing/emission, it parses as if token '{' already recognized
 	XJSON_LITERAL = 3, ///< x-json parsing/emission, date is emitted as ISO8601 date literal, currency is emitted in the form DDDD$CCC
 }
 
-Sciter_Value   :: Value
+Sciter_Value :: Value
 Som_Passport_T :: struct {}
-Som_Atom_T     :: Uint64
+Som_Atom_T :: Uint64
 
 Som_Asset_T :: struct {
 	isa: ^Som_Asset_Class_T,
@@ -456,9 +451,9 @@ _Helement :: struct {}
 
 /**DOM element handle.*/
 Helement :: ^_Helement
-_Hnode   :: struct {}
-Hnode    :: ^_Hnode
-Hrange   :: rawptr
+_Hnode :: struct {}
+Hnode :: ^_Hnode
+Hrange :: rawptr
 
 /**DOM range handle.*/
 Archive :: rawptr
@@ -486,15 +481,15 @@ Request_Param :: struct {
 * \return \b #SCDOM_RESULT SCAPI
 **/
 Element_Areas :: enum u32 {
-	ROOT_RELATIVE      = 1,  // - or this flag if you want to get Sciter window relative coordinates,
+	ROOT_RELATIVE      = 1, // - or this flag if you want to get Sciter window relative coordinates,
 
 	//   otherwise it will use nearest windowed container e.g. popup window.
-	SELF_RELATIVE      = 2,  // - "or" this flag if you want to get coordinates relative to the origin
+	SELF_RELATIVE      = 2, // - "or" this flag if you want to get coordinates relative to the origin
 
 	//   of element iself.
-	CONTAINER_RELATIVE = 3,  // - position inside immediate container.
-	VIEW_RELATIVE      = 4,  // - position relative to view - Sciter window
-	CONTENT_BOX        = 0,  // content (inner)  box
+	CONTAINER_RELATIVE = 3, // - position inside immediate container.
+	VIEW_RELATIVE      = 4, // - position relative to view - Sciter window
+	CONTENT_BOX        = 0, // content (inner)  box
 	PADDING_BOX        = 16, // content + paddings
 	BORDER_BOX         = 32, // content + paddings + border
 	MARGIN_BOX         = 48, // content + paddings + border + margins
@@ -509,7 +504,7 @@ Sciter_Scroll_Flag :: enum u32 {
 	SMOOTH = 4,
 }
 
-Sciter_Scroll_Flags :: bit_set[Sciter_Scroll_Flag; u32]
+Sciter_Scroll_Flags :: bit_set[Sciter_Scroll_Flag;u32]
 
 /**Callback function used with #SciterVisitElement().*/
 Sciter_Element_Callback :: proc "system" (he: Helement, param: Lpvoid) -> Bool32
@@ -530,27 +525,27 @@ Set_Element_Html :: enum u32 {
 * \param prms \b LPVOID, pointer to group specific parameters structure.
 * \return TRUE if event was handled, FALSE otherwise.
 **/
-Element_Event_Proc   :: proc "system" (tag: Lpvoid, he: Helement, evtg: Event_Groups, prms: Lpvoid) -> Bool32
+Element_Event_Proc :: proc "system" (tag: Lpvoid, he: Helement, evtg: Event_Groups, prms: Lpvoid) -> Bool32
 Lpelement_Event_Proc :: Element_Event_Proc
 
 Element_State_Bit :: enum u32 {
-	LINK        = 0,  // :link pseudo-class in CSS
-	HOVER       = 1,  // :hover pseudo-class in CSS
-	ACTIVE      = 2,  // :active pseudo-class in CSS
-	FOCUS       = 3,  // :focus pseudo-class in CSS
-	VISITED     = 4,  // :visited pseudo-class in CSS
-	CURRENT     = 5,  // :current, current (hot) item
-	CHECKED     = 6,  // :checked, element is checked (or selected)
-	DISABLED    = 7,  // :disabled, element is disabled
-	READONLY    = 8,  // :read-only, readonly input element
-	EXPANDED    = 9,  // :expanded, expanded state - nodes in tree view
+	LINK        = 0, // :link pseudo-class in CSS
+	HOVER       = 1, // :hover pseudo-class in CSS
+	ACTIVE      = 2, // :active pseudo-class in CSS
+	FOCUS       = 3, // :focus pseudo-class in CSS
+	VISITED     = 4, // :visited pseudo-class in CSS
+	CURRENT     = 5, // :current, current (hot) item
+	CHECKED     = 6, // :checked, element is checked (or selected)
+	DISABLED    = 7, // :disabled, element is disabled
+	READONLY    = 8, // :read-only, readonly input element
+	EXPANDED    = 9, // :expanded, expanded state - nodes in tree view
 	COLLAPSED   = 10, // :collapsed, collapsed state - nodes in tree view - mutually exclusive with
 	INCOMPLETE  = 11, // :incomplete, fore (content) image was requested but not delivered
 	ANIMATING   = 12, // :animating, is animating currently
 	FOCUSABLE   = 13, // :focusable, will accept focus
 	ANCHOR      = 14, // :anchor, anchor in selection (used with current in selects)
 	SYNTHETIC   = 15, // :synthetic, this is a synthetic element - don't emit it's head/tail
-	OWNS_POPUP  = 16, // :owns-popup, has visible popup element (tooltip, menu, etc.) 
+	OWNS_POPUP  = 16, // :owns-popup, has visible popup element (tooltip, menu, etc.)
 	TABFOCUS    = 17, // :tab-focus, focus gained by tab traversal
 	EMPTY       = 18, // :empty, empty - element is empty (text.size() == 0 && subs.size() == 0)
 
@@ -570,7 +565,7 @@ Element_State_Bit :: enum u32 {
 	IS_RTL      = 29, // the element or one of its containers has dir=rtl declared
 }
 
-Element_State_Bits :: bit_set[Element_State_Bit; u32]
+Element_State_Bits :: bit_set[Element_State_Bit;u32]
 
 /**
 *  SciterSendRequest - send GET or POST request for the element
@@ -595,22 +590,22 @@ Element_Comparator :: proc "system" (he1: Helement, he2: Helement, param: Lpvoid
 *  Control here is any dom element having appropriate behavior applied
 **/
 Ctl_Type :: enum u32 {
-	NO              = 0,  ///< This dom element has no behavior at all.
-	UNKNOWN         = 1,  ///< This dom element has behavior but its type is unknown.
-	EDIT            = 2,  ///< Single line edit box.
-	NUMERIC         = 3,  ///< Numeric input with optional spin buttons.
-	CLICKABLE       = 4,  ///< toolbar button, behavior:clickable.
-	BUTTON          = 5,  ///< Command button.
-	CHECKBOX        = 6,  ///< CheckBox (button).
-	RADIO           = 7,  ///< OptionBox (button).
-	SELECT_SINGLE   = 8,  ///< Single select, ListBox or TreeView.
-	SELECT_MULTIPLE = 9,  ///< Multiselectable select, ListBox or TreeView.
+	NO              = 0, ///< This dom element has no behavior at all.
+	UNKNOWN         = 1, ///< This dom element has behavior but its type is unknown.
+	EDIT            = 2, ///< Single line edit box.
+	NUMERIC         = 3, ///< Numeric input with optional spin buttons.
+	CLICKABLE       = 4, ///< toolbar button, behavior:clickable.
+	BUTTON          = 5, ///< Command button.
+	CHECKBOX        = 6, ///< CheckBox (button).
+	RADIO           = 7, ///< OptionBox (button).
+	SELECT_SINGLE   = 8, ///< Single select, ListBox or TreeView.
+	SELECT_MULTIPLE = 9, ///< Multiselectable select, ListBox or TreeView.
 	DD_SELECT       = 10, ///< Dropdown single select.
 	TEXTAREA        = 11, ///< Multiline TextBox.
 	HTML_SELECTION  = 12, ///< HTML selection behavior.
 	PASSWORD        = 13, ///< Password input element.
 	PROGRESS        = 14, ///< Progress element.
-	SLIDER          = 15, ///< Slider input element.  
+	SLIDER          = 15, ///< Slider input element.
 	DECIMAL         = 16, ///< Decimal number input element.
 	CURRENCY        = 17, ///< Currency input element.
 	SCROLLBAR       = 18,
@@ -634,7 +629,7 @@ Ctl_Type :: enum u32 {
 	TOOLBAR         = 36,
 	WINDOW          = 37, ///< has HWND attached to it
 	LABEL           = 38,
-	IMAGE           = 39, ///< image/video object.  
+	IMAGE           = 39, ///< image/video object.
 	PLAINTEXT       = 40, ///< Multiline TextBox + colorizer.
 	SELECT_TREE     = 41, ///< TreeView.
 	SWITCH          = 42, ///< role="switch" ?
@@ -654,19 +649,19 @@ Node_Ins_Target :: enum u32 {
 	PREPEND = 3,
 }
 
-Hgfx     :: ^_Hgfx
-_Hgfx    :: struct {}
-_Himg    :: struct {}
-Himg     :: ^_Himg
-Hpath    :: ^_Hpath
-_Hpath   :: struct {}
-_Htext   :: struct {}
-Htext    :: ^_Htext
-Sc_Real  :: f32
-Sc_Pos   :: Sc_Real // position
-Sc_Dim   :: Sc_Real // dimension
+Hgfx :: ^_Hgfx
+_Hgfx :: struct {}
+_Himg :: struct {}
+Himg :: ^_Himg
+Hpath :: ^_Hpath
+_Hpath :: struct {}
+_Htext :: struct {}
+Htext :: ^_Htext
+Sc_Real :: f32
+Sc_Pos :: Sc_Real // position
+Sc_Dim :: Sc_Real // dimension
 Sc_Angle :: Sc_Real // angle (radians)
-Sc_Color :: u32     // color
+Sc_Color :: u32 // color
 
 Sc_Color_Stop :: struct {
 	color:  Sc_Color,
@@ -676,9 +671,9 @@ Sc_Color_Stop :: struct {
 Graphin_Result :: enum i32 {
 	PANIC        = -1, // e.g. not enough memory
 	OK           = 0,
-	BAD_PARAM    = 1,  // bad parameter
-	FAILURE      = 2,  // operation failed, e.g. restore() without save()
-	NOTSUPPORTED = 3,  // the platform does not support requested feature
+	BAD_PARAM    = 1, // bad parameter
+	FAILURE      = 2, // operation failed, e.g. restore() without save()
+	NOTSUPPORTED = 3, // the platform does not support requested feature
 }
 
 Draw_Path_Mode :: enum u32 {
@@ -735,41 +730,166 @@ Sciter_Pixmap_Format :: enum u32 {
 }
 
 Sciter_Graphics_Api :: struct {
-	imageCreate:                  proc "system" (poutImg: ^Himg, width: Uint, height: Uint, withAlpha: Bool32) -> Graphin_Result,
-	imageCreateFromPixmap:        proc "system" (poutImg: ^Himg, pixmapWidth: Uint, pixmapHeight: Uint, pixmap_format: Sciter_Pixmap_Format, pixmap: [^]Byte) -> Graphin_Result,
+	imageCreate:                  proc "system" (
+		poutImg: ^Himg,
+		width: Uint,
+		height: Uint,
+		withAlpha: Bool32,
+	) -> Graphin_Result,
+	imageCreateFromPixmap:        proc "system" (
+		poutImg: ^Himg,
+		pixmapWidth: Uint,
+		pixmapHeight: Uint,
+		pixmap_format: Sciter_Pixmap_Format,
+		pixmap: [^]Byte,
+	) -> Graphin_Result,
 	imageAddRef:                  proc "system" (himg: Himg) -> Graphin_Result,
 	imageRelease:                 proc "system" (himg: Himg) -> Graphin_Result,
-	imageGetInfo:                 proc "system" (himg: Himg, width: ^Uint, height: ^Uint, usesAlpha: ^Bool32) -> Graphin_Result,
+	imageGetInfo:                 proc "system" (
+		himg: Himg,
+		width: ^Uint,
+		height: ^Uint,
+		usesAlpha: ^Bool32,
+	) -> Graphin_Result,
 	imageClear:                   proc "system" (himg: Himg, byColor: Sc_Color) -> Graphin_Result,
-	imageLoad:                    proc "system" (bytes: [^]Byte, num_bytes: Uint, pout_img: ^Himg) -> Graphin_Result,         // load png/jpeg/etc. image from stream of bytes
-	imageSave:                    proc "system" (himg: Himg, pfn: Image_Write_Function, prm: rawptr, encoding: Uint, quality: Uint /* if webp or jpeg:, 10 - 100 */) -> Graphin_Result, // save png/jpeg/etc. image to stream of bytes
-	RGBA:                         proc "system" (red: Uint, green: Uint, blue: Uint, alpha: Uint /*= 255*/) -> Sc_Color,      /*= 255*/
+	imageLoad:                    proc "system" (bytes: [^]Byte, num_bytes: Uint, pout_img: ^Himg) -> Graphin_Result, // load png/jpeg/etc. image from stream of bytes
+	imageSave:                    proc "system" (
+		himg: Himg,
+		pfn: Image_Write_Function,
+		prm: rawptr,
+		encoding: Uint,
+		quality: Uint,
+		/* if webp or jpeg:, 10 - 100 */
+	) -> Graphin_Result, // save png/jpeg/etc. image to stream of bytes
+	RGBA:                         proc "system" (
+		red: Uint,
+		green: Uint,
+		blue: Uint,
+		alpha: Uint,
+		/*= 255*/
+	) -> Sc_Color,
+	/*= 255*/
 	gCreate:                      proc "system" (img: Himg, pout_gfx: ^Hgfx) -> Graphin_Result,
 	gAddRef:                      proc "system" (gfx: Hgfx) -> Graphin_Result,
 	gRelease:                     proc "system" (gfx: Hgfx) -> Graphin_Result,
-	gLine:                        proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos) -> Graphin_Result,
-	gRectangle:                   proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos) -> Graphin_Result,
-	gRoundedRectangle:            proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos, radii8: ^Sc_Dim /*SC_DIM[8] - four rx/ry pairs */) -> Graphin_Result, /*SC_DIM[8] - four rx/ry pairs */
-	gEllipse:                     proc "system" (hgfx: Hgfx, x: Sc_Pos, y: Sc_Pos, rx: Sc_Dim, ry: Sc_Dim) -> Graphin_Result,
-	gArc:                         proc "system" (hgfx: Hgfx, x: Sc_Pos, y: Sc_Pos, rx: Sc_Pos, ry: Sc_Pos, start: Sc_Angle, sweep: Sc_Angle) -> Graphin_Result,
-	gStar:                        proc "system" (hgfx: Hgfx, x: Sc_Pos, y: Sc_Pos, r1: Sc_Dim, r2: Sc_Dim, start: Sc_Angle, rays: Uint) -> Graphin_Result,
+	gLine:                        proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+	) -> Graphin_Result,
+	gRectangle:                   proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+	) -> Graphin_Result,
+	gRoundedRectangle:            proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+		radii8: ^Sc_Dim,
+		/*SC_DIM[8] - four rx/ry pairs */
+	) -> Graphin_Result,
+	/*SC_DIM[8] - four rx/ry pairs */
+	gEllipse:                     proc "system" (
+		hgfx: Hgfx,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		rx: Sc_Dim,
+		ry: Sc_Dim,
+	) -> Graphin_Result,
+	gArc:                         proc "system" (
+		hgfx: Hgfx,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		rx: Sc_Pos,
+		ry: Sc_Pos,
+		start: Sc_Angle,
+		sweep: Sc_Angle,
+	) -> Graphin_Result,
+	gStar:                        proc "system" (
+		hgfx: Hgfx,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		r1: Sc_Dim,
+		r2: Sc_Dim,
+		start: Sc_Angle,
+		rays: Uint,
+	) -> Graphin_Result,
 	gPolygon:                     proc "system" (hgfx: Hgfx, xy: ^Sc_Pos, num_points: Uint) -> Graphin_Result,
 	gPolyline:                    proc "system" (hgfx: Hgfx, xy: ^Sc_Pos, num_points: Uint) -> Graphin_Result,
 	pathCreate:                   proc "system" (path: ^Hpath) -> Graphin_Result,
 	pathAddRef:                   proc "system" (path: Hpath) -> Graphin_Result,
 	pathRelease:                  proc "system" (path: Hpath) -> Graphin_Result,
-	pathMoveTo:                   proc "system" (path: Hpath, x: Sc_Pos, y: Sc_Pos, relative: Bool32) -> Graphin_Result,
-	pathLineTo:                   proc "system" (path: Hpath, x: Sc_Pos, y: Sc_Pos, relative: Bool32) -> Graphin_Result,
-	pathArcTo:                    proc "system" (path: Hpath, x: Sc_Pos, y: Sc_Pos, angle: Sc_Angle, rx: Sc_Dim, ry: Sc_Dim, is_large_arc: Bool32, clockwise: Bool32, relative: Bool32) -> Graphin_Result,
-	pathQuadraticCurveTo:         proc "system" (path: Hpath, xc: Sc_Pos, yc: Sc_Pos, x: Sc_Pos, y: Sc_Pos, relative: Bool32) -> Graphin_Result,
-	pathBezierCurveTo:            proc "system" (path: Hpath, xc1: Sc_Pos, yc1: Sc_Pos, xc2: Sc_Pos, yc2: Sc_Pos, x: Sc_Pos, y: Sc_Pos, relative: Bool32) -> Graphin_Result,
+	pathMoveTo:                   proc "system" (
+		path: Hpath,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		relative: Bool32,
+	) -> Graphin_Result,
+	pathLineTo:                   proc "system" (
+		path: Hpath,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		relative: Bool32,
+	) -> Graphin_Result,
+	pathArcTo:                    proc "system" (
+		path: Hpath,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		angle: Sc_Angle,
+		rx: Sc_Dim,
+		ry: Sc_Dim,
+		is_large_arc: Bool32,
+		clockwise: Bool32,
+		relative: Bool32,
+	) -> Graphin_Result,
+	pathQuadraticCurveTo:         proc "system" (
+		path: Hpath,
+		xc: Sc_Pos,
+		yc: Sc_Pos,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		relative: Bool32,
+	) -> Graphin_Result,
+	pathBezierCurveTo:            proc "system" (
+		path: Hpath,
+		xc1: Sc_Pos,
+		yc1: Sc_Pos,
+		xc2: Sc_Pos,
+		yc2: Sc_Pos,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		relative: Bool32,
+	) -> Graphin_Result,
 	pathClosePath:                proc "system" (path: Hpath) -> Graphin_Result,
 	gDrawPath:                    proc "system" (hgfx: Hgfx, path: Hpath, dpm: Draw_Path_Mode) -> Graphin_Result,
-	gRotate:                      proc "system" (hgfx: Hgfx, radians: Sc_Angle, cx: ^Sc_Pos /*= 0*/, cy: ^Sc_Pos /*= 0*/) -> Graphin_Result, /*= 0*/
+	gRotate:                      proc "system" (
+		hgfx: Hgfx,
+		radians: Sc_Angle,
+		cx: ^Sc_Pos,
+		/*= 0*/
+		cy: ^Sc_Pos,
+		/*= 0*/
+	) -> Graphin_Result,
+	/*= 0*/
 	gTranslate:                   proc "system" (hgfx: Hgfx, cx: Sc_Pos, cy: Sc_Pos) -> Graphin_Result,
 	gScale:                       proc "system" (hgfx: Hgfx, x: Sc_Dim, y: Sc_Dim) -> Graphin_Result,
 	gSkew:                        proc "system" (hgfx: Hgfx, dx: Sc_Dim, dy: Sc_Dim) -> Graphin_Result,
-	gTransform:                   proc "system" (hgfx: Hgfx, m11: Sc_Pos, m12: Sc_Pos, m21: Sc_Pos, m22: Sc_Pos, dx: Sc_Pos, dy: Sc_Pos) -> Graphin_Result,
+	gTransform:                   proc "system" (
+		hgfx: Hgfx,
+		m11: Sc_Pos,
+		m12: Sc_Pos,
+		m21: Sc_Pos,
+		m22: Sc_Pos,
+		dx: Sc_Pos,
+		dy: Sc_Pos,
+	) -> Graphin_Result,
 	gStateSave:                   proc "system" (hgfx: Hgfx) -> Graphin_Result,
 	gStateRestore:                proc "system" (hgfx: Hgfx) -> Graphin_Result,
 	gLineWidth:                   proc "system" (hgfx: Hgfx, width: Sc_Dim) -> Graphin_Result,
@@ -777,25 +897,126 @@ Sciter_Graphics_Api :: struct {
 	gLineCap:                     proc "system" (hgfx: Hgfx, type: Sciter_Line_Cap_Type) -> Graphin_Result,
 	gLineColor:                   proc "system" (hgfx: Hgfx, _c: Sc_Color) -> Graphin_Result,
 	gFillColor:                   proc "system" (hgfx: Hgfx, color: Sc_Color) -> Graphin_Result,
-	gLineGradientLinear:          proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos, stops: ^Sc_Color_Stop, nstops: Uint) -> Graphin_Result,
-	gFillGradientLinear:          proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos, stops: ^Sc_Color_Stop, nstops: Uint) -> Graphin_Result,
-	gLineGradientRadial:          proc "system" (hgfx: Hgfx, x: Sc_Pos, y: Sc_Pos, rx: Sc_Dim, ry: Sc_Dim, stops: ^Sc_Color_Stop, nstops: Uint) -> Graphin_Result,
-	gFillGradientRadial:          proc "system" (hgfx: Hgfx, x: Sc_Pos, y: Sc_Pos, rx: Sc_Dim, ry: Sc_Dim, stops: ^Sc_Color_Stop, nstops: Uint) -> Graphin_Result,
-	gFillMode:                    proc "system" (hgfx: Hgfx, even_odd: Bool32 /* false - fill_non_zero */) -> Graphin_Result, /* false - fill_non_zero */
-	textCreateForElement:         proc "system" (ptext: ^Htext, text: Wide_String, textLength: Uint, he: Helement, classNameOrNull: Wide_String) -> Graphin_Result,
-	textCreateForElementAndStyle: proc "system" (ptext: ^Htext, text: Wide_String, textLength: Uint, he: Helement, style: Wide_String, styleLength: Uint) -> Graphin_Result,
+	gLineGradientLinear:          proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+		stops: ^Sc_Color_Stop,
+		nstops: Uint,
+	) -> Graphin_Result,
+	gFillGradientLinear:          proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+		stops: ^Sc_Color_Stop,
+		nstops: Uint,
+	) -> Graphin_Result,
+	gLineGradientRadial:          proc "system" (
+		hgfx: Hgfx,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		rx: Sc_Dim,
+		ry: Sc_Dim,
+		stops: ^Sc_Color_Stop,
+		nstops: Uint,
+	) -> Graphin_Result,
+	gFillGradientRadial:          proc "system" (
+		hgfx: Hgfx,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		rx: Sc_Dim,
+		ry: Sc_Dim,
+		stops: ^Sc_Color_Stop,
+		nstops: Uint,
+	) -> Graphin_Result,
+	gFillMode:                    proc "system" (
+		hgfx: Hgfx,
+		even_odd: Bool32,
+		/* false - fill_non_zero */
+	) -> Graphin_Result,
+	/* false - fill_non_zero */
+	textCreateForElement:         proc "system" (
+		ptext: ^Htext,
+		text: Wide_String,
+		textLength: Uint,
+		he: Helement,
+		classNameOrNull: Wide_String,
+	) -> Graphin_Result,
+	textCreateForElementAndStyle: proc "system" (
+		ptext: ^Htext,
+		text: Wide_String,
+		textLength: Uint,
+		he: Helement,
+		style: Wide_String,
+		styleLength: Uint,
+	) -> Graphin_Result,
 	textAddRef:                   proc "system" (path: Htext) -> Graphin_Result,
 	textRelease:                  proc "system" (path: Htext) -> Graphin_Result,
-	textGetMetrics:               proc "system" (text: Htext, minWidth: ^Sc_Dim, maxWidth: ^Sc_Dim, height: ^Sc_Dim, ascent: ^Sc_Dim, descent: ^Sc_Dim, nLines: ^Uint) -> Graphin_Result,
+	textGetMetrics:               proc "system" (
+		text: Htext,
+		minWidth: ^Sc_Dim,
+		maxWidth: ^Sc_Dim,
+		height: ^Sc_Dim,
+		ascent: ^Sc_Dim,
+		descent: ^Sc_Dim,
+		nLines: ^Uint,
+	) -> Graphin_Result,
 	textSetBox:                   proc "system" (text: Htext, width: Sc_Dim, height: Sc_Dim) -> Graphin_Result,
-	gDrawText:                    proc "system" (hgfx: Hgfx, text: Htext, px: Sc_Pos, py: Sc_Pos, position: Uint) -> Graphin_Result,
-	gDrawImage:                   proc "system" (hgfx: Hgfx, himg: Himg, x: Sc_Pos, y: Sc_Pos, w: ^Sc_Dim /*= 0*/, h: ^Sc_Dim /*= 0*/, ix: ^Uint /*= 0*/, iy: ^Uint /*= 0*/, iw: ^Uint /*= 0*/, ih: ^Uint, opacity: ^f32 /*= 0, if provided is in 0.0 .. 1.0*/) -> Graphin_Result,
+	gDrawText:                    proc "system" (
+		hgfx: Hgfx,
+		text: Htext,
+		px: Sc_Pos,
+		py: Sc_Pos,
+		position: Uint,
+	) -> Graphin_Result,
+	gDrawImage:                   proc "system" (
+		hgfx: Hgfx,
+		himg: Himg,
+		x: Sc_Pos,
+		y: Sc_Pos,
+		w: ^Sc_Dim,
+		/*= 0*/
+		h: ^Sc_Dim,
+		/*= 0*/
+		ix: ^Uint,
+		/*= 0*/
+		iy: ^Uint,
+		/*= 0*/
+		iw: ^Uint,
+		/*= 0*/
+		ih: ^Uint,
+		opacity: ^f32,
+		/*= 0, if provided is in 0.0 .. 1.0*/
+	) -> Graphin_Result,
 	gWorldToScreen:               proc "system" (hgfx: Hgfx, inout_x: ^Sc_Pos, inout_y: ^Sc_Pos) -> Graphin_Result,
 	gScreenToWorld:               proc "system" (hgfx: Hgfx, inout_x: ^Sc_Pos, inout_y: ^Sc_Pos) -> Graphin_Result,
-	gPushClipBox:                 proc "system" (hgfx: Hgfx, x1: Sc_Pos, y1: Sc_Pos, x2: Sc_Pos, y2: Sc_Pos, opacity: f32 /*=1.f*/) -> Graphin_Result, /*=1.f*/
-	gPushClipPath:                proc "system" (hgfx: Hgfx, hpath: Hpath, opacity: f32 /*=1.f*/) -> Graphin_Result,          /*=1.f*/
+	gPushClipBox:                 proc "system" (
+		hgfx: Hgfx,
+		x1: Sc_Pos,
+		y1: Sc_Pos,
+		x2: Sc_Pos,
+		y2: Sc_Pos,
+		opacity: f32,
+		/*=1.f*/
+	) -> Graphin_Result,
+	/*=1.f*/
+	gPushClipPath:                proc "system" (
+		hgfx: Hgfx,
+		hpath: Hpath,
+		opacity: f32,
+		/*=1.f*/
+	) -> Graphin_Result,
+	/*=1.f*/
 	gPopClip:                     proc "system" (hgfx: Hgfx) -> Graphin_Result,
-	imagePaint:                   proc "system" (himg: Himg, pPainter: Image_Paint_Function, prm: rawptr) -> Graphin_Result,  // paint on image using graphics
+	imagePaint:                   proc "system" (
+		himg: Himg,
+		pPainter: Image_Paint_Function,
+		prm: rawptr,
+	) -> Graphin_Result, // paint on image using graphics
 	vWrapGfx:                     proc "system" (hgfx: Hgfx, toValue: ^Value) -> Graphin_Result,
 	vWrapImage:                   proc "system" (himg: Himg, toValue: ^Value) -> Graphin_Result,
 	vWrapPath:                    proc "system" (hpath: Hpath, toValue: ^Value) -> Graphin_Result,
@@ -806,7 +1027,7 @@ Sciter_Graphics_Api :: struct {
 	vUnWrapText:                  proc "system" (fromValue: ^Value, phtext: ^Htext) -> Graphin_Result,
 	gFlush:                       proc "system" (hgfx: Hgfx) -> Graphin_Result,
 	imageCreateFromElement:       proc "system" (poutImg: ^Himg, domElement: Helement) -> Graphin_Result,
-	gGetNativeDC:                 proc "system" (hgfx: Hgfx, nativeDcType: Uint, pDC: ^^Void) -> Graphin_Result,              // 
+	gGetNativeDC:                 proc "system" (hgfx: Hgfx, nativeDcType: Uint, pDC: ^^Void) -> Graphin_Result, //
 }
 
 // get native graphics context
@@ -818,18 +1039,18 @@ Graphin_Native_Dc_Type :: enum u32 {
 Lpsciter_Graphics_Api :: ^Sciter_Graphics_Api
 
 Event_Group :: enum u32 {
-	MOUSE                 = 0,  /**< mouse events */
-	KEY                   = 1,  /**< key events */
-	FOCUS                 = 2,  /**< focus events, if this flag is set it also means that element it attached to is focusable */
-	SCROLL                = 3,  /**< scroll events */
-	TIMER                 = 4,  /**< timer event */
-	SIZE                  = 5,  /**< size changed event */
-	DRAW                  = 6,  /**< drawing request (event) */
-	DATA_ARRIVED          = 7,  /**< requested data () has been delivered */
-	BEHAVIOR_EVENT        = 8,  /**< logical, synthetic events:
+	MOUSE                 = 0, /**< mouse events */
+	KEY                   = 1, /**< key events */
+	FOCUS                 = 2, /**< focus events, if this flag is set it also means that element it attached to is focusable */
+	SCROLL                = 3, /**< scroll events */
+	TIMER                 = 4, /**< timer event */
+	SIZE                  = 5, /**< size changed event */
+	DRAW                  = 6, /**< drawing request (event) */
+	DATA_ARRIVED          = 7, /**< requested data () has been delivered */
+	BEHAVIOR_EVENT        = 8, /**< logical, synthetic events:
                                                  BUTTON_CLICK, HYPERLINK_CLICK, etc.,
                                                  a.k.a. notifications from intrinsic behaviors */
-	METHOD_CALL           = 9,  /**< behavior specific methods */
+	METHOD_CALL           = 9, /**< behavior specific methods */
 	SCRIPTING_METHOD_CALL = 10, /**< behavior specific methods */
 	STYLE_CHANGE          = 11, /**< element's style has changed */
 	EXCHANGE              = 12, /**< system drag-n-drop */
@@ -840,15 +1061,32 @@ Event_Group :: enum u32 {
 
 /** event groups.
 **/
-Event_Groups          :: bit_set[Event_Group; u32]
-HANDLE_ALL            :: Event_Groups {.MOUSE, .KEY, .FOCUS, .SCROLL, .TIMER, .SIZE, .DRAW, .DATA_ARRIVED, .BEHAVIOR_EVENT, .METHOD_CALL, .SCRIPTING_METHOD_CALL, .STYLE_CHANGE, .EXCHANGE, .GESTURE, .ATTRIBUTE_CHANGE, .SOM}
+Event_Groups :: bit_set[Event_Group;u32]
+HANDLE_ALL :: Event_Groups {
+	.MOUSE,
+	.KEY,
+	.FOCUS,
+	.SCROLL,
+	.TIMER,
+	.SIZE,
+	.DRAW,
+	.DATA_ARRIVED,
+	.BEHAVIOR_EVENT,
+	.METHOD_CALL,
+	.SCRIPTING_METHOD_CALL,
+	.STYLE_CHANGE,
+	.EXCHANGE,
+	.GESTURE,
+	.ATTRIBUTE_CHANGE,
+	.SOM,
+}
 SUBSCRIPTIONS_REQUEST :: transmute(Event_Groups)u32(4294967295)
 
 /** signature of "behavior factory" - function responsible for creation of DOM element behaviors (controllers) */
-Sciter_Behavior_Factory :: proc "system" (Lpcstr, Helement, ^Lpelement_Event_Proc, ^Lpvoid) -> Bool32
+Sciter_Behavior_Factory :: proc "system" (_: Lpcstr, _: Helement, _: ^Lpelement_Event_Proc, _: ^Lpvoid) -> Bool32
 
 Phase_Mask :: enum u32 {
-	BUBBLING = 0,     // bubbling (emersion) phase
+	BUBBLING = 0, // bubbling (emersion) phase
 	SINKING  = 32768, // capture (immersion) phase, this flag is or'ed with EVENTS codes below
 	HANDLED  = 65536,
 }
@@ -893,8 +1131,7 @@ Som_Events :: enum u32 {
 }
 
 Som_Params :: struct {
-	cmd: Uint, // SOM_EVENTS
-
+	cmd:  Uint, // SOM_EVENTS
 	data: struct #raw_union {
 		passport: ^Som_Passport_T,
 		asset:    ^Som_Asset_T,
@@ -914,45 +1151,45 @@ Mouse_Events :: enum u32 {
 	MOUSE_MOVE         = 2,
 	MOUSE_UP           = 3,
 	MOUSE_DOWN         = 4,
-	MOUSE_DCLICK       = 5,    /// double click
+	MOUSE_DCLICK       = 5, /// double click
 	MOUSE_WHEEL        = 6,
-	MOUSE_TICK         = 7,    /// generated periodically while mouse is pressed
-	MOUSE_IDLE         = 8,    /// generated when mouse stays idle for some time
-	DROP               = 9,    // item dropped, target is that dropped item
-	DRAG_ENTER         = 10,   // drag arrived to the target element that is one of current drop targets.
-	DRAG_LEAVE         = 11,   // drag left one of current drop targets. target is the drop target element.
-	DRAG_REQUEST       = 12,   // drag src notification before drag start. To cancel - return true from handler.
-	MOUSE_TCLICK       = 15,   // tripple click
-	MOUSE_DRAG_REQUEST = 254,  // mouse drag start detected event
-	MOUSE_CLICK        = 255,  // mouse click event
-	DRAGGING           = 256,  // ORed with MOUSE_ENTER...MOUSE_DOWN codes above
+	MOUSE_TICK         = 7, /// generated periodically while mouse is pressed
+	MOUSE_IDLE         = 8, /// generated when mouse stays idle for some time
+	DROP               = 9, // item dropped, target is that dropped item
+	DRAG_ENTER         = 10, // drag arrived to the target element that is one of current drop targets.
+	DRAG_LEAVE         = 11, // drag left one of current drop targets. target is the drop target element.
+	DRAG_REQUEST       = 12, // drag src notification before drag start. To cancel - return true from handler.
+	MOUSE_TCLICK       = 15, // tripple click
+	MOUSE_DRAG_REQUEST = 254, // mouse drag start detected event
+	MOUSE_CLICK        = 255, // mouse click event
+	DRAGGING           = 256, // ORed with MOUSE_ENTER...MOUSE_DOWN codes above
 	MOUSE_HIT_TEST     = 4094, // sent to element, allows to handle elements with non-trivial shapes.
 }
 
 Mouse_Params :: struct {
-	cmd:           Uint,     // MOUSE_EVENTS
+	cmd:           Uint, // MOUSE_EVENTS
 	target:        Helement, // target element
-	pos:           Point,    // position of cursor, element relative
-	pos_view:      Point,    // position of cursor, view relative
-	button_state:  Uint,     // MOUSE_BUTTONS
-	alt_state:     Uint,     // KEYBOARD_STATES
-	cursor_type:   Uint,     // CURSOR_TYPE to set, see CURSOR_TYPE
-	is_on_icon:    Bool32,   // mouse is over icon (foreground-image, foreground-repeat:no-repeat)
+	pos:           Point, // position of cursor, element relative
+	pos_view:      Point, // position of cursor, view relative
+	button_state:  Uint, // MOUSE_BUTTONS
+	alt_state:     Uint, // KEYBOARD_STATES
+	cursor_type:   Uint, // CURSOR_TYPE to set, see CURSOR_TYPE
+	is_on_icon:    Bool32, // mouse is over icon (foreground-image, foreground-repeat:no-repeat)
 	dragging:      Helement, // element that is being dragged over, this field is not NULL if (cmd & DRAGGING) != 0
-	dragging_mode: Uint,     // see DRAGGING_TYPE.
+	dragging_mode: Uint, // see DRAGGING_TYPE.
 }
 
 Cursor_Type :: enum u32 {
-	ARROW       = 0,  //0
-	IBEAM       = 1,  //1
-	WAIT        = 2,  //2
-	CROSS       = 3,  //3
-	UPARROW     = 4,  //4
-	SIZENWSE    = 5,  //5
-	SIZENESW    = 6,  //6
-	SIZEWE      = 7,  //7
-	SIZENS      = 8,  //8
-	SIZEALL     = 9,  //9
+	ARROW       = 0, //0
+	IBEAM       = 1, //1
+	WAIT        = 2, //2
+	CROSS       = 3, //3
+	UPARROW     = 4, //4
+	SIZENWSE    = 5, //5
+	SIZENESW    = 6, //6
+	SIZEWE      = 7, //7
+	SIZENS      = 8, //8
+	SIZEALL     = 9, //9
 	NO          = 10, //10
 	APPSTARTING = 11, //11
 	HELP        = 12, //12
@@ -969,10 +1206,10 @@ Key_Events :: enum u32 {
 }
 
 Key_Params :: struct {
-	cmd:       Uint,     // KEY_EVENTS
+	cmd:       Uint, // KEY_EVENTS
 	target:    Helement, // target element
-	key_code:  Uint,     // key scan code, or character unicode for KEY_CHAR
-	alt_state: Uint,     // KEYBOARD_STATES
+	key_code:  Uint, // key scan code, or character unicode for KEY_CHAR
+	alt_state: Uint, // KEYBOARD_STATES
 }
 
 /** #HANDLE_FOCUS commands */
@@ -1001,11 +1238,11 @@ Focus_Cmd_Type :: enum u32 {
 
 /** #HANDLE_FOCUS params */
 Focus_Params :: struct {
-	cmd:    Uint,     /**< #FOCUS_EVENTS */
+	cmd:    Uint, /**< #FOCUS_EVENTS */
 	target: Helement, /**< target element, for #FOCUS_LOST it is a handle of new focus element
                                      and for #FOCUS_GOT it is a handle of old focus element, can be NULL */
-	cause:  Uint,     /**< focus cause params or FOCUS_CMD_TYPE for FOCUS_ADVANCE_REQUEST */
-	cancel: Bool32,   /**< in #FOCUS_REQUEST and #FOCUS_LOST phase setting this field to true will cancel transfer focus from old element to the new one. */
+	cause:  Uint, /**< focus cause params or FOCUS_CMD_TYPE for FOCUS_ADVANCE_REQUEST */
+	cancel: Bool32, /**< in #FOCUS_REQUEST and #FOCUS_LOST phase setting this field to true will cancel transfer focus from old element to the new one. */
 }
 
 // parameters of evtg == HANDLE_SCROLL
@@ -1044,12 +1281,12 @@ Scrollbar_Part :: enum u32 {
 }
 
 Scroll_Params :: struct {
-	cmd:      Uint,     // SCROLL_EVENTS
+	cmd:      Uint, // SCROLL_EVENTS
 	target:   Helement, // target element
-	pos:      Int,      // scroll position if SCROLL_POS
-	vertical: Bool32,   // true if from vertical scrollbar
-	source:   Uint,     // SCROLL_SOURCE
-	reason:   Uint,     // key or scrollbar part
+	pos:      Int, // scroll position if SCROLL_POS
+	vertical: Bool32, // true if from vertical scrollbar
+	source:   Uint, // SCROLL_SOURCE
+	reason:   Uint, // key or scrollbar part
 }
 
 /*typedef enum GESTURE_CMD
@@ -1090,10 +1327,10 @@ GESTURE_FLAGS_ALL               = 0xFFFF, //
 
 */
 Gesture_Params :: struct {
-	cmd:      Uint,     // GESTURE_EVENTS
+	cmd:      Uint, // GESTURE_EVENTS
 	target:   Helement, // target element
-	pos:      Point,    // position of cursor, element relative
-	pos_view: Point,    // position of cursor, view relative
+	pos:      Point, // position of cursor, element relative
+	pos_view: Point, // position of cursor, view relative
 }
 
 Exchange_Cmd :: enum u32 {
@@ -1116,12 +1353,12 @@ Dd_Modes :: enum u32 {
 }
 
 Exchange_Params :: struct {
-	cmd:      Uint,         // EXCHANGE_EVENTS
-	target:   Helement,     // target element
-	source:   Helement,     // source element (can be null if D&D from external window)
-	pos:      Point,        // position of cursor, element relative
-	pos_view: Point,        // position of cursor, view relative
-	mode:     Uint,         // DD_MODE
+	cmd:      Uint, // EXCHANGE_EVENTS
+	target:   Helement, // target element
+	source:   Helement, // source element (can be null if D&D from external window)
+	pos:      Point, // position of cursor, element relative
+	pos_view: Point, // position of cursor, view relative
+	mode:     Uint, // DD_MODE
 	data:     Sciter_Value, // packaged drag data
 }
 
@@ -1147,40 +1384,40 @@ Content_Change_Bits :: enum u32 {
 } // for CONTENT_CHANGED reason
 
 Behavior_Events :: enum u32 {
-	BUTTON_CLICK                 = 0,   // click on button
-	BUTTON_PRESS                 = 1,   // mouse down or key down in button
-	VALUE_CHANGED                = 2,   // value 
-	VALUE_CHANGING               = 3,   // before text change
-	SELECTION_CHANGED            = 5,   // selection changed in <select>, <textarea>, etc
-	SELECTION_CHANGING           = 12,  // selection is changeing in <select>, <textarea>, etc
-	POPUP_REQUEST                = 7,   // request to show popup just received,
+	BUTTON_CLICK                 = 0, // click on button
+	BUTTON_PRESS                 = 1, // mouse down or key down in button
+	VALUE_CHANGED                = 2, // value
+	VALUE_CHANGING               = 3, // before text change
+	SELECTION_CHANGED            = 5, // selection changed in <select>, <textarea>, etc
+	SELECTION_CHANGING           = 12, // selection is changeing in <select>, <textarea>, etc
+	POPUP_REQUEST                = 7, // request to show popup just received,
 
 	//     here DOM of popup element can be modifed.
-	POPUP_READY                  = 8,   // popup element has been measured and ready to be shown on screen,
+	POPUP_READY                  = 8, // popup element has been measured and ready to be shown on screen,
 
 	//     here you can use functions like ScrollToView.
-	POPUP_DISMISSED              = 9,   // popup element is closed,
+	POPUP_DISMISSED              = 9, // popup element is closed,
 
 	//     here DOM of popup element can be modifed again - e.g. some items can be removed
 	//     to free memory.
-	MENU_ITEM_ACTIVE             = 10,  // menu item activated by mouse hover or by keyboard,
-	MENU_ITEM_CLICK              = 11,  // menu item click,
+	MENU_ITEM_ACTIVE             = 10, // menu item activated by mouse hover or by keyboard,
+	MENU_ITEM_CLICK              = 11, // menu item click,
 
 	//   BEHAVIOR_EVENT_PARAMS structure layout
 	//   BEHAVIOR_EVENT_PARAMS.cmd - MENU_ITEM_CLICK/MENU_ITEM_ACTIVE
 	//   BEHAVIOR_EVENT_PARAMS.heTarget - owner(anchor) of the menu
 	//   BEHAVIOR_EVENT_PARAMS.he - the menu item, presumably <li> element
 	//   BEHAVIOR_EVENT_PARAMS.reason - BY_MOUSE_CLICK | BY_KEY_CLICK
-	CONTEXT_MENU_REQUEST         = 16,  // "right-click", BEHAVIOR_EVENT_PARAMS::he is current popup menu HELEMENT being processed or NULL.
+	CONTEXT_MENU_REQUEST         = 16, // "right-click", BEHAVIOR_EVENT_PARAMS::he is current popup menu HELEMENT being processed or NULL.
 
 	// application can provide its own HELEMENT here (if it is NULL) or modify current menu element.
-	VISUAL_STATUS_CHANGED        = 17,  // sent to the element being shown or hidden
-	DISABLED_STATUS_CHANGED      = 18,  // broadcast notification, sent to all elements of some container that got new value of :disabled state
-	POPUP_DISMISSING             = 19,  // popup is about to be closed
-	CONTENT_CHANGED              = 21,  // content has been changed, is posted to the element that gets content changed,  reason is combination of CONTENT_CHANGE_BITS.
+	VISUAL_STATUS_CHANGED        = 17, // sent to the element being shown or hidden
+	DISABLED_STATUS_CHANGED      = 18, // broadcast notification, sent to all elements of some container that got new value of :disabled state
+	POPUP_DISMISSING             = 19, // popup is about to be closed
+	CONTENT_CHANGED              = 21, // content has been changed, is posted to the element that gets content changed,  reason is combination of CONTENT_CHANGE_BITS.
 
 	// target == NULL means the window got new document and this event is dispatched only to the window.
-	
+
 	// "grey" event codes  - notfications from behaviors from this SDK
 	HYPERLINK_CLICK              = 128, // hyperlink click
 	ELEMENT_COLLAPSED            = 144, // element was collapsed, so far only behavior:tabs is sending these two to the panels
@@ -1234,7 +1471,7 @@ Behavior_Events :: enum u32 {
 	PAGINATION_PAGE              = 225, // behavior:pager paginated page no, reason -> page no
 	PAGINATION_ENDS              = 226, // behavior:pager end pagination, reason -> total pages
 	CUSTOM                       = 240, // event with custom name
-	EGL_RENDER                   = 32,  //  
+	EGL_RENDER                   = 32, //
 	FIRST_APPLICATION_EVENT_CODE = 256,
 }
 
@@ -1254,17 +1491,17 @@ Edit_Changed_Reason :: enum u32 {
 }
 
 Behavior_Event_Params :: struct {
-	cmd:      Uint,     // BEHAVIOR_EVENTS
+	cmd:      Uint, // BEHAVIOR_EVENTS
 	heTarget: Helement, // target element handler, in MENU_ITEM_CLICK this is owner element that caused this menu - e.g. context menu owner
 
 	// In scripting this field named as Event.owner
-	he:     Helement, // source element e.g. in SELECTION_CHANGED it is new selected <option>, in MENU_ITEM_CLICK it is menu item (LI) element
-	reason: Uint_Ptr, // CLICK_REASON or EDIT_CHANGED_REASON - UI action causing change.
+	he:       Helement, // source element e.g. in SELECTION_CHANGED it is new selected <option>, in MENU_ITEM_CLICK it is menu item (LI) element
+	reason:   Uint_Ptr, // CLICK_REASON or EDIT_CHANGED_REASON - UI action causing change.
 
 	// In case of custom event notifications this may be any
 	// application specific value.
-	data: Sciter_Value, // auxiliary data accompanied with the event. E.g. FORM_SUBMIT event is using this field to pass collection of values.
-	name: Wide_String,  // name of custom event (when cmd == CUSTOM)
+	data:     Sciter_Value, // auxiliary data accompanied with the event. E.g. FORM_SUBMIT event is using this field to pass collection of values.
+	name:     Wide_String, // name of custom event (when cmd == CUSTOM)
 }
 
 Timer_Params :: struct {
@@ -1284,10 +1521,10 @@ Behavior_Method_Identifiers :: enum u32 {
 }
 
 Scripting_Method_Params :: struct {
-	name:   Lpcstr,        ///< method name
+	name:   Lpcstr, ///< method name
 	argv:   ^Sciter_Value, ///< vector of arguments
-	argc:   Uint,          ///< argument count
-	result: Sciter_Value,  ///< return value
+	argc:   Uint, ///< argument count
+	result: Sciter_Value, ///< return value
 }
 
 // GET_VALUE/SET_VALUE methods params
@@ -1305,19 +1542,19 @@ Is_Empty_Params :: struct {
 // see SciterRequestElementData
 Data_Arrived_Params :: struct {
 	initiator: Helement, // element intiator of SciterRequestElementData request,
-	data:      Bytes,    // data buffer
-	dataSize:  Uint,     // size of data
-	dataType:  Uint,     // data type passed "as is" from SciterRequestElementData
-	status:    Uint,     // status = 0 (dataSize == 0) - unknown error.
+	data:      Bytes, // data buffer
+	dataSize:  Uint, // size of data
+	dataType:  Uint, // data type passed "as is" from SciterRequestElementData
+	status:    Uint, // status = 0 (dataSize == 0) - unknown error.
 
 	// status = 100..505 - http response status, Note: 200 - OK!
 	// status > 12000 - wininet error code, see ERROR_INTERNET_*** in wininet.h
-	uri: Wide_String, // requested url
+	uri:       Wide_String, // requested url
 }
 
 Attribute_Change_Params :: struct {
-	he:    Helement,    // this element
-	name:  Lpcstr,      // attribute name
+	he:    Helement, // this element
+	name:  Lpcstr, // attribute name
 	value: Wide_String, // new attribute value, NULL if attribute was deleted
 }
 
@@ -1326,9 +1563,9 @@ Hrequest :: rawptr
 Request_Result :: enum i32 {
 	PANIC        = -1, // e.g. not enough memory
 	OK           = 0,
-	BAD_PARAM    = 1,  // bad parameter
-	FAILURE      = 2,  // operation failed, e.g. index out of bounds
-	NOTSUPPORTED = 3,  // the platform does not support requested feature
+	BAD_PARAM    = 1, // bad parameter
+	FAILURE      = 2, // operation failed, e.g. index out of bounds
+	NOTSUPPORTED = 3, // the platform does not support requested feature
 }
 
 Sciter_Resource_Type :: enum u32 {
@@ -1354,32 +1591,104 @@ Request_State :: enum u32 {
 Sciter_Request_Api :: struct {
 	RequestUse:                     proc "system" (rq: Hrequest) -> Request_Result,
 	RequestUnUse:                   proc "system" (rq: Hrequest) -> Request_Result,
-	RequestUrl:                     proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestContentUrl:              proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestUrl:                     proc "system" (
+		rq: Hrequest,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
+	RequestContentUrl:              proc "system" (
+		rq: Hrequest,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetRequestType:          proc "system" (rq: Hrequest, pType: ^Lpcstr) -> Request_Result,
 	RequestGetRequestedDataType:    proc "system" (rq: Hrequest, pData: ^Sciter_Resource_Type) -> Request_Result,
-	RequestGetReceivedDataType:     proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetReceivedDataType:     proc "system" (
+		rq: Hrequest,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetNumberOfParameters:   proc "system" (rq: Hrequest, pNumber: ^Uint) -> Request_Result,
-	RequestGetNthParameterName:     proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestGetNthParameterValue:    proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetNthParameterName:     proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
+	RequestGetNthParameterValue:    proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetTimes:                proc "system" (rq: Hrequest, pStarted: ^Uint, pEnded: ^Uint) -> Request_Result,
 	RequestGetNumberOfRqHeaders:    proc "system" (rq: Hrequest, pNumber: ^Uint) -> Request_Result,
-	RequestGetNthRqHeaderName:      proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestGetNthRqHeaderValue:     proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetNthRqHeaderName:      proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
+	RequestGetNthRqHeaderValue:     proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetNumberOfRspHeaders:   proc "system" (rq: Hrequest, pNumber: ^Uint) -> Request_Result,
-	RequestGetNthRspHeaderName:     proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestGetNthRspHeaderValue:    proc "system" (rq: Hrequest, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Request_Result,
-	RequestGetCompletionStatus:     proc "system" (rq: Hrequest, pState: ^Request_State, pCompletionStatus: ^Uint) -> Request_Result,
-	RequestGetProxyHost:            proc "system" (rq: Hrequest, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetNthRspHeaderName:     proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
+	RequestGetNthRspHeaderValue:    proc "system" (
+		rq: Hrequest,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
+	RequestGetCompletionStatus:     proc "system" (
+		rq: Hrequest,
+		pState: ^Request_State,
+		pCompletionStatus: ^Uint,
+	) -> Request_Result,
+	RequestGetProxyHost:            proc "system" (
+		rq: Hrequest,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetProxyPort:            proc "system" (rq: Hrequest, pPort: ^Uint) -> Request_Result,
-	RequestSetSucceeded:            proc "system" (rq: Hrequest, status: Uint, dataOrNull: Bytes, dataLength: Uint) -> Request_Result,
-	RequestSetFailed:               proc "system" (rq: Hrequest, status: Uint, dataOrNull: Bytes, dataLength: Uint) -> Request_Result,
+	RequestSetSucceeded:            proc "system" (
+		rq: Hrequest,
+		status: Uint,
+		dataOrNull: Bytes,
+		dataLength: Uint,
+	) -> Request_Result,
+	RequestSetFailed:               proc "system" (
+		rq: Hrequest,
+		status: Uint,
+		dataOrNull: Bytes,
+		dataLength: Uint,
+	) -> Request_Result,
 	RequestAppendDataChunk:         proc "system" (rq: Hrequest, data: Bytes, dataLength: Uint) -> Request_Result,
-	RequestSetRqHeader:             proc "system" (rq: Hrequest, name: Wide_String, value: Wide_String) -> Request_Result,
-	RequestSetRspHeader:            proc "system" (rq: Hrequest, name: Wide_String, value: Wide_String) -> Request_Result,
+	RequestSetRqHeader:             proc "system" (
+		rq: Hrequest,
+		name: Wide_String,
+		value: Wide_String,
+	) -> Request_Result,
+	RequestSetRspHeader:            proc "system" (
+		rq: Hrequest,
+		name: Wide_String,
+		value: Wide_String,
+	) -> Request_Result,
 	RequestSetReceivedDataType:     proc "system" (rq: Hrequest, type: Lpcstr) -> Request_Result,
 	RequestSetReceivedDataEncoding: proc "system" (rq: Hrequest, encoding: Lpcstr) -> Request_Result,
-	RequestGetData:                 proc "system" (rq: Hrequest, rcv: Bytes_Receiver, rcv_param: Lpvoid) -> Request_Result,
+	RequestGetData:                 proc "system" (
+		rq: Hrequest,
+		rcv: Bytes_Receiver,
+		rcv_param: Lpvoid,
+	) -> Request_Result,
 	RequestGetRequestor:            proc "system" (rq: Hrequest, pElement: ^Helement) -> Request_Result,
 }
 
@@ -1408,7 +1717,7 @@ Sc_Load_Data_Return_Codes :: enum u32 {
 * of filling these fields. This allows you to free your outData buffer
 * immediately.
 **/
-SC_LOAD_DATA       :: 0x01
+SC_LOAD_DATA :: 0x01
 
 /**This notification indicates that external data (for example image) download process
 * completed.
@@ -1419,7 +1728,7 @@ SC_LOAD_DATA       :: 0x01
 * this resource has been completely downloaded. Sciter will send this
 * notification asynchronously.
 **/
-SC_DATA_LOADED     :: 0x02
+SC_DATA_LOADED :: 0x02
 
 /**This notification is sent when all external data (for example image) has been downloaded.
 *
@@ -1490,25 +1799,25 @@ SC_SET_CURSOR :: 0x0A
 /**Notification callback structure.
 **/
 Sciter_Callback_Notification :: struct {
-	code: Uint,   /**< [in] one of the codes above.*/
+	code: Uint, /**< [in] one of the codes above.*/
 	hwnd: rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 }
 
 Lpsciter_Callback_Notification :: ^Sciter_Callback_Notification
-Sciter_Host_Callback           :: proc "system" (pns: Lpsciter_Callback_Notification, callbackParam: Lpvoid) -> Uint
-Lpsciter_Host_Callback         :: Sciter_Host_Callback
+Sciter_Host_Callback :: proc "system" (pns: Lpsciter_Callback_Notification, callbackParam: Lpvoid) -> Uint
+Lpsciter_Host_Callback :: Sciter_Host_Callback
 
 /**This structure is used by #SC_LOAD_DATA notification.
 *\copydoc SC_LOAD_DATA
 **/
 Scn_Load_Data :: struct {
-	code:        Uint,        /**< [in] one of the codes above.*/
-	hwnd:        rawptr,      /**< [in] HWINDOW of the window this callback was attached to.*/
+	code:        Uint, /**< [in] one of the codes above.*/
+	hwnd:        rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 	uri:         Wide_String, /**< [in] Zero terminated string, fully qualified uri, for example "http://server/folder/file.ext".*/
-	outData:     Bytes,       /**< [in,out] pointer to loaded data to return. if data exists in the cache then this field contain pointer to it*/
-	outDataSize: Uint,        /**< [in,out] loaded data size to return.*/
-	dataType:    Uint,        /**< [in] SciterResourceType */
-	requestId:   Hrequest,    /**< [in] request handle that can be used with sciter-x-request API */
+	outData:     Bytes, /**< [in,out] pointer to loaded data to return. if data exists in the cache then this field contain pointer to it*/
+	outDataSize: Uint, /**< [in,out] loaded data size to return.*/
+	dataType:    Uint, /**< [in] SciterResourceType */
+	requestId:   Hrequest, /**< [in] request handle that can be used with sciter-x-request API */
 	principal:   Helement,
 	initiator:   Helement,
 }
@@ -1519,18 +1828,18 @@ Lpscn_Load_Data :: ^Scn_Load_Data
 *\copydoc SC_DATA_LOADED
 **/
 Scn_Data_Loaded :: struct {
-	code:      Uint,        /**< [in] one of the codes above.*/
-	hwnd:      rawptr,      /**< [in] HWINDOW of the window this callback was attached to.*/
+	code:      Uint, /**< [in] one of the codes above.*/
+	hwnd:      rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 	uri:       Wide_String, /**< [in] zero terminated string, fully qualified uri, for example "http://server/folder/file.ext".*/
-	data:      Bytes,       /**< [in] pointer to loaded data.*/
-	dataSize:  Uint,        /**< [in] loaded data size (in bytes).*/
-	dataType:  Uint,        /**< [in] SciterResourceType */
-	status:    Uint,        /**< [in]
+	data:      Bytes, /**< [in] pointer to loaded data.*/
+	dataSize:  Uint, /**< [in] loaded data size (in bytes).*/
+	dataType:  Uint, /**< [in] SciterResourceType */
+	status:    Uint, /**< [in]
                                          status = 0 (dataSize == 0) - unknown error.
                                          status = 100..505 - http response status, Note: 200 - OK!
                                          status > 12000 - wininet error code, see ERROR_INTERNET_*** in wininet.h
                                  */
-	requestId: Hrequest,    /**< [in] request handle that can be used with sciter-x-request API */
+	requestId: Hrequest, /**< [in] request handle that can be used with sciter-x-request API */
 }
 
 Lpscn_Data_Loaded :: ^Scn_Data_Loaded
@@ -1538,12 +1847,12 @@ Lpscn_Data_Loaded :: ^Scn_Data_Loaded
 /**This structure is used by #SC_ATTACH_BEHAVIOR notification.
 *\copydoc SC_ATTACH_BEHAVIOR **/
 Scn_Attach_Behavior :: struct {
-	code:         Uint,               /**< [in] one of the codes above.*/
-	hwnd:         rawptr,             /**< [in] HWINDOW of the window this callback was attached to.*/
-	element:      Helement,           /**< [in] target DOM element handle*/
-	behaviorName: Lpcstr,             /**< [in] zero terminated string, string appears as value of CSS behavior:"???" attribute.*/
+	code:         Uint, /**< [in] one of the codes above.*/
+	hwnd:         rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
+	element:      Helement, /**< [in] target DOM element handle*/
+	behaviorName: Lpcstr, /**< [in] zero terminated string, string appears as value of CSS behavior:"???" attribute.*/
 	elementProc:  Element_Event_Proc, /**< [out] pointer to ElementEventProc function.*/
-	elementTag:   Lpvoid,             /**< [out] tag value, passed as is into pointer ElementEventProc function.*/
+	elementTag:   Lpvoid, /**< [out] tag value, passed as is into pointer ElementEventProc function.*/
 }
 
 Lpscn_Attach_Behavior :: ^Scn_Attach_Behavior
@@ -1551,7 +1860,7 @@ Lpscn_Attach_Behavior :: ^Scn_Attach_Behavior
 /**This structure is used by #SC_ENGINE_DESTROYED notification.
 *\copydoc SC_ENGINE_DESTROYED **/
 Scn_Engine_Destroyed :: struct {
-	code: Uint,   /**< [in] one of the codes above.*/
+	code: Uint, /**< [in] one of the codes above.*/
 	hwnd: rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 }
 
@@ -1560,7 +1869,7 @@ Lpscn_Engine_Destroyed :: ^Scn_Engine_Destroyed
 /**This structure is used by #SC_ENGINE_DESTROYED notification.
 *\copydoc SC_ENGINE_DESTROYED **/
 Scn_Posted_Notification :: struct {
-	code:    Uint,   /**< [in] one of the codes above.*/
+	code:    Uint, /**< [in] one of the codes above.*/
 	hwnd:    rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 	wparam:  Uint_Ptr,
 	lparam:  Uint_Ptr,
@@ -1572,7 +1881,7 @@ Lpscn_Posted_Notification :: ^Scn_Posted_Notification
 /**This structure is used by #SC_GRAPHICS_CRITICAL_FAILURE notification.
 *\copydoc SC_GRAPHICS_CRITICAL_FAILURE **/
 Scn_Graphics_Critical_Failure :: struct {
-	code: Uint,   /**< [in] = SC_GRAPHICS_CRITICAL_FAILURE */
+	code: Uint, /**< [in] = SC_GRAPHICS_CRITICAL_FAILURE */
 	hwnd: rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 }
 
@@ -1581,7 +1890,7 @@ Lpscn_Graphics_Critical_Failure :: ^Scn_Graphics_Critical_Failure
 /**This structure is used by #SC_KEYBOARD_REQUEST notification.
 *\copydoc SC_KEYBOARD_REQUEST **/
 Scn_Keyboard_Request :: struct {
-	code:         Uint,   /**< [in] = SC_KEYBOARD_REQUEST */
+	code:         Uint, /**< [in] = SC_KEYBOARD_REQUEST */
 	hwnd:         rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
 	keyboardType: Lpcstr, /**< [in] see: https://developer.android.com/reference/android/widget/TextView#attr_android:inputType */
 }
@@ -1591,9 +1900,9 @@ Lpscn_Keyboard_Request :: ^Scn_Keyboard_Request
 /**This structure is used by #SC_INVALIDATE_RECT notification.
 *\copydoc SC_INVALIDATE_RECT **/
 Scn_Invalidate_Rect :: struct {
-	code:        Uint,   /**< [in] = SC_INVALIDATE_RECT */
+	code:        Uint, /**< [in] = SC_INVALIDATE_RECT */
 	hwnd:        rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
-	invalidRect: Rect,   /**< [in] cumulative invalid rect.*/
+	invalidRect: Rect, /**< [in] cumulative invalid rect.*/
 }
 
 Lpscn_Invalidate_Rect :: ^Scn_Invalidate_Rect
@@ -1601,9 +1910,9 @@ Lpscn_Invalidate_Rect :: ^Scn_Invalidate_Rect
 /**This structure is used by #SC_SET_CURSOR notification.
 *\copydoc SC_SET_CURSOR **/
 Scn_Set_Cursor :: struct {
-	code:      Uint,   /**< [in] = SC_SET_CURSOR */
+	code:      Uint, /**< [in] = SC_SET_CURSOR */
 	hwnd:      rawptr, /**< [in] HWINDOW of the window this callback was attached to.*/
-	cursorId:  Uint,   /**< [in] #CURSOR_TYPE, if cursorUrl == NULL */
+	cursorId:  Uint, /**< [in] #CURSOR_TYPE, if cursorUrl == NULL */
 	cursorUrl: Lpcstr, /**< [in] cursor URL */
 }
 
@@ -1617,24 +1926,24 @@ Script_Runtime_Feature :: enum u32 {
 	CMODULES  = 4,
 }
 
-Script_Runtime_Features :: bit_set[Script_Runtime_Feature; u32]
+Script_Runtime_Features :: bit_set[Script_Runtime_Feature;u32]
 
 Sciter_Rt_Options :: enum u32 {
-	SMOOTH_SCROLL               = 1,  // value:TRUE - enable, value:FALSE - disable, enabled by default
-	CONNECTION_TIMEOUT          = 2,  // value: milliseconds, connection timeout of http client
-	HTTPS_ERROR                 = 3,  // value: 0 - drop connection, 1 - use builtin dialog, 2 - accept connection silently
-	FONT_SMOOTHING              = 4,  // value: 0 - system default, 1 - no smoothing, 2 - std smoothing, 3 - clear type
-	TRANSPARENT_WINDOW          = 6,  // Windows Aero support, value:
+	SMOOTH_SCROLL               = 1, // value:TRUE - enable, value:FALSE - disable, enabled by default
+	CONNECTION_TIMEOUT          = 2, // value: milliseconds, connection timeout of http client
+	HTTPS_ERROR                 = 3, // value: 0 - drop connection, 1 - use builtin dialog, 2 - accept connection silently
+	FONT_SMOOTHING              = 4, // value: 0 - system default, 1 - no smoothing, 2 - std smoothing, 3 - clear type
+	TRANSPARENT_WINDOW          = 6, // Windows Aero support, value:
 
 	// 0 - normal drawing,
 	// 1 - window has transparent background after calls DwmExtendFrameIntoClientArea() or DwmEnableBlurBehindWindow().
-	SET_GPU_BLACKLIST           = 7,  // hWnd = NULL,
+	SET_GPU_BLACKLIST           = 7, // hWnd = NULL,
 
 	// value = LPCBYTE, json - GPU black list, see: gpu-blacklist.json resource.
-	SET_SCRIPT_RUNTIME_FEATURES = 8,  // value - combination of SCRIPT_RUNTIME_FEATURES flags.
-	SET_GFX_LAYER               = 9,  // hWnd = NULL, value - GFX_LAYER
+	SET_SCRIPT_RUNTIME_FEATURES = 8, // value - combination of SCRIPT_RUNTIME_FEATURES flags.
+	SET_GFX_LAYER               = 9, // hWnd = NULL, value - GFX_LAYER
 	SET_DEBUG_MODE              = 10, // hWnd, value - TRUE/FALSE
-	SET_UX_THEMING              = 11, // hWnd = NULL, value - SBOOL, TRUE - the engine will use "unisex" theme that is common for all platforms. 
+	SET_UX_THEMING              = 11, // hWnd = NULL, value - SBOOL, TRUE - the engine will use "unisex" theme that is common for all platforms.
 
 	// That UX theme is not using OS primitives for rendering input elements. Use it if you want exactly
 	// the same (modulo fonts) look-n-feel on all platforms.
@@ -1644,13 +1953,13 @@ Sciter_Rt_Options :: enum u32 {
 	//                             The engine copies this string inside the call.
 	SET_MAIN_WINDOW             = 14, //  hWnd, value - TRUE/FALSE - window is main, will destroy all other dependent windows on close
 	SET_MAX_HTTP_DATA_LENGTH    = 15, // hWnd - N/A , value - max request length in megabytes (1024*1024 bytes)
-	SET_PX_AS_DIP               = 16, // value 1 - 1px in CSS is treated as 1dip, value 0 - default behavior - 1px is a physical pixel 
-	ENABLE_UIAUTOMATION         = 17, // hWnd - N/A , TRUE/FALSE, enables UIAutomation support. 
+	SET_PX_AS_DIP               = 16, // value 1 - 1px in CSS is treated as 1dip, value 0 - default behavior - 1px is a physical pixel
+	ENABLE_UIAUTOMATION         = 17, // hWnd - N/A , TRUE/FALSE, enables UIAutomation support.
 	USE_INTERNAL_HTTP_CLIENT    = 18, // hWnd - N/A , TRUE - use internal HTTP client
 
 	//              FALSE - use system HTTP client (on platforms that has it: Win,Mac,Lin)
-	EXTENDED_TOUCHPAD_SUPPORT   = 19, // hWnd - N/A , TRUE/FALSE, enables/disables extended touchpad support, TRUE by default   
-	ENABLE_DIRECT_COMPOSITION   = 20, // hWnd - N/A , TRUE/FALSE, enables DirectComposition on Windows 11. 
+	EXTENDED_TOUCHPAD_SUPPORT   = 19, // hWnd - N/A , TRUE/FALSE, enables/disables extended touchpad support, TRUE by default
+	ENABLE_DIRECT_COMPOSITION   = 20, // hWnd - N/A , TRUE/FALSE, enables DirectComposition on Windows 11.
 
 	//        TRUE by default on Windows 11. Set it to FALSE if window will host child windows.
 	SET_ROOT_CA                 = 21, // hWnd - N/A , const char* certificates, in format acceptable by mbedtls_x509_crt_parse()
@@ -1660,9 +1969,9 @@ Sciter_Rt_Options :: enum u32 {
 Sciter_App_Cmd :: enum u32 {
 	STOP           = 0, /// reuest to quit message pump loop
 	LOOP           = 1, /// run message pump loop until SCITER_APP_STOP or main window closure
-	INIT           = 2, /// pass argc/argv to application: p1 - argc, p2 - CHAR** argv 
-	SHUTDOWN       = 3, /// free resources of the application 
-	RUN            = 4, /// scapp mode: load JS and run message pump loop until SCITER_APP_STOP or main window closure, p1 - JS url, p2 - 0 or SciterPrimordialLoader; 
+	INIT           = 2, /// pass argc/argv to application: p1 - argc, p2 - CHAR** argv
+	SHUTDOWN       = 3, /// free resources of the application
+	RUN            = 4, /// scapp mode: load JS and run message pump loop until SCITER_APP_STOP or main window closure, p1 - JS url, p2 - 0 or SciterPrimordialLoader;
 	LOOP_ITERATION = 6, /// does single message pump loop iteration, SCITER_APP_LOOP is essentially this:
 
 	/// while( SciterExec(SCITER_APP_LOOP_ITERATION,0,0) );
@@ -1675,11 +1984,11 @@ Sciter_App_Cmd :: enum u32 {
 Sciter_Primordial_Loader :: proc "system" (url: ^Wchar, out_pb: ^Bytes, out_cb: ^Uint) -> Bool32
 
 Sciter_Window_Cmd :: enum u32 {
-	SET_STATE              = 1,  // p1 - SCITER_WINDOW_STATE, p2 - N/A
-	GET_STATE              = 2,  // p1 - N/A , p2 - N/A, returns SCITER_WINDOW_STATE
-	ACTIVATE               = 3,  // p1 - BOOL, true - bring_to_front , p2 - N/A
-	SET_PLACEMENT          = 4,  // p1 - const POINT*, position, p2 const SIZE* - dimension, in ppx, either one can be null
-	GET_PLACEMENT          = 5,  // p1 - POINT*, position, p2 SIZE* - dimension, in ppx, either one can be null
+	SET_STATE              = 1, // p1 - SCITER_WINDOW_STATE, p2 - N/A
+	GET_STATE              = 2, // p1 - N/A , p2 - N/A, returns SCITER_WINDOW_STATE
+	ACTIVATE               = 3, // p1 - BOOL, true - bring_to_front , p2 - N/A
+	SET_PLACEMENT          = 4, // p1 - const POINT*, position, p2 const SIZE* - dimension, in ppx, either one can be null
+	GET_PLACEMENT          = 5, // p1 - POINT*, position, p2 SIZE* - dimension, in ppx, either one can be null
 	GET_VULKAN_ENVIRONMENT = 20, // p1 - &SciterVulkanEnvironment, p2 - sizeof(SciterVulkanEnvironment)
 	GET_VULKAN_CONTEXT     = 21, // p1 - &SciterVulkanContext, p2 - sizeof(SciterVulkanContext)
 	SET_VULKAN_BRIDGE      = 22, // p1 - SciterWindowVulkanBridge*, p2 - N/A
@@ -1695,12 +2004,12 @@ Sciter_Window_State :: enum u32 {
 }
 
 Url_Data :: struct {
-	requestedUrl:  Lpcstr,               // requested URL
-	realUrl:       Lpcstr,               // real URL data arrived from (after possible redirections)
+	requestedUrl:  Lpcstr, // requested URL
+	realUrl:       Lpcstr, // real URL data arrived from (after possible redirections)
 	requestedType: Sciter_Resource_Type, // requested data category: html, script, image, etc.
-	httpHeaders:   Lpcstr,               // if any
-	mimeType:      Lpcstr,               // mime type reported by server (if any)
-	encoding:      Lpcstr,               // data encoding (if any)
+	httpHeaders:   Lpcstr, // if any
+	mimeType:      Lpcstr, // mime type reported by server (if any)
+	encoding:      Lpcstr, // data encoding (if any)
 	data:          Bytes,
 	dataLength:    Uint,
 }
@@ -1714,7 +2023,7 @@ Sciter_Create_Window_Flag :: enum u32 {
 	ENABLE_DEBUG = 9, // make this window inspector ready
 }
 
-Sciter_Create_Window_Flags :: bit_set[Sciter_Create_Window_Flag; u32]
+Sciter_Create_Window_Flags :: bit_set[Sciter_Create_Window_Flag;u32]
 
 /** SciterSetupDebugOutput - setup debug output function.
 *
@@ -1735,7 +2044,14 @@ Output_Severity :: enum u32 {
 	ERROR   = 2,
 }
 
-Debug_Output_Proc :: proc "system" (param: Lpvoid, subsystem: Output_Subsytems /*OUTPUT_SUBSYTEMS*/, severity: Output_Severity, text: Wide_String, text_length: Uint) /*OUTPUT_SUBSYTEMS*/
+Debug_Output_Proc :: proc "system" (
+	param: Lpvoid,
+	subsystem: Output_Subsytems,
+	/*OUTPUT_SUBSYTEMS*/
+	severity: Output_Severity,
+	text: Wide_String,
+	text_length: Uint,
+) /*OUTPUT_SUBSYTEMS*/
 
 /** #SCITER_X_MSG_CODE message/function identifier */
 Sciter_X_Msg_Code :: enum u32 {
@@ -1779,10 +2095,9 @@ Sciter_X_Msg_Destroy :: struct {
 Sl_Surface :: struct {
 	using _: struct #raw_union {
 		texture: Lpvoid,
-
-		bitmap: struct {
+		bitmap:  struct {
 			pixels: Lpvoid, // RGBA or BGRA
-			stride: Uint,   // row length in bytes
+			stride: Uint, // row length in bytes
 		},
 	},
 }
@@ -1827,7 +2142,7 @@ Sciter_X_Msg_Heartbit :: struct {
 Sciter_X_Msg_Paint :: struct {
 	header:  Sciter_X_Msg,
 	element: Helement, /**< [in] layer #HELEMENT, can be NULL if whole tree (document) needs to be rendered.*/
-	isFore:  Bool32,   /**< [in] if element is not null tells if that element is fore-layer.*/
+	isFore:  Bool32, /**< [in] if element is not null tells if that element is fore-layer.*/
 	rcPaint: Rect,
 }
 
@@ -1836,175 +2151,468 @@ SCITER_API_VERSION :: 10
 Proc_Ptr_T :: proc "system" ()
 
 _Isciter_Api :: struct {
-	version:                Uint,   // API_VERSION
-	SciterClassName:        proc "system" () -> Wide_String,
-	SciterVersion:          proc "system" (n: Uint) -> Uint,
-	SciterDataReady:        proc "system" (hwnd: rawptr, uri: Wide_String, data: Bytes, dataLength: Uint) -> Bool32,
-	SciterDataReadyAsync:   proc "system" (hwnd: rawptr, uri: Wide_String, data: Bytes, dataLength: Uint, requestId: Lpvoid) -> Bool32,
-	SciterProc:             Lpvoid, // NULL
-	SciterProcND:           Lpvoid, // NULL
-	SciterLoadFile:         proc "system" (hWndSciter: rawptr, filename: Wide_String) -> Bool32,
-	SciterLoadHtml:         proc "system" (hWndSciter: rawptr, html: Bytes, htmlSize: Uint, baseUrl: Wide_String) -> Bool32,
-	SciterSetCallback:      proc "system" (hWndSciter: rawptr, cb: Lpsciter_Host_Callback, cbParam: Lpvoid),
-	SciterSetMasterCSS:     proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
-	SciterAppendMasterCSS:  proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
-	SciterSetCSS:           proc "system" (hWndSciter: rawptr, utf8: Bytes, numBytes: Uint, baseUrl: Wide_String, mediaType: Wide_String) -> Bool32,
-	SciterSetMediaType:     proc "system" (hWndSciter: rawptr, mediaType: Wide_String) -> Bool32,
-	SciterSetMediaVars:     proc "system" (hWndSciter: rawptr, mediaVars: ^Sciter_Value) -> Bool32,
-	SciterGetMinWidth:      proc "system" (hWndSciter: rawptr) -> Uint,
-	SciterGetMinHeight:     proc "system" (hWndSciter: rawptr, width: Uint) -> Uint,
-	SciterCall:             proc "system" (hWnd: rawptr, functionName: Lpcstr, argc: Uint, argv: ^Sciter_Value, retval: ^Sciter_Value) -> Bool32,
-	SciterEval:             proc "system" (hwnd: rawptr, script: Wide_String, scriptLength: Uint, pretval: ^Sciter_Value) -> Bool32,
-	SciterUpdateWindow:     proc "system" (hwnd: rawptr),
-	SciterTranslateMessage: Lpvoid, // NULL
-	SciterSetOption:        proc "system" (hWnd: rawptr, option: Sciter_Rt_Options, value: Uint_Ptr) -> Bool32,
-	SciterGetPPI:           proc "system" (hWndSciter: rawptr, px: ^Uint, py: ^Uint),
-	SciterGetViewExpando:   proc "system" (hwnd: rawptr, pval: ^Value) -> Bool32,
-	SciterRenderD2D:        Lpvoid, // N/A
-	SciterD2DFactory:       Lpvoid, // N/A
-	SciterDWFactory:        Lpvoid, // N/A
-	SciterGraphicsCaps:     proc "system" (pcaps: Lpuint) -> Bool32,
-	SciterSetHomeURL:       proc "system" (hWndSciter: rawptr, baseUrl: Wide_String) -> Bool32,
-	SciterCreateNSView:     Lpvoid, // NULL
-	SciterCreateWidget:     Lpvoid, // NULL
-	SciterCreateWindow:     proc "system" (creationFlags: Sciter_Create_Window_Flags, frame: Lprect, _: Lpvoid, _: Lpvoid, parent: rawptr) -> rawptr,
-	SciterSetupDebugOutput: proc "system" (hwndOrNull: rawptr, param: Lpvoid, pfOutput: Debug_Output_Proc),
+	version:                          Uint, // API_VERSION
+	SciterClassName:                  proc "system" () -> Wide_String,
+	SciterVersion:                    proc "system" (n: Uint) -> Uint,
+	SciterDataReady:                  proc "system" (
+		hwnd: rawptr,
+		uri: Wide_String,
+		data: Bytes,
+		dataLength: Uint,
+	) -> Bool32,
+	SciterDataReadyAsync:             proc "system" (
+		hwnd: rawptr,
+		uri: Wide_String,
+		data: Bytes,
+		dataLength: Uint,
+		requestId: Lpvoid,
+	) -> Bool32,
+	SciterProc:                       Lpvoid, // NULL
+	SciterProcND:                     Lpvoid, // NULL
+	SciterLoadFile:                   proc "system" (hWndSciter: rawptr, filename: Wide_String) -> Bool32,
+	SciterLoadHtml:                   proc "system" (
+		hWndSciter: rawptr,
+		html: Bytes,
+		htmlSize: Uint,
+		baseUrl: Wide_String,
+	) -> Bool32,
+	SciterSetCallback:                proc "system" (hWndSciter: rawptr, cb: Lpsciter_Host_Callback, cbParam: Lpvoid),
+	SciterSetMasterCSS:               proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
+	SciterAppendMasterCSS:            proc "system" (utf8: Bytes, numBytes: Uint) -> Bool32,
+	SciterSetCSS:                     proc "system" (
+		hWndSciter: rawptr,
+		utf8: Bytes,
+		numBytes: Uint,
+		baseUrl: Wide_String,
+		mediaType: Wide_String,
+	) -> Bool32,
+	SciterSetMediaType:               proc "system" (hWndSciter: rawptr, mediaType: Wide_String) -> Bool32,
+	SciterSetMediaVars:               proc "system" (hWndSciter: rawptr, mediaVars: ^Sciter_Value) -> Bool32,
+	SciterGetMinWidth:                proc "system" (hWndSciter: rawptr) -> Uint,
+	SciterGetMinHeight:               proc "system" (hWndSciter: rawptr, width: Uint) -> Uint,
+	SciterCall:                       proc "system" (
+		hWnd: rawptr,
+		functionName: Lpcstr,
+		argc: Uint,
+		argv: ^Sciter_Value,
+		retval: ^Sciter_Value,
+	) -> Bool32,
+	SciterEval:                       proc "system" (
+		hwnd: rawptr,
+		script: Wide_String,
+		scriptLength: Uint,
+		pretval: ^Sciter_Value,
+	) -> Bool32,
+	SciterUpdateWindow:               proc "system" (hwnd: rawptr),
+	SciterTranslateMessage:           Lpvoid, // NULL
+	SciterSetOption:                  proc "system" (
+		hWnd: rawptr,
+		option: Sciter_Rt_Options,
+		value: Uint_Ptr,
+	) -> Bool32,
+	SciterGetPPI:                     proc "system" (hWndSciter: rawptr, px: ^Uint, py: ^Uint),
+	SciterGetViewExpando:             proc "system" (hwnd: rawptr, pval: ^Value) -> Bool32,
+	SciterRenderD2D:                  Lpvoid, // N/A
+	SciterD2DFactory:                 Lpvoid, // N/A
+	SciterDWFactory:                  Lpvoid, // N/A
+	SciterGraphicsCaps:               proc "system" (pcaps: Lpuint) -> Bool32,
+	SciterSetHomeURL:                 proc "system" (hWndSciter: rawptr, baseUrl: Wide_String) -> Bool32,
+	SciterCreateNSView:               Lpvoid, // NULL
+	SciterCreateWidget:               Lpvoid, // NULL
+	SciterCreateWindow:               proc "system" (
+		creationFlags: Sciter_Create_Window_Flags,
+		frame: Lprect,
+		_: Lpvoid,
+		_: Lpvoid,
+		parent: rawptr,
+	) -> rawptr,
+	SciterSetupDebugOutput:           proc "system" (hwndOrNull: rawptr, param: Lpvoid, pfOutput: Debug_Output_Proc),
 
 	//|
 	//| DOM Element API
 	//|
-	Sciter_UseElement:               proc "system" (he: Helement) -> Scdom_Result,
-	Sciter_UnuseElement:             proc "system" (he: Helement) -> Scdom_Result,
-	SciterGetRootElement:            proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
-	SciterGetFocusElement:           proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
-	SciterFindElement:               proc "system" (hwnd: rawptr, pt: Point, phe: ^Helement) -> Scdom_Result,
-	SciterGetChildrenCount:          proc "system" (he: Helement, count: ^Uint) -> Scdom_Result,
-	SciterGetNthChild:               proc "system" (he: Helement, n: Uint, phe: ^Helement) -> Scdom_Result,
-	SciterGetParentElement:          proc "system" (he: Helement, p_parent_he: ^Helement) -> Scdom_Result,
-	SciterGetElementHtmlCB:          proc "system" (he: Helement, outer: Bool32, rcv: Bytes_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterGetElementTextCB:          proc "system" (he: Helement, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterSetElementText:            proc "system" (he: Helement, utf16: Wide_String, length: Uint) -> Scdom_Result,
-	SciterGetAttributeCount:         proc "system" (he: Helement, p_count: Lpuint) -> Scdom_Result,
-	SciterGetNthAttributeNameCB:     proc "system" (he: Helement, n: Uint, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterGetNthAttributeValueCB:    proc "system" (he: Helement, n: Uint, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterGetAttributeByNameCB:      proc "system" (he: Helement, name: Lpcstr, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterSetAttributeByName:        proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
-	SciterClearAttributes:           proc "system" (he: Helement) -> Scdom_Result,
-	SciterGetElementIndex:           proc "system" (he: Helement, p_index: Lpuint) -> Scdom_Result,
-	SciterGetElementType:            proc "system" (he: Helement, p_type: ^Lpcstr) -> Scdom_Result,
-	SciterGetElementTypeCB:          proc "system" (he: Helement, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterGetStyleAttributeCB:       proc "system" (he: Helement, name: Lpcstr, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterSetStyleAttribute:         proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
-	SciterGetElementLocation:        proc "system" (he: Helement, p_location: Lprect, areas: Uint /*ELEMENT_AREAS*/) -> Scdom_Result, /*ELEMENT_AREAS*/
-	SciterScrollToView:              proc "system" (he: Helement, SciterScrollFlags: Sciter_Scroll_Flags) -> Scdom_Result,
-	SciterUpdateElement:             proc "system" (he: Helement, andForceRender: Bool32) -> Scdom_Result,
-	SciterRefreshElementArea:        proc "system" (he: Helement, rc: Rect) -> Scdom_Result,
-	SciterSetCapture:                proc "system" (he: Helement) -> Scdom_Result,
-	SciterReleaseCapture:            proc "system" (he: Helement) -> Scdom_Result,
-	SciterGetElementHwnd:            proc "system" (he: Helement, p_hwnd: ^rawptr, rootWindow: Bool32) -> Scdom_Result,
-	SciterCombineURL:                proc "system" (he: Helement, szUrlBuffer: Wide_String_Buffer, UrlBufferSize: Uint) -> Scdom_Result,
-	SciterSelectElements:            proc "system" (he: Helement, CSS_selectors: Lpcstr, callback: Sciter_Element_Callback, param: Lpvoid) -> Scdom_Result,
-	SciterSelectElementsW:           proc "system" (he: Helement, CSS_selectors: Wide_String, callback: Sciter_Element_Callback, param: Lpvoid) -> Scdom_Result,
-	SciterSelectParent:              proc "system" (he: Helement, selector: Lpcstr, depth: Uint, heFound: ^Helement) -> Scdom_Result,
-	SciterSelectParentW:             proc "system" (he: Helement, selector: Wide_String, depth: Uint, heFound: ^Helement) -> Scdom_Result,
-	SciterSetElementHtml:            proc "system" (he: Helement, html: [^]Byte, htmlLength: Uint, _where: Set_Element_Html) -> Scdom_Result,
-	SciterGetElementUID:             proc "system" (he: Helement, puid: ^Uint) -> Scdom_Result,
-	SciterGetElementByUID:           proc "system" (hwnd: rawptr, uid: Uint, phe: ^Helement) -> Scdom_Result,
-	SciterShowPopup:                 proc "system" (hePopup: Helement, heAnchor: Helement, placement: Uint) -> Scdom_Result,
-	SciterShowPopupAt:               proc "system" (hePopup: Helement, pos: Point, placement: Uint) -> Scdom_Result,
-	SciterHidePopup:                 proc "system" (he: Helement) -> Scdom_Result,
-	SciterGetElementState:           proc "system" (he: Helement, pstateBits: ^Element_State_Bits) -> Scdom_Result,
-	SciterSetElementState:           proc "system" (he: Helement, stateBitsToSet: Element_State_Bits, stateBitsToClear: Element_State_Bits, updateView: Bool32) -> Scdom_Result,
-	SciterCreateElement:             proc "system" (tagname: Lpcstr, textOrNull: Wide_String, phe: ^Helement) -> Scdom_Result, /*out*/
-	SciterCloneElement:              proc "system" (he: Helement, phe: ^Helement) -> Scdom_Result,                             /*out*/
-	SciterInsertElement:             proc "system" (he: Helement, hparent: Helement, index: Uint) -> Scdom_Result,
-	SciterDetachElement:             proc "system" (he: Helement) -> Scdom_Result,
-	SciterDeleteElement:             proc "system" (he: Helement) -> Scdom_Result,
-	SciterSetTimer:                  proc "system" (he: Helement, milliseconds: Uint, timer_id: Uint_Ptr) -> Scdom_Result,
-	SciterDetachEventHandler:        proc "system" (he: Helement, pep: Lpelement_Event_Proc, tag: Lpvoid) -> Scdom_Result,
-	SciterAttachEventHandler:        proc "system" (he: Helement, pep: Lpelement_Event_Proc, tag: Lpvoid) -> Scdom_Result,
-	SciterWindowAttachEventHandler:  proc "system" (hwndLayout: rawptr, pep: Lpelement_Event_Proc, tag: Lpvoid, subscription: Event_Groups) -> Scdom_Result,
-	SciterWindowDetachEventHandler:  proc "system" (hwndLayout: rawptr, pep: Lpelement_Event_Proc, tag: Lpvoid) -> Scdom_Result,
-	SciterSendEvent:                 proc "system" (he: Helement, appEventCode: Uint, heSource: Helement, reason: Uint_Ptr, handled: ^Bool32) -> Scdom_Result, /*out*/
-	SciterPostEvent:                 proc "system" (he: Helement, appEventCode: Uint, heSource: Helement, reason: Uint_Ptr) -> Scdom_Result,
-	SciterCallBehaviorMethod:        proc "system" (he: Helement, params: ^Method_Params) -> Scdom_Result,
-	SciterRequestElementData:        proc "system" (he: Helement, url: Wide_String, dataType: Uint, initiator: Helement) -> Scdom_Result,
-	SciterHttpRequest:               proc "system" (he: Helement, url: Wide_String, dataType: Uint, requestType: Uint, requestParams: ^Request_Param, nParams: Uint) -> Scdom_Result, // element to deliver data
-	SciterGetScrollInfo:             proc "system" (he: Helement, scrollPos: Lppoint, viewRect: Lprect, contentSize: Lpsize) -> Scdom_Result,
-	SciterSetScrollPos:              proc "system" (he: Helement, scrollPos: Point, smooth: Bool32) -> Scdom_Result,
-	SciterGetElementIntrinsicWidths: proc "system" (he: Helement, pMinWidth: ^Int, pMaxWidth: ^Int) -> Scdom_Result,
-	SciterGetElementIntrinsicHeight: proc "system" (he: Helement, forWidth: Int, pHeight: ^Int) -> Scdom_Result,
-	SciterIsElementVisible:          proc "system" (he: Helement, pVisible: ^Bool32) -> Scdom_Result,
-	SciterIsElementEnabled:          proc "system" (he: Helement, pEnabled: ^Bool32) -> Scdom_Result,
-	SciterSortElements:              proc "system" (he: Helement, firstIndex: Uint, lastIndex: Uint, cmpFunc: Element_Comparator, cmpFuncParam: Lpvoid) -> Scdom_Result,
-	SciterSwapElements:              proc "system" (he1: Helement, he2: Helement) -> Scdom_Result,
-	SciterTraverseUIEvent:           proc "system" (evt: Uint, eventCtlStruct: Lpvoid, bOutProcessed: ^Bool32) -> Scdom_Result,
-	SciterCallScriptingMethod:       proc "system" (he: Helement, name: Lpcstr, argv: ^Value, argc: Uint, retval: ^Value) -> Scdom_Result,
-	SciterCallScriptingFunction:     proc "system" (he: Helement, name: Lpcstr, argv: ^Value, argc: Uint, retval: ^Value) -> Scdom_Result,
-	SciterEvalElementScript:         proc "system" (he: Helement, script: Wide_String, scriptLength: Uint, retval: ^Value) -> Scdom_Result,
-	SciterAttachHwndToElement:       proc "system" (he: Helement, hwnd: rawptr) -> Scdom_Result,
-	SciterControlGetType:            proc "system" (he: Helement, pType: ^Ctl_Type) -> Scdom_Result,                           /*CTL_TYPE*/
-	SciterGetValue:                  proc "system" (he: Helement, pval: ^Value) -> Scdom_Result,
-	SciterSetValue:                  proc "system" (he: Helement, pval: ^Value) -> Scdom_Result,
-	SciterGetExpando:                proc "system" (he: Helement, pval: ^Value, forceCreation: Bool32) -> Scdom_Result,
-	SciterGetObject:                 proc "system" (he: Helement, pval: rawptr, forceCreation: Bool32) -> Scdom_Result,
-	SciterGetElementNamespace:       proc "system" (he: Helement, pval: rawptr) -> Scdom_Result,
-	SciterGetHighlightedElement:     proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
-	SciterSetHighlightedElement:     proc "system" (hwnd: rawptr, he: Helement) -> Scdom_Result,
+	Sciter_UseElement:                proc "system" (he: Helement) -> Scdom_Result,
+	Sciter_UnuseElement:              proc "system" (he: Helement) -> Scdom_Result,
+	SciterGetRootElement:             proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
+	SciterGetFocusElement:            proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
+	SciterFindElement:                proc "system" (hwnd: rawptr, pt: Point, phe: ^Helement) -> Scdom_Result,
+	SciterGetChildrenCount:           proc "system" (he: Helement, count: ^Uint) -> Scdom_Result,
+	SciterGetNthChild:                proc "system" (he: Helement, n: Uint, phe: ^Helement) -> Scdom_Result,
+	SciterGetParentElement:           proc "system" (he: Helement, p_parent_he: ^Helement) -> Scdom_Result,
+	SciterGetElementHtmlCB:           proc "system" (
+		he: Helement,
+		outer: Bool32,
+		rcv: Bytes_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterGetElementTextCB:           proc "system" (
+		he: Helement,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterSetElementText:             proc "system" (he: Helement, utf16: Wide_String, length: Uint) -> Scdom_Result,
+	SciterGetAttributeCount:          proc "system" (he: Helement, p_count: Lpuint) -> Scdom_Result,
+	SciterGetNthAttributeNameCB:      proc "system" (
+		he: Helement,
+		n: Uint,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterGetNthAttributeValueCB:     proc "system" (
+		he: Helement,
+		n: Uint,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterGetAttributeByNameCB:       proc "system" (
+		he: Helement,
+		name: Lpcstr,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterSetAttributeByName:         proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
+	SciterClearAttributes:            proc "system" (he: Helement) -> Scdom_Result,
+	SciterGetElementIndex:            proc "system" (he: Helement, p_index: Lpuint) -> Scdom_Result,
+	SciterGetElementType:             proc "system" (he: Helement, p_type: ^Lpcstr) -> Scdom_Result,
+	SciterGetElementTypeCB:           proc "system" (
+		he: Helement,
+		rcv: Utf8_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterGetStyleAttributeCB:        proc "system" (
+		he: Helement,
+		name: Lpcstr,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterSetStyleAttribute:          proc "system" (he: Helement, name: Lpcstr, value: Wide_String) -> Scdom_Result,
+	SciterGetElementLocation:         proc "system" (
+		he: Helement,
+		p_location: Lprect,
+		areas: Uint,
+		/*ELEMENT_AREAS*/
+	) -> Scdom_Result, /*ELEMENT_AREAS*/
+	SciterScrollToView:               proc "system" (
+		he: Helement,
+		SciterScrollFlags: Sciter_Scroll_Flags,
+	) -> Scdom_Result,
+	SciterUpdateElement:              proc "system" (he: Helement, andForceRender: Bool32) -> Scdom_Result,
+	SciterRefreshElementArea:         proc "system" (he: Helement, rc: Rect) -> Scdom_Result,
+	SciterSetCapture:                 proc "system" (he: Helement) -> Scdom_Result,
+	SciterReleaseCapture:             proc "system" (he: Helement) -> Scdom_Result,
+	SciterGetElementHwnd:             proc "system" (
+		he: Helement,
+		p_hwnd: ^rawptr,
+		rootWindow: Bool32,
+	) -> Scdom_Result,
+	SciterCombineURL:                 proc "system" (
+		he: Helement,
+		szUrlBuffer: Wide_String_Buffer,
+		UrlBufferSize: Uint,
+	) -> Scdom_Result,
+	SciterSelectElements:             proc "system" (
+		he: Helement,
+		CSS_selectors: Lpcstr,
+		callback: Sciter_Element_Callback,
+		param: Lpvoid,
+	) -> Scdom_Result,
+	SciterSelectElementsW:            proc "system" (
+		he: Helement,
+		CSS_selectors: Wide_String,
+		callback: Sciter_Element_Callback,
+		param: Lpvoid,
+	) -> Scdom_Result,
+	SciterSelectParent:               proc "system" (
+		he: Helement,
+		selector: Lpcstr,
+		depth: Uint,
+		heFound: ^Helement,
+	) -> Scdom_Result,
+	SciterSelectParentW:              proc "system" (
+		he: Helement,
+		selector: Wide_String,
+		depth: Uint,
+		heFound: ^Helement,
+	) -> Scdom_Result,
+	SciterSetElementHtml:             proc "system" (
+		he: Helement,
+		html: [^]Byte,
+		htmlLength: Uint,
+		_where: Set_Element_Html,
+	) -> Scdom_Result,
+	SciterGetElementUID:              proc "system" (he: Helement, puid: ^Uint) -> Scdom_Result,
+	SciterGetElementByUID:            proc "system" (hwnd: rawptr, uid: Uint, phe: ^Helement) -> Scdom_Result,
+	SciterShowPopup:                  proc "system" (
+		hePopup: Helement,
+		heAnchor: Helement,
+		placement: Uint,
+	) -> Scdom_Result,
+	SciterShowPopupAt:                proc "system" (hePopup: Helement, pos: Point, placement: Uint) -> Scdom_Result,
+	SciterHidePopup:                  proc "system" (he: Helement) -> Scdom_Result,
+	SciterGetElementState:            proc "system" (he: Helement, pstateBits: ^Element_State_Bits) -> Scdom_Result,
+	SciterSetElementState:            proc "system" (
+		he: Helement,
+		stateBitsToSet: Element_State_Bits,
+		stateBitsToClear: Element_State_Bits,
+		updateView: Bool32,
+	) -> Scdom_Result,
+	SciterCreateElement:              proc "system" (
+		tagname: Lpcstr,
+		textOrNull: Wide_String,
+		phe: ^Helement,
+	) -> Scdom_Result, /*out*/
+	SciterCloneElement:               proc "system" (he: Helement, phe: ^Helement) -> Scdom_Result, /*out*/
+	SciterInsertElement:              proc "system" (he: Helement, hparent: Helement, index: Uint) -> Scdom_Result,
+	SciterDetachElement:              proc "system" (he: Helement) -> Scdom_Result,
+	SciterDeleteElement:              proc "system" (he: Helement) -> Scdom_Result,
+	SciterSetTimer:                   proc "system" (
+		he: Helement,
+		milliseconds: Uint,
+		timer_id: Uint_Ptr,
+	) -> Scdom_Result,
+	SciterDetachEventHandler:         proc "system" (
+		he: Helement,
+		pep: Lpelement_Event_Proc,
+		tag: Lpvoid,
+	) -> Scdom_Result,
+	SciterAttachEventHandler:         proc "system" (
+		he: Helement,
+		pep: Lpelement_Event_Proc,
+		tag: Lpvoid,
+	) -> Scdom_Result,
+	SciterWindowAttachEventHandler:   proc "system" (
+		hwndLayout: rawptr,
+		pep: Lpelement_Event_Proc,
+		tag: Lpvoid,
+		subscription: Event_Groups,
+	) -> Scdom_Result,
+	SciterWindowDetachEventHandler:   proc "system" (
+		hwndLayout: rawptr,
+		pep: Lpelement_Event_Proc,
+		tag: Lpvoid,
+	) -> Scdom_Result,
+	SciterSendEvent:                  proc "system" (
+		he: Helement,
+		appEventCode: Uint,
+		heSource: Helement,
+		reason: Uint_Ptr,
+		handled: ^Bool32,
+	) -> Scdom_Result, /*out*/
+	SciterPostEvent:                  proc "system" (
+		he: Helement,
+		appEventCode: Uint,
+		heSource: Helement,
+		reason: Uint_Ptr,
+	) -> Scdom_Result,
+	SciterCallBehaviorMethod:         proc "system" (he: Helement, params: ^Method_Params) -> Scdom_Result,
+	SciterRequestElementData:         proc "system" (
+		he: Helement,
+		url: Wide_String,
+		dataType: Uint,
+		initiator: Helement,
+	) -> Scdom_Result,
+	SciterHttpRequest:                proc "system" (
+		he: Helement,
+		url: Wide_String,
+		dataType: Uint,
+		requestType: Uint,
+		requestParams: ^Request_Param,
+		nParams: Uint,
+	) -> Scdom_Result, // element to deliver data
+	SciterGetScrollInfo:              proc "system" (
+		he: Helement,
+		scrollPos: Lppoint,
+		viewRect: Lprect,
+		contentSize: Lpsize,
+	) -> Scdom_Result,
+	SciterSetScrollPos:               proc "system" (he: Helement, scrollPos: Point, smooth: Bool32) -> Scdom_Result,
+	SciterGetElementIntrinsicWidths:  proc "system" (he: Helement, pMinWidth: ^Int, pMaxWidth: ^Int) -> Scdom_Result,
+	SciterGetElementIntrinsicHeight:  proc "system" (he: Helement, forWidth: Int, pHeight: ^Int) -> Scdom_Result,
+	SciterIsElementVisible:           proc "system" (he: Helement, pVisible: ^Bool32) -> Scdom_Result,
+	SciterIsElementEnabled:           proc "system" (he: Helement, pEnabled: ^Bool32) -> Scdom_Result,
+	SciterSortElements:               proc "system" (
+		he: Helement,
+		firstIndex: Uint,
+		lastIndex: Uint,
+		cmpFunc: Element_Comparator,
+		cmpFuncParam: Lpvoid,
+	) -> Scdom_Result,
+	SciterSwapElements:               proc "system" (he1: Helement, he2: Helement) -> Scdom_Result,
+	SciterTraverseUIEvent:            proc "system" (
+		evt: Uint,
+		eventCtlStruct: Lpvoid,
+		bOutProcessed: ^Bool32,
+	) -> Scdom_Result,
+	SciterCallScriptingMethod:        proc "system" (
+		he: Helement,
+		name: Lpcstr,
+		argv: ^Value,
+		argc: Uint,
+		retval: ^Value,
+	) -> Scdom_Result,
+	SciterCallScriptingFunction:      proc "system" (
+		he: Helement,
+		name: Lpcstr,
+		argv: ^Value,
+		argc: Uint,
+		retval: ^Value,
+	) -> Scdom_Result,
+	SciterEvalElementScript:          proc "system" (
+		he: Helement,
+		script: Wide_String,
+		scriptLength: Uint,
+		retval: ^Value,
+	) -> Scdom_Result,
+	SciterAttachHwndToElement:        proc "system" (he: Helement, hwnd: rawptr) -> Scdom_Result,
+	SciterControlGetType:             proc "system" (he: Helement, pType: ^Ctl_Type) -> Scdom_Result, /*CTL_TYPE*/
+	SciterGetValue:                   proc "system" (he: Helement, pval: ^Value) -> Scdom_Result,
+	SciterSetValue:                   proc "system" (he: Helement, pval: ^Value) -> Scdom_Result,
+	SciterGetExpando:                 proc "system" (
+		he: Helement,
+		pval: ^Value,
+		forceCreation: Bool32,
+	) -> Scdom_Result,
+	SciterGetObject:                  proc "system" (
+		he: Helement,
+		pval: rawptr,
+		forceCreation: Bool32,
+	) -> Scdom_Result,
+	SciterGetElementNamespace:        proc "system" (he: Helement, pval: rawptr) -> Scdom_Result,
+	SciterGetHighlightedElement:      proc "system" (hwnd: rawptr, phe: ^Helement) -> Scdom_Result,
+	SciterSetHighlightedElement:      proc "system" (hwnd: rawptr, he: Helement) -> Scdom_Result,
 
 	//|
 	//| DOM Node API
 	//|
-	SciterNodeAddRef:          proc "system" (hn: Hnode) -> Scdom_Result,
-	SciterNodeRelease:         proc "system" (hn: Hnode) -> Scdom_Result,
-	SciterNodeCastFromElement: proc "system" (he: Helement, phn: ^Hnode) -> Scdom_Result,
-	SciterNodeCastToElement:   proc "system" (hn: Hnode, he: ^Helement) -> Scdom_Result,
-	SciterNodeFirstChild:      proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
-	SciterNodeLastChild:       proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
-	SciterNodeNextSibling:     proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
-	SciterNodePrevSibling:     proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
-	SciterNodeParent:          proc "system" (hnode: Hnode, pheParent: ^Helement) -> Scdom_Result,
-	SciterNodeNthChild:        proc "system" (hnode: Hnode, n: Uint, phn: ^Hnode) -> Scdom_Result,
-	SciterNodeChildrenCount:   proc "system" (hnode: Hnode, pn: ^Uint) -> Scdom_Result,
-	SciterNodeType:            proc "system" (hnode: Hnode, pNodeType: ^Node_Type /*NODE_TYPE*/) -> Scdom_Result,           /*NODE_TYPE*/
-	SciterNodeGetText:         proc "system" (hnode: Hnode, rcv: Wide_String_Receiver, rcv_param: Lpvoid) -> Scdom_Result,
-	SciterNodeSetText:         proc "system" (hnode: Hnode, text: Wide_String, textLength: Uint) -> Scdom_Result,
-	SciterNodeInsert:          proc "system" (hnode: Hnode, _where: Uint /*NODE_INS_TARGET*/, what: Hnode) -> Scdom_Result, /*NODE_INS_TARGET*/
-	SciterNodeRemove:          proc "system" (hnode: Hnode, finalize: Bool32) -> Scdom_Result,
-	SciterCreateTextNode:      proc "system" (text: Wide_String, textLength: Uint, phnode: ^Hnode) -> Scdom_Result,
-	SciterCreateCommentNode:   proc "system" (text: Wide_String, textLength: Uint, phnode: ^Hnode) -> Scdom_Result,
+	SciterNodeAddRef:                 proc "system" (hn: Hnode) -> Scdom_Result,
+	SciterNodeRelease:                proc "system" (hn: Hnode) -> Scdom_Result,
+	SciterNodeCastFromElement:        proc "system" (he: Helement, phn: ^Hnode) -> Scdom_Result,
+	SciterNodeCastToElement:          proc "system" (hn: Hnode, he: ^Helement) -> Scdom_Result,
+	SciterNodeFirstChild:             proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
+	SciterNodeLastChild:              proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
+	SciterNodeNextSibling:            proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
+	SciterNodePrevSibling:            proc "system" (hn: Hnode, phn: ^Hnode) -> Scdom_Result,
+	SciterNodeParent:                 proc "system" (hnode: Hnode, pheParent: ^Helement) -> Scdom_Result,
+	SciterNodeNthChild:               proc "system" (hnode: Hnode, n: Uint, phn: ^Hnode) -> Scdom_Result,
+	SciterNodeChildrenCount:          proc "system" (hnode: Hnode, pn: ^Uint) -> Scdom_Result,
+	SciterNodeType:                   proc "system" (
+		hnode: Hnode,
+		pNodeType: ^Node_Type,
+		/*NODE_TYPE*/
+	) -> Scdom_Result, /*NODE_TYPE*/
+	SciterNodeGetText:                proc "system" (
+		hnode: Hnode,
+		rcv: Wide_String_Receiver,
+		rcv_param: Lpvoid,
+	) -> Scdom_Result,
+	SciterNodeSetText:                proc "system" (
+		hnode: Hnode,
+		text: Wide_String,
+		textLength: Uint,
+	) -> Scdom_Result,
+	SciterNodeInsert:                 proc "system" (
+		hnode: Hnode,
+		_where: Uint,
+		/*NODE_INS_TARGET*/
+		what: Hnode,
+	) -> Scdom_Result, /*NODE_INS_TARGET*/
+	SciterNodeRemove:                 proc "system" (hnode: Hnode, finalize: Bool32) -> Scdom_Result,
+	SciterCreateTextNode:             proc "system" (
+		text: Wide_String,
+		textLength: Uint,
+		phnode: ^Hnode,
+	) -> Scdom_Result,
+	SciterCreateCommentNode:          proc "system" (
+		text: Wide_String,
+		textLength: Uint,
+		phnode: ^Hnode,
+	) -> Scdom_Result,
 
 	//|
 	//| Value API
 	//|
-	ValueInit:               proc "system" (pval: ^Value) -> Value_Result,
-	ValueClear:              proc "system" (pval: ^Value) -> Value_Result,
-	ValueCompare:            proc "system" (pval1: ^Value, pval2: ^Value) -> Value_Result,
-	ValueCopy:               proc "system" (pdst: ^Value, psrc: ^Value) -> Value_Result,
-	ValueIsolate:            proc "system" (pdst: ^Value) -> Value_Result,
-	ValueType:               proc "system" (pval: ^Value, pType: ^Value_Type, pUnits: ^Uint) -> Value_Result,
-	ValueStringData:         proc "system" (pval: ^Value, pChars: ^Wide_String, pNumChars: ^Uint) -> Value_Result,
-	ValueStringDataSet:      proc "system" (pval: ^Value, chars: Wide_String, numChars: Uint, units: Uint) -> Value_Result,
-	ValueIntData:            proc "system" (pval: ^Value, pData: ^Int) -> Value_Result,
-	ValueIntDataSet:         proc "system" (pval: ^Value, data: Int, type: Value_Type, units: Uint) -> Value_Result,
-	ValueInt64Data:          proc "system" (pval: ^Value, pData: ^Int64) -> Value_Result,
-	ValueInt64DataSet:       proc "system" (pval: ^Value, data: Int64, type: Value_Type, units: Uint) -> Value_Result,
-	ValueFloatData:          proc "system" (pval: ^Value, pData: ^f64) -> Value_Result,
-	ValueFloatDataSet:       proc "system" (pval: ^Value, data: f64, type: Value_Type, units: Uint) -> Value_Result,
-	ValueBinaryData:         proc "system" (pval: ^Value, pBytes: ^Bytes, pnBytes: ^Uint) -> Value_Result,
-	ValueBinaryDataSet:      proc "system" (pval: ^Value, pBytes: Bytes, nBytes: Uint, type: Value_Type, units: Uint) -> Value_Result,
-	ValueElementsCount:      proc "system" (pval: ^Value, pn: ^Int) -> Value_Result,
-	ValueNthElementValue:    proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
-	ValueNthElementValueSet: proc "system" (pval: ^Value, n: Int, pval_to_set: ^Value) -> Value_Result,
-	ValueNthElementKey:      proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
-	ValueEnumElements:       proc "system" (pval: ^Value, penum: Key_Value_Callback, param: Lpvoid) -> Value_Result,
-	ValueSetValueToKey:      proc "system" (pval: ^Value, pkey: ^Value, pval_to_set: ^Value) -> Value_Result,
-	ValueGetValueOfKey:      proc "system" (pval: ^Value, pkey: ^Value, pretval: ^Value) -> Value_Result,
-	ValueToString:           proc "system" (pval: ^Value, how: Value_String_Cvt_Type) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
-	ValueFromString:         proc "system" (pval: ^Value, str: Wide_String, strLength: Uint, how: Value_String_Cvt_Type) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
-	ValueInvoke:             proc "system" (pval: ^Value, pthis: ^Value, argc: Uint, argv: ^Value, pretval: ^Value, url: Wide_String) -> Value_Result,
-	ValueNativeFunctorSet:   proc "system" (pval: ^Value, pinvoke: Native_Functor_Invoke, prelease: Native_Functor_Release, tag: ^Void) -> Value_Result,
-	ValueIsNativeFunctor:    proc "system" (pval: ^Value) -> Bool32,
+	ValueInit:                        proc "system" (pval: ^Value) -> Value_Result,
+	ValueClear:                       proc "system" (pval: ^Value) -> Value_Result,
+	ValueCompare:                     proc "system" (pval1: ^Value, pval2: ^Value) -> Value_Result,
+	ValueCopy:                        proc "system" (pdst: ^Value, psrc: ^Value) -> Value_Result,
+	ValueIsolate:                     proc "system" (pdst: ^Value) -> Value_Result,
+	ValueType:                        proc "system" (pval: ^Value, pType: ^Value_Type, pUnits: ^Uint) -> Value_Result,
+	ValueStringData:                  proc "system" (
+		pval: ^Value,
+		pChars: ^Wide_String,
+		pNumChars: ^Uint,
+	) -> Value_Result,
+	ValueStringDataSet:               proc "system" (
+		pval: ^Value,
+		chars: Wide_String,
+		numChars: Uint,
+		units: Uint,
+	) -> Value_Result,
+	ValueIntData:                     proc "system" (pval: ^Value, pData: ^Int) -> Value_Result,
+	ValueIntDataSet:                  proc "system" (
+		pval: ^Value,
+		data: Int,
+		type: Value_Type,
+		units: Uint,
+	) -> Value_Result,
+	ValueInt64Data:                   proc "system" (pval: ^Value, pData: ^Int64) -> Value_Result,
+	ValueInt64DataSet:                proc "system" (
+		pval: ^Value,
+		data: Int64,
+		type: Value_Type,
+		units: Uint,
+	) -> Value_Result,
+	ValueFloatData:                   proc "system" (pval: ^Value, pData: ^f64) -> Value_Result,
+	ValueFloatDataSet:                proc "system" (
+		pval: ^Value,
+		data: f64,
+		type: Value_Type,
+		units: Uint,
+	) -> Value_Result,
+	ValueBinaryData:                  proc "system" (pval: ^Value, pBytes: ^Bytes, pnBytes: ^Uint) -> Value_Result,
+	ValueBinaryDataSet:               proc "system" (
+		pval: ^Value,
+		pBytes: Bytes,
+		nBytes: Uint,
+		type: Value_Type,
+		units: Uint,
+	) -> Value_Result,
+	ValueElementsCount:               proc "system" (pval: ^Value, pn: ^Int) -> Value_Result,
+	ValueNthElementValue:             proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
+	ValueNthElementValueSet:          proc "system" (pval: ^Value, n: Int, pval_to_set: ^Value) -> Value_Result,
+	ValueNthElementKey:               proc "system" (pval: ^Value, n: Int, pretval: ^Value) -> Value_Result,
+	ValueEnumElements:                proc "system" (
+		pval: ^Value,
+		penum: Key_Value_Callback,
+		param: Lpvoid,
+	) -> Value_Result,
+	ValueSetValueToKey:               proc "system" (pval: ^Value, pkey: ^Value, pval_to_set: ^Value) -> Value_Result,
+	ValueGetValueOfKey:               proc "system" (pval: ^Value, pkey: ^Value, pretval: ^Value) -> Value_Result,
+	ValueToString:                    proc "system" (
+		pval: ^Value,
+		how: Value_String_Cvt_Type,
+	) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
+	ValueFromString:                  proc "system" (
+		pval: ^Value,
+		str: Wide_String,
+		strLength: Uint,
+		how: Value_String_Cvt_Type,
+	) -> Value_Result, /*VALUE_STRING_CVT_TYPE*/
+	ValueInvoke:                      proc "system" (
+		pval: ^Value,
+		pthis: ^Value,
+		argc: Uint,
+		argv: ^Value,
+		pretval: ^Value,
+		url: Wide_String,
+	) -> Value_Result,
+	ValueNativeFunctorSet:            proc "system" (
+		pval: ^Value,
+		pinvoke: Native_Functor_Invoke,
+		prelease: Native_Functor_Release,
+		tag: ^Void,
+	) -> Value_Result,
+	ValueIsNativeFunctor:             proc "system" (pval: ^Value) -> Bool32,
 
 	// used to be script VM API
 	reserved1:                        Lpvoid,
@@ -2012,21 +2620,39 @@ _Isciter_Api :: struct {
 	reserved3:                        Lpvoid,
 	reserved4:                        Lpvoid,
 	SciterOpenArchive:                proc "system" (archiveData: Bytes, archiveDataLength: Uint) -> Archive,
-	SciterGetArchiveItem:             proc "system" (harc: Archive, path: Wide_String, pdata: ^Bytes, pdataLength: ^Uint) -> Bool32,
+	SciterGetArchiveItem:             proc "system" (
+		harc: Archive,
+		path: Wide_String,
+		pdata: ^Bytes,
+		pdataLength: ^Uint,
+	) -> Bool32,
 	SciterCloseArchive:               proc "system" (harc: Archive) -> Bool32,
-	SciterFireEvent:                  proc "system" (evt: ^Behavior_Event_Params, post: Bool32, handled: ^Bool32) -> Scdom_Result,
+	SciterFireEvent:                  proc "system" (
+		evt: ^Behavior_Event_Params,
+		post: Bool32,
+		handled: ^Bool32,
+	) -> Scdom_Result,
 	SciterGetCallbackParam:           proc "system" (hwnd: rawptr) -> Lpvoid,
-	SciterPostCallback:               proc "system" (hwnd: rawptr, wparam: Uint_Ptr, lparam: Uint_Ptr, timeoutms: Uint) -> Uint_Ptr,
+	SciterPostCallback:               proc "system" (
+		hwnd: rawptr,
+		wparam: Uint_Ptr,
+		lparam: Uint_Ptr,
+		timeoutms: Uint,
+	) -> Uint_Ptr,
 	GetSciterGraphicsAPI:             proc "system" () -> Lpsciter_Graphics_Api,
 	GetSciterRequestAPI:              proc "system" () -> Lpsciter_Request_Api,
 	SciterCreateOnDirectXWindow:      Lpvoid,
 	SciterRenderOnDirectXWindow:      Lpvoid,
 	SciterRenderOnDirectXTexture:     Lpvoid,
-	SciterProcX:                      proc "system" (hwnd: rawptr, pMsg: ^Sciter_X_Msg) -> Bool32,                        // returns TRUE if handled
-	SciterAtomValue:                  proc "system" (name: cstring) -> Uint64,                                            //
+	SciterProcX:                      proc "system" (hwnd: rawptr, pMsg: ^Sciter_X_Msg) -> Bool32, // returns TRUE if handled
+	SciterAtomValue:                  proc "system" (name: cstring) -> Uint64, //
 	SciterAtomNameCB:                 proc "system" (atomv: Uint64, rcv: Utf8_Receiver, rcv_param: Lpvoid) -> Bool32,
 	SciterSetGlobalAsset:             proc "system" (pass: ^Som_Asset_T) -> Bool32,
-	SciterGetElementAsset:            proc "system" (el: Helement, nameAtom: Uint64, ppass: ^^Som_Asset_T) -> Scdom_Result,
+	SciterGetElementAsset:            proc "system" (
+		el: Helement,
+		nameAtom: Uint64,
+		ppass: ^^Som_Asset_T,
+	) -> Scdom_Result,
 	SciterSetVariable:                proc "system" (hwndOrNull: rawptr, name: Lpcstr, pvalToSet: ^Value) -> Uint,
 	SciterGetVariable:                proc "system" (hwndOrNull: rawptr, name: Lpcstr, pvalToGet: ^Value) -> Uint,
 	SciterElementUnwrap:              proc "system" (pval: ^Value, ppElement: ^Helement) -> Uint,
@@ -2034,14 +2660,24 @@ _Isciter_Api :: struct {
 	SciterNodeUnwrap:                 proc "system" (pval: ^Value, ppNode: ^Hnode) -> Uint,
 	SciterNodeWrap:                   proc "system" (pval: ^Value, pNode: Hnode) -> Uint,
 	SciterReleaseGlobalAsset:         proc "system" (pass: ^Som_Asset_T) -> Bool32,
-	SciterExec:                       proc "system" (appCmd: Sciter_App_Cmd /**/, p1: Uint_Ptr, p2: Uint_Ptr) -> Int_Ptr, /**/
-	SciterWindowExec:                 proc "system" (hwnd: rawptr, windowCmd: Sciter_Window_Cmd /**/, p1: Uint_Ptr, p2: Uint_Ptr) -> Int_Ptr, /**/
+	SciterExec:                       proc "system" (
+		appCmd: Sciter_App_Cmd,
+		/**/
+		p1: Uint_Ptr,
+		p2: Uint_Ptr,
+	) -> Int_Ptr, /**/
+	SciterWindowExec:                 proc "system" (
+		hwnd: rawptr,
+		windowCmd: Sciter_Window_Cmd,
+		/**/
+		p1: Uint_Ptr,
+		p2: Uint_Ptr,
+	) -> Int_Ptr, /**/
 	SciterEGLGetProcAddress:          proc "system" (procName: cstring) -> Proc_Ptr_T,
 	SciterEGLSendEvent:               proc "system" (he: Helement, eventCode: Uint, reason: Uint_Ptr) -> Scdom_Result,
 	SciterRequestAnimationFrameEvent: proc "system" (he: Helement, eventCode: Uint, reason: Uint_Ptr) -> Scdom_Result,
 	SciterRequestPaint:               proc "system" (he: Helement) -> Scdom_Result,
 }
 
-Isciter_Api    :: _Isciter_Api
+Isciter_Api :: _Isciter_Api
 Sciter_Api_Ptr :: proc "system" () -> ^Isciter_Api
-

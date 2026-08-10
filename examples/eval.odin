@@ -303,3 +303,89 @@ test_utf16_helpers :: proc(t: ^testing.T) {
 		testing.expect_value(t, back, original)
 	}
 }
+
+@(test)
+test_value_wrong_type_is_an_error :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	// The extraction calls are not converters: asking a number for its string fails rather than
+	// rendering it. That distinction is the whole reason value_to_display_string exists.
+	n := sciter_app.value_from(i32(42))
+	defer sciter_app.value_clear(&n)
+
+	_, err := sciter_app.value_to_string(&n, context.temp_allocator)
+	testing.expect_value(t, err, sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE))
+}
+
+@(test)
+test_value_display_string :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	array := sciter_app.value_make_array(0)
+	defer sciter_app.value_clear(&array)
+	for i in 0 ..< 3 {
+		element := sciter_app.value_from(i32(i))
+		defer sciter_app.value_clear(&element)
+		sciter_app.value_set_at(&array, i, &element)
+	}
+
+	json, err := sciter_app.value_to_display_string(&array, .JSON_LITERAL, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, json, "[0,1,2]")
+
+	// ValueToString converts in place, so the wrapper copies first. If it did not, `array` would be a
+	// string by now and this would be the test that noticed.
+	type, _ := sciter_app.value_type(&array)
+	testing.expect_value(t, type, sciter.Value_Type.ARRAY)
+}
+
+// A native functor is normally reached from script, which needs a document and a window. It does not
+// have to be: a functor Value can be invoked directly, which exercises the whole path - the wrapper
+// record, the engine's call into `proc "system"`, the restored context, and the release callback that
+// frees the record when the last reference goes - with no display anywhere.
+@(private = "file")
+Functor_State :: struct {
+	calls: int,
+}
+
+@(private = "file")
+test_functor :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	state := (^Functor_State)(user_data)
+	state.calls += 1
+
+	if len(args) != 1 {
+		return sciter_app.value_from(i32(-1))
+	}
+	// Allocating here is the point: it only works if the calling context was restored.
+	s, err := sciter_app.value_to_string(&args[0], context.temp_allocator)
+	if err != nil {
+		return sciter_app.value_from(i32(-2))
+	}
+	return sciter_app.value_from(i32(len(s)))
+}
+
+@(test)
+test_native_functor_round_trip :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	state := Functor_State{}
+
+	fn := sciter_app.value_from_function(test_functor, &state)
+	defer sciter_app.value_clear(&fn)
+	testing.expect(t, sciter_app.value_is_function(&fn), "value_from_function must produce a functor")
+
+	arg := sciter_app.value_from("four")
+	defer sciter_app.value_clear(&arg)
+
+	result, err := sciter_app.value_invoke(&fn, nil, {arg})
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&result)
+
+	n, _ := sciter_app.value_to_int(&result)
+	testing.expect_value(t, n, i32(4))
+	testing.expect_value(t, state.calls, 1)
+
+	// The argument is borrowed for the call, not consumed, so it is still usable afterwards.
+	again, _ := sciter_app.value_to_string(&arg, context.temp_allocator)
+	testing.expect_value(t, again, "four")
+}

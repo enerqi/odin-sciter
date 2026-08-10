@@ -115,11 +115,28 @@ version :: proc() -> [4]u32 {
 	return {api.SciterVersion(0), api.SciterVersion(1), api.SciterVersion(2), api.SciterVersion(3)}
 }
 
+// An engine option. `window` is nil for the process-wide options, which is most of them - the ones
+// that take a window say so in `Sciter_Rt_Options`.
+//
+// `value` is an untyped word on purpose: what it means is chosen by `option`, and it is a boolean for
+// `.SMOOTH_SCROLL`, milliseconds for `.CONNECTION_TIMEOUT`, a `Script_Runtime_Features` mask for
+// `.SET_SCRIPT_RUNTIME_FEATURES`, a UTF-8 string pointer for `.SET_INIT_SCRIPT`. Typing it would mean
+// one wrapper per option; the two worth having are below.
+set_option :: proc(option: sciter.Sciter_Rt_Options, value: uintptr, window: Window = nil) -> Error {
+	ok := sciter.api().SciterSetOption(rawptr(window), option, value)
+	return nil if ok else Api_Error.Load_Failed
+}
+
 // Which script capabilities the engine grants. Sciter denies file and socket access by default, so a
 // document that needs either has to be granted it here, before the window is created.
 set_script_features :: proc(features: sciter.Script_Runtime_Features) -> Error {
-	ok := sciter.api().SciterSetOption(nil, .SET_SCRIPT_RUNTIME_FEATURES, uintptr(transmute(u32)features))
-	return nil if ok else Api_Error.Load_Failed
+	return set_option(.SET_SCRIPT_RUNTIME_FEATURES, uintptr(transmute(u32)features))
+}
+
+// Lets the SDK's `inspector` attach to a window created with `.ENABLE_DEBUG`. Both halves are needed:
+// the flag makes the window inspectable, this makes the engine listen.
+set_debug_mode :: proc(enabled := true, window: Window = nil) -> Error {
+	return set_option(.SET_DEBUG_MODE, uintptr(1 if enabled else 0), window)
 }
 
 // Routes the engine's HTML/CSS/script diagnostics somewhere. Without this, a CSS typo or a script error

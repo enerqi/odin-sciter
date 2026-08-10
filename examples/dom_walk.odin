@@ -10,6 +10,7 @@
 // this example points at where it would be needed.
 package main
 
+import sciter ".."
 import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
@@ -148,10 +149,18 @@ main :: proc() {
 
 @(private = "file")
 have_display :: proc() -> bool {
-	return(
-		os.get_env("DISPLAY", context.temp_allocator) != "" ||
-		os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
-	)
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		// DISPLAY and WAYLAND_DISPLAY are X11/Wayland variables and are simply absent here, so testing
+		// for them would skip every windowed test on those platforms forever - silently, which is the
+		// worst way for a test to not run. A desktop session is the normal case on both, and a session
+		// that genuinely cannot open a window fails visibly at create_window instead.
+		return true
+	} else {
+		return(
+			os.get_env("DISPLAY", context.temp_allocator) != "" ||
+			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
+		)
+	}
 }
 
 @(private = "file")
@@ -265,4 +274,64 @@ test_traversal :: proc(t: ^testing.T) {
 	up, _ := sciter_app.parent(first)
 	up_tag, _ := sciter_app.tag(up)
 	testing.expect_value(t, up_tag, "ul")
+}
+
+// The node view. Elements are what an application walks; nodes are what the document is actually made
+// of, and the two cross over with `node_from_element` / `node_to_element`.
+@(test)
+test_node_walk :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	item, _ := sciter_app.select_first(root, "li.todo")
+
+	node, err := sciter_app.node_from_element(item)
+	testing.expect_value(t, err, nil)
+
+	type, terr := sciter_app.node_type(node)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, type, sciter.Node_Type.ELEMENT)
+
+	// The <li>'s content is a text node, not an element - which is the whole reason this view exists.
+	text_node, ferr := sciter_app.node_first_child(node)
+	testing.expect_value(t, ferr, nil)
+
+	text_type, _ := sciter_app.node_type(text_node)
+	testing.expect_value(t, text_type, sciter.Node_Type.TEXT)
+
+	content, cerr := sciter_app.node_text(text_node, context.temp_allocator)
+	testing.expect_value(t, cerr, nil)
+	testing.expect_value(t, content, "write the guides")
+
+	// Back the other way: a text node is not an element, and says so rather than returning nil.
+	_, eerr := sciter_app.node_to_element(text_node)
+	testing.expect(t, eerr != nil, "a text node must not cast to an element")
+
+	// The parent of a node is always an element.
+	parent, perr := sciter_app.node_parent(text_node)
+	testing.expect_value(t, perr, nil)
+	parent_tag, _ := sciter_app.tag(parent)
+	testing.expect_value(t, parent_tag, "li")
+}
+
+@(test)
+test_node_insert :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	// A detached node belongs to the caller until it is inserted.
+	created, err := sciter_app.make_text_node(" appended")
+	testing.expect_value(t, err, nil)
+
+	target, _ := sciter_app.node_from_element(summary)
+	testing.expect_value(t, sciter_app.node_insert(target, .APPEND, created), nil)
+
+	// The element's flattened text now includes what the node carries.
+	after, terr := sciter_app.text(summary, context.temp_allocator)
+	testing.expect_value(t, terr, nil)
+	testing.expect(t, strings.has_suffix(after, " appended"), after)
 }

@@ -60,11 +60,23 @@ do the stylesheets it pulls in. A handler installed afterwards misses all of it.
 | --- | --- |
 | `.OK` | carry on — with your data if `serve` filled it in, otherwise the engine loads it |
 | `.DISCARD` | refuse. The resource is never loaded. |
-| `.DELAYED` | you will answer later, out of band, via `SciterDataReadyAsync` with `raw.requestId`. **Every delayed request must eventually be answered or it leaks.** |
+| `.DELAYED` | you will answer later, out of band, with `data_ready_async(window, uri, data, raw.requestId)`. **Every delayed request must eventually be answered or it leaks.** |
 | `.MYSELF` | you take over the underlying `HREQUEST` and drive it through the `sciter-x-request` API |
 
 `.DELAYED` is the one that makes a network-backed or database-backed loader possible without blocking
-the pump. Answering from the engine's thread is still required.
+the pump:
+
+```odin
+// in the callback: remember the id, answer nothing yet
+app.pending = request.raw.requestId
+return .DELAYED
+
+// later, back on the engine's thread
+sciter_app.data_ready_async(window, uri, bytes, app.pending)
+```
+
+Answering from the engine's thread is still required — see
+[`architecture.md`](./architecture.md#threading) for how to get back onto it.
 
 ### Lifetime of the data you serve
 

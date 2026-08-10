@@ -65,7 +65,9 @@ calling `context` at attach time, because the engine calls back as `proc "system
 | `stop()` | asks the pump to return. Safe from an event handler. |
 | `shutdown()` | releases the engine's resources; call after `run` returns |
 | `version() -> [4]u32` | `[major, minor, revision, build]` |
+| `set_option(option, value: uintptr, window = nil) -> Error` | any `Sciter_Rt_Options`; `value`'s meaning is chosen by `option` |
 | `set_script_features(features: sciter.Script_Runtime_Features) -> Error` | `{.FILE_IO, .SOCKET_IO, .EVAL, .SYSINFO, .CMODULES}` — all denied by default |
+| `set_debug_mode(enabled := true, window = nil) -> Error` | lets the SDK's inspector attach; pairs with the window's `.ENABLE_DEBUG` flag |
 | `set_default_debug_output(window: Window = nil)` | routes CSS/script diagnostics to stderr |
 | `set_debug_output(handler, param, window)` | the same, with your own `proc "system"` |
 
@@ -144,6 +146,22 @@ do not clear it.
 
 `state(x)` and `set_state(x, …)` are overload groups resolving to the element or window version.
 
+## Nodes — `node.odin`
+
+The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`.
+
+| | |
+| --- | --- |
+| `node_add_ref` / `node_release` | node handles are **not** reference counted on the way out |
+| `node_from_element` / `node_to_element` | crossing between the two views; the latter fails on a text node |
+| `node_type` | `.ELEMENT`, `.TEXT`, `.COMMENT` |
+| `node_first_child` / `node_last_child` / `node_next_sibling` / `node_prev_sibling` | `.Not_Found` ends the walk |
+| `node_child` / `node_child_count` / `node_parent` | `node_parent` returns an `Element` |
+| `node_text` / `node_set_text` | the text a `.TEXT` or `.COMMENT` node carries |
+| `make_text_node` / `make_comment_node` | detached, and yours until inserted |
+| `node_insert(node, where_, what)` | `.BEFORE`, `.AFTER`, `.APPEND`, `.PREPEND` |
+| `node_remove(node, finalize := true)` | `false` detaches instead of destroying — that is a move |
+
 ## Events — `events.odin`
 
 ```odin
@@ -183,6 +201,11 @@ Host_Handler :: struct {
 bytes and returns the right code. `Load_Request` is `{uri: string, type: Sciter_Resource_Type, raw:
 ^Scn_Load_Data}`; `Load_Result` is the engine's `.OK` / `.DISCARD` / `.DELAYED` / `.MYSELF`.
 
+For an answer that cannot be given inside the callback: return `.DELAYED`, keep `request.raw.requestId`,
+and answer later with `data_ready_async(window, uri, data, request_id)`. Every delayed request must
+eventually be answered or it leaks. `data_ready(window, uri, data)` is the same push without a request
+id; both copy the data, unlike `serve`.
+
 ## Archives — `archive.odin`
 
 `open_archive(blob: []u8)` (the blob must stay valid and unmoved — use `#load`), `close_archive`,
@@ -218,8 +241,9 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
 Things you will reach for the raw table for today: graphics (`SciterGraphics*`), the request API
-(`sciter-x-request.h`), node-level DOM calls, `SciterSetOption`, scroll and layout queries,
-`SciterDataReadyAsync`.
+(`sciter-x-request.h`), scroll and layout queries (`SciterScrollToView`,
+`SciterGetElementLocation`, `SciterGetElementIntrinsicWidths`), element timers (`SciterSetTimer`), and
+drag-and-drop.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

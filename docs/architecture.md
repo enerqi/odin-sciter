@@ -41,8 +41,8 @@ plausible-looking backtrace, and nothing points at the cause.
 
 ## The table is verified, not assumed
 
-`examples/api_map.odin` walks the generated struct field by field and resolves each pointer with
-`dladdr`:
+`examples/api_map.odin` walks the generated struct field by field and resolves each pointer back to the
+symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on Windows:
 
 ```
 001 off=0008 SciterClassName                    -> SciterClassNameImp
@@ -143,14 +143,20 @@ owns.
 
 ## How the generated half is produced
 
-`just bindgen` runs three steps, all reproducible from a clean checkout:
+`just bindgen` runs four steps, all reproducible from a clean checkout — and idempotent, so running it
+twice produces a byte-identical `sciter.odin`:
 
 ```
 uv run python src/flatten_headers.py      # 13 headers -> build/sciter.h
 ../odin-c-bindgen/bindgen.bin .           # -> sciter.odin, per bindgen.sjson
 uv run python src/postprocess_bindings.py sciter.odin
 odin check . -no-entry-point
+odinfmt -w sciter.odin                    # then check again
 ```
+
+The formatting pass belongs to generation, not to `just format`: bindgen's line breaking is not
+odinfmt's, so leaving it out means every regeneration carries a few thousand lines of formatting noise
+alongside the API change that actually matters.
 
 **The flatten step exists because odin-c-bindgen only emits declarations physically located in the
 input file.** Feeding it `sciter-x-api.h` alone yields `ISciterAPI` and none of the types it refers

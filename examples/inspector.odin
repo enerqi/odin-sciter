@@ -76,8 +76,8 @@ main :: proc() {
 
 	// Half one: make the engine listen for an inspector. This is a global option, so it is set with a
 	// nil window and it has to happen before the window exists.
-	if !sciter.api().SciterSetOption(nil, .SET_DEBUG_MODE, 1) {
-		fmt.eprintln("could not enable debug mode")
+	if err := sciter_app.set_debug_mode(); err != nil {
+		fmt.eprintln("could not enable debug mode:", err)
 		os.exit(1)
 	}
 
