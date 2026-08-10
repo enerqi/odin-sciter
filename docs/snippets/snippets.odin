@@ -257,6 +257,32 @@ dom9 :: proc(window: sciter_app.Window) {
 	_ = v
 }
 
+dom10 :: proc(el: sciter_app.Element) {
+	box, _ := sciter_app.location(el)
+	size, _ := sciter_app.location(el, .Border, .Self)
+	onscreen, _ := sciter_app.location(el, .Border, .View)
+	_, _, _ = box, size, onscreen
+}
+
+dom11 :: proc(el: sciter_app.Element) {
+	shown, _ := sciter_app.visible(el)
+	on, _ := sciter_app.enabled(el)
+	_, _ = shown, on
+}
+
+dom12 :: proc(el: sciter_app.Element) {
+	min, max, _ := sciter_app.intrinsic_widths(el)
+	tall, _ := sciter_app.intrinsic_height(el, min)
+	_, _ = max, tall
+}
+
+dom13 :: proc(el, child: sciter_app.Element) {
+	info, _ := sciter_app.scroll_info(el)
+
+	sciter_app.set_scroll_pos(el, {0, info.content.y})
+	sciter_app.scroll_to_view(child, to_top = true)
+}
+
 Sink :: struct {
 	ctx: runtime.Context,
 	out: string,
@@ -325,12 +351,12 @@ ev4 :: proc(el: sciter_app.Element, window: sciter_app.Window, handler: ^sciter_
 }
 
 ev5a :: proc(el: sciter_app.Element) {
-	handled, err := sciter_app.send_event(el, .BUTTON_CLICK)
+	handled, err := sciter_app.send_event(el, .BUTTON_CLICK, source = el)
 	_, _ = handled, err
 }
 
 ev5b :: proc(el: sciter_app.Element) {
-	err := sciter_app.post_event(el, .BUTTON_CLICK)
+	err := sciter_app.post_event(el, .BUTTON_CLICK, source = el)
 	_ = err
 }
 

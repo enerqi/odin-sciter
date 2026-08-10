@@ -44,13 +44,7 @@ import "core:strings"
 // see a half-written library.
 //
 // Returns the path it loaded from, allocated in `allocator`.
-load_embedded :: proc(
-	blob: []u8,
-	allocator := context.allocator,
-) -> (
-	path: string,
-	err: Error,
-) {
+load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: string, err: Error) {
 	if len(blob) == 0 {
 		return "", .Not_Loaded
 	}
@@ -63,10 +57,7 @@ load_embedded :: proc(
 	// treats any path whose basename is not exactly LIBRARY_NAME as a directory to look inside, so it
 	// would go hunting for `libsciter-<hash>.so/libsciter.so`. Keeping the real filename also matters
 	// to anything that later inspects the process's loaded modules.
-	dir, joinerr := filepath.join(
-		{base, fmt.tprintf("%016x", hash.fnv64a(blob))},
-		context.temp_allocator,
-	)
+	dir, joinerr := filepath.join({base, fmt.tprintf("%016x", hash.fnv64a(blob))}, context.temp_allocator)
 	if joinerr != nil {
 		return "", .Not_Loaded
 	}
@@ -81,7 +72,12 @@ load_embedded :: proc(
 
 	// Already extracted by an earlier run, and the hash says it is the same engine.
 	if !is_file_of_size(full, len(blob)) {
-		write_engine(full, blob) or_return
+		if werr := write_engine(full, blob); werr != nil {
+			// `full` came from the caller's allocator and a failed call returns "", so it goes back
+			// here - exactly as on the load failure below.
+			delete(full, allocator)
+			return "", werr
+		}
 	}
 
 	if lerr, _ := sciter.load(full); lerr != .None && lerr != .Already_Loaded {

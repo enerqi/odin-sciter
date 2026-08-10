@@ -146,6 +146,25 @@ do not clear it.
 
 `state(x)` and `set_state(x, …)` are overload groups resolving to the element or window version.
 
+## Geometry — `layout.odin`
+
+Reads the result of layout, so it answers once layout has run and not before.
+
+| | |
+| --- | --- |
+| `location(el, box := .Border, origin := .Root) -> (Rect, Error)` | `Rect` is `x, y, width, height` |
+| `Box` | `.Content`, `.Padding`, `.Border`, `.Margin`, `.Background_Image`, `.Foreground_Image`, `.Scrollable` |
+| `Origin` | `.Root`, `.Self`, `.Container`, `.View` — the two halves of one C flag word, kept apart |
+| `visible(el)` / `enabled(el)` | `display: none` has no box; hidden is not disabled |
+| `intrinsic_widths(el) -> (min, max, Error)` | min-content and max-content |
+| `intrinsic_height(el, for_width) -> (i32, Error)` | how tall it becomes at that width |
+| `scroll_info(el) -> (Scroll_Info, Error)` | `pos`, `view` and `content` together |
+| `set_scroll_pos(el, pos, smooth := false)` | clamped, not refused |
+| `scroll_to_view(el, to_top := false, smooth := false)` | needs a shown window — see [`dom.md`](./dom.md#geometry) |
+
+An element with no box keeps reporting the last rectangle it had, so `location` is never the way to
+ask whether an element is there — `visible` is.
+
 ## Nodes — `node.odin`
 
 The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`.
@@ -185,7 +204,8 @@ the typed accessors `behavior_event`, `mouse_event`, `key_event`, each returning
 event is not of that group and each exposing `.raw` for what is not surfaced.
 
 Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `post_event(...)`. These
-bypass the intrinsic behavior — see [`events.md`](./events.md#synthesising-events).
+bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
+[`events.md`](./events.md#synthesising-events).
 
 ## Host callback — `host.odin`
 
@@ -241,9 +261,8 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
 Things you will reach for the raw table for today: graphics (`SciterGraphics*`), the request API
-(`sciter-x-request.h`), scroll and layout queries (`SciterScrollToView`,
-`SciterGetElementLocation`, `SciterGetElementIntrinsicWidths`), element timers (`SciterSetTimer`), and
-drag-and-drop.
+(`sciter-x-request.h`), element timers (`SciterSetTimer`), drag-and-drop,
+`SciterSetHighlightedElement`, and `SciterUpdateElement` / `SciterRefreshElementArea`.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

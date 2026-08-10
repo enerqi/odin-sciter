@@ -21,9 +21,15 @@
 // example compiles on today.
 package main
 
+import sciter ".."
 import "../sciter_app"
+import "base:runtime"
 import "core:fmt"
+import "core:hash"
 import "core:os"
+import "core:path/filepath"
+import "core:slice"
+import "core:testing"
 
 // The engine itself. ~25 MB, straight into the executable's read-only data.
 when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
@@ -114,13 +120,266 @@ main :: proc() {
 	sciter_app.shutdown()
 }
 
-on_load_data :: proc(
-	handler: ^sciter_app.Host_Handler,
-	request: ^sciter_app.Load_Request,
-) -> sciter_app.Load_Result {
+on_load_data :: proc(handler: ^sciter_app.Host_Handler, request: ^sciter_app.Load_Request) -> sciter_app.Load_Result {
 	app := (^App)(handler.user_data)
 	if result, handled := sciter_app.serve_archive(request, app.archive); handled {
 		return result
 	}
 	return .OK
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tests
+//
+//   odin test examples/single_binary.odin -file -define:ODIN_TEST_THREADS=1
+//
+// `load_embedded` is a cache with three rules, and each of them is invisible when it works:
+//
+//   - the directory is named by a hash of the blob, so a new engine build gets a new directory and an
+//     unchanged one gets the same directory back
+//   - a blob already extracted is not written again
+//   - the write goes to a temporary and is renamed into place, so a reader never sees a partial file
+//
+// The first test loads the real embedded engine, which is the whole example end to end. Everything
+// after it uses small synthetic blobs instead of writing 25 MB per case: with the engine already
+// loaded, `sciter.load` inside `load_embedded` short-circuits to `.Already_Loaded`, so the extraction
+// runs and the load is a no-op. That is also why every one of them starts with `engine_loaded` - out
+// of order, a synthetic blob would be handed to the system loader as a library.
+//
+// They write into the same cache directory the engine was extracted to, under their own hashes, and
+// remove what they wrote.
+
+@(private = "file")
+g_engine_path: string
+
+@(private = "file")
+engine_loaded :: proc(t: ^testing.T) -> bool {
+	if sciter.loaded() {
+		return true
+	}
+
+	// The engine is kept for the life of the process, so the path it was loaded from is allocated
+	// outside the test runner's tracking allocator - otherwise every later test reports it as a leak.
+	context.allocator = runtime.default_allocator()
+
+	path, err := sciter_app.load_embedded(ENGINE)
+	testing.expect_value(t, err, nil)
+	if err != nil {
+		// A cache directory that is missing, read-only or mounted noexec, which is the one failure
+		// this example cannot work around.
+		testing.fail_now(t, "the embedded engine could not be extracted and loaded")
+	}
+	g_engine_path = path
+	return true
+}
+
+// The directory the engine was extracted into - `<cache>/odin-sciter`, whatever that is on this
+// platform. Derived from where the engine actually landed rather than rebuilt from the environment,
+// so these tests do not have their own copy of the platform rules.
+@(private = "file")
+cache_dir :: proc() -> string {
+	// `filepath.dir` allocates with the context allocator and takes no allocator argument, and during
+	// a test that allocator is the runner's leak tracker.
+	context.allocator = context.temp_allocator
+	return filepath.dir(filepath.dir(g_engine_path))
+}
+
+@(private = "file")
+hash_name :: proc(blob: []u8) -> string {
+	return fmt.tprintf("%016x", hash.fnv64a(blob))
+}
+
+@(private = "file")
+blob_dir :: proc(blob: []u8) -> string {
+	dir, err := filepath.join({cache_dir(), hash_name(blob)}, context.temp_allocator)
+	return "" if err != nil else dir
+}
+
+@(private = "file")
+blob_path :: proc(blob: []u8) -> string {
+	full, err := filepath.join({blob_dir(blob), sciter.LIBRARY_NAME}, context.temp_allocator)
+	return "" if err != nil else full
+}
+
+// Removes everything a synthetic blob left in the cache.
+@(private = "file")
+scrub :: proc(blob: []u8) {
+	dir := blob_dir(blob)
+	if entries, err := os.read_all_directory_by_path(dir, context.temp_allocator); err == nil {
+		for entry in entries {
+			os.remove(entry.fullpath)
+		}
+	}
+	os.remove(dir)
+}
+
+// The example itself, as a test: the engine comes out of the executable, is written to the cache and
+// is loaded from there.
+@(test)
+test_the_embedded_engine_is_extracted_and_loaded :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	testing.expect(t, sciter.loaded(), "the engine must be loaded from the extracted copy")
+
+	v := sciter_app.version()
+	testing.expect(t, v[0] != 0 || v[1] != 0, "a loaded engine reports a version")
+
+	// The hash names the directory; the library keeps its canonical name inside it. `sciter.load`
+	// treats a path whose basename is not LIBRARY_NAME as a directory to look inside, so naming the
+	// file `libsciter-<hash>.so` would send it hunting for `libsciter-<hash>.so/libsciter.so`.
+	testing.expect_value(t, filepath.base(g_engine_path), sciter.LIBRARY_NAME)
+	testing.expect_value(t, g_engine_path, blob_path(ENGINE))
+
+	// And what is on disk is the whole blob. A short read here would mean the rename let a partial
+	// file be loaded, which is the failure the temporary-plus-rename exists to prevent.
+	written, err := os.read_entire_file(g_engine_path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, len(written), len(ENGINE))
+	testing.expect(t, slice.equal(written, ENGINE), "the extracted file must be the embedded blob")
+}
+
+@(test)
+test_an_empty_blob_is_refused :: proc(t: ^testing.T) {
+	path, err := sciter_app.load_embedded(nil)
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Not_Loaded))
+	testing.expect_value(t, path, "")
+}
+
+// The point of hashing: two engine builds cannot collide, and the same build always comes back to the
+// same file rather than being extracted again under a new name.
+@(test)
+test_the_directory_is_named_by_the_hash :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	one := transmute([]u8)string("odin-sciter test blob: hash naming, one")
+	two := transmute([]u8)string("odin-sciter test blob: hash naming, two")
+	defer scrub(one)
+	defer scrub(two)
+
+	first, err := sciter_app.load_embedded(one)
+	testing.expect_value(t, err, nil)
+	defer delete(first)
+	testing.expect_value(t, first, blob_path(one))
+
+	second, serr := sciter_app.load_embedded(two)
+	testing.expect_value(t, serr, nil)
+	defer delete(second)
+	testing.expect_value(t, second, blob_path(two))
+
+	testing.expect(t, first != second, "a different blob must not reuse the same file")
+	testing.expect_value(t, filepath.base(first), sciter.LIBRARY_NAME)
+
+	// The same blob a second time is the same path, which is what makes the cache a cache.
+	again, aerr := sciter_app.load_embedded(one)
+	testing.expect_value(t, aerr, nil)
+	defer delete(again)
+	testing.expect_value(t, again, first)
+}
+
+// Write-once. The file is replaced by a rename, so a second write would show up as a new inode even
+// though the bytes are identical - which is a sharper test than comparing timestamps.
+@(test)
+test_an_already_extracted_blob_is_not_written_again :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := transmute([]u8)string("odin-sciter test blob: written exactly once")
+	defer scrub(blob)
+
+	first, err := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err, nil)
+	defer delete(first)
+
+	before, serr := os.stat(first, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+
+	second, err2 := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err2, nil)
+	defer delete(second)
+	testing.expect_value(t, second, first)
+
+	after, serr2 := os.stat(second, context.temp_allocator)
+	testing.expect_value(t, serr2, nil)
+	testing.expect_value(t, after.inode, before.inode)
+	testing.expect_value(t, after.modification_time, before.modification_time)
+}
+
+// The cache is keyed on the hash, but reuse is decided by the size on disk. A file that is there but
+// the wrong length - a run killed mid-write by something that did not go through the rename, a
+// truncated copy - has to be replaced rather than loaded.
+@(test)
+test_a_file_of_the_wrong_size_is_replaced :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := transmute([]u8)string("odin-sciter test blob: replaced when truncated")
+	defer scrub(blob)
+
+	first, err := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err, nil)
+	defer delete(first)
+
+	original, serr := os.stat(first, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+
+	testing.expect_value(t, os.write_entire_file(first, blob[:4]), nil)
+
+	second, err2 := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err2, nil)
+	defer delete(second)
+	testing.expect_value(t, second, first)
+
+	after, serr2 := os.stat(second, context.temp_allocator)
+	testing.expect_value(t, serr2, nil)
+	testing.expect_value(t, after.size, i64(len(blob)))
+	testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+
+	written, rerr := os.read_entire_file(second, context.temp_allocator)
+	testing.expect_value(t, rerr, nil)
+	testing.expect(t, slice.equal(written, blob))
+}
+
+// The temporary is an implementation detail and has to stay one: a `.tmp` left in the cache directory
+// would be found by the next run, and by anything else that looks in there.
+@(test)
+test_no_temporary_is_left_behind :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := transmute([]u8)string("odin-sciter test blob: no leftovers")
+	defer scrub(blob)
+
+	path, err := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err, nil)
+	defer delete(path)
+
+	entries, derr := os.read_all_directory_by_path(blob_dir(blob), context.temp_allocator)
+	testing.expect_value(t, derr, nil)
+	testing.expect_value(t, len(entries), 1)
+	if len(entries) == 1 {
+		testing.expect_value(t, entries[0].name, sciter.LIBRARY_NAME)
+	}
+}
+
+// Losing the rename race to another process is fine - it wrote the identical bytes, and the size check
+// says so. A rename that fails for any other reason is not, and has to be reported rather than
+// leaving the caller with a path to a library that is not there.
+//
+// A directory sitting where the library should go is the reachable version of that: the temporary is
+// written, the rename cannot possibly succeed, and the size check finds no file of the right length.
+// The genuine two-process race is not reproducible in one process, which is why this stands in for it.
+@(test)
+test_a_rename_that_cannot_succeed_is_reported :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := transmute([]u8)string("odin-sciter test blob: blocked rename")
+	defer scrub(blob)
+
+	testing.expect_value(t, os.make_directory_all(blob_path(blob)), nil)
+
+	path, err := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Not_Loaded))
+	testing.expect_value(t, path, "")
+
+	// And the temporary it wrote on the way is gone - only the directory that is in the way is left.
+	entries, derr := os.read_all_directory_by_path(blob_dir(blob), context.temp_allocator)
+	testing.expect_value(t, derr, nil)
+	testing.expect_value(t, len(entries), 1)
 }

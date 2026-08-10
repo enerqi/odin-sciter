@@ -211,6 +211,63 @@ defer sciter_app.value_clear(&r2)
 `call_method` reaches behavior methods, which is the intended way to drive `<select>`, the editor
 behaviors, and anything else with a native controller behind it.
 
+## Geometry
+
+Where layout put an element, and what its content wants. All of it reads the result of layout, so it
+answers after the document has been laid out and not before.
+
+```odin
+box, _ := sciter_app.location(el)                        // .Border, .Root: the painted extent
+size, _ := sciter_app.location(el, .Border, .Self)       // x, y are the insets; width, height the size
+onscreen, _ := sciter_app.location(el, .Border, .View)   // relative to the window's client area
+```
+
+`Box` picks which box of the CSS box model to measure — `.Content`, `.Padding`, `.Border`, `.Margin`,
+each containing the one before it, plus `.Background_Image`, `.Foreground_Image` and `.Scrollable`.
+`Origin` picks what the coordinates are relative to. They are two fields of one flag word in the C
+API, which is why they are two arguments here.
+
+Scrolling an ancestor moves what `.Root` and `.View` report — they differ by a fixed offset, where the
+root element sits in the window — and leaves `.Container` alone, because that one is measured from the
+container's own content origin. `.Self` puts the content box at `(0, 0)`, so an outer box comes back
+with negative `x`/`y`: that is how to read a padding or border width.
+
+An element with no box — `display: none`, or not in the document — does not report zeros. It keeps
+answering with the last rectangle it had, so this is never the way to ask whether an element is there:
+
+```odin
+shown, _ := sciter_app.visible(el)      // false for display:none, true for visibility:hidden
+on, _ := sciter_app.enabled(el)         // :disabled, itself or inherited — a separate question
+```
+
+### Intrinsic sizes
+
+What the content wants, as opposed to the layout it was given — CSS's `min-content` and `max-content`.
+This is the measurement a container makes before deciding how much room to hand out.
+
+```odin
+min, max, _ := sciter_app.intrinsic_widths(el)   // narrowest wrap, and one line
+tall, _ := sciter_app.intrinsic_height(el, min)  // narrower is taller
+```
+
+### Scrolling
+
+```odin
+info, _ := sciter_app.scroll_info(el)
+// info.pos     - current offset
+// info.view    - the visible window onto the content
+// info.content - the full content size; the part beyond `view` is what scrolls
+
+sciter_app.set_scroll_pos(el, {0, info.content.y})    // past the end is clamped, not refused
+sciter_app.scroll_to_view(child, to_top = true)
+```
+
+`scroll_to_view` has two behaviours worth knowing, because both look like the call being ignored.
+Measured against the vendored engine: **nothing moves until the window has been shown and rendered at
+least once** — `set_scroll_pos` has no such requirement — and without `to_top` the scroll is applied on
+the engine's own schedule, so reading the position straight back can still show the old one. With
+`to_top` it has landed by the time the call returns.
+
 ## Doing it from the other side
 
 Not everything belongs in Odin. Reading a form's values element by element from the host is a lot of

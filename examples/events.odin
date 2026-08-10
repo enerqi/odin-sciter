@@ -17,9 +17,12 @@
 //     captures the context at attach time and restores it.
 package main
 
+import sciter ".."
 import "../sciter_app"
+import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:testing"
 
 DOC :: `<html>
 <head><style>
@@ -226,4 +229,589 @@ join_lines :: proc(lines: []string, allocator := context.allocator) -> string {
 		n += 1
 	}
 	return string(buf[:n])
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tests
+//
+//   odin test examples/events.odin -file -define:ODIN_TEST_THREADS=1
+//
+// The thread count is not optional. Sciter is single-threaded - every ISciterAPI call has to come from
+// the thread that ran SCITER_APP_INIT - and Odin's test runner is parallel by default, so without it
+// these tests corrupt the engine's heap rather than failing cleanly.
+//
+// Two halves. The first needs neither engine nor display: splitting a `cmd` into a code and a phase,
+// and reading a parameter struct as the right type, are pure arithmetic over structs this file can
+// build by hand. The second needs a window, because there is no way to reach the trampoline without
+// the engine calling it - it is private to `sciter_app`, and rightly so. Those tests drive it through
+// `send_event`, which delivers synchronously, so they need no message pump and never show a window.
+//
+// What the windowed half is actually pinning down, since none of it is visible from the outside:
+//
+//   - the trampoline finds the handler through the tag the engine hands back, and restores the
+//     context that was current at attach time
+//   - it answers SUBSCRIPTIONS_REQUEST from `Event_Handler.subscription`. There is no way to observe
+//     the reply directly - the trampoline consumes it - so this is tested by its consequence: a
+//     handler that did not answer, or answered with the wrong mask, stops receiving.
+//   - the phase bits are split off the code rather than compared as part of it
+
+@(private = "file")
+fake_element :: proc(address: uintptr) -> sciter_app.Element {
+	return sciter_app.Element(sciter.Helement(rawptr(address)))
+}
+
+@(test)
+test_event_code_strips_the_phase_bits :: proc(t: ^testing.T) {
+	SINKING :: u32(sciter.Phase_Mask.SINKING)
+	HANDLED :: u32(sciter.Phase_Mask.HANDLED)
+
+	// The mask has to stop exactly where the phase bits start. If it were wider it would carry
+	// SINKING into the code; narrower and it would truncate an application code.
+	testing.expect_value(t, u32(sciter_app.EVENT_CODE_MASK) + 1, SINKING)
+
+	click := u32(sciter.Behavior_Events.BUTTON_CLICK)
+	testing.expect_value(t, sciter_app.event_code(click), click)
+	testing.expect_value(t, sciter_app.event_phase(click), sciter_app.Event_Phase.Bubbling)
+
+	testing.expect_value(t, sciter_app.event_code(click | SINKING), click)
+	testing.expect_value(t, sciter_app.event_phase(click | SINKING), sciter_app.Event_Phase.Sinking)
+
+	testing.expect_value(t, sciter_app.event_code(click | HANDLED), click)
+	testing.expect_value(t, sciter_app.event_phase(click | HANDLED), sciter_app.Event_Phase.Handled)
+
+	// Both bits at once: something claimed it on the way down, and "already handled" is the more
+	// useful of the two to hear about.
+	testing.expect_value(t, sciter_app.event_phase(click | SINKING | HANDLED), sciter_app.Event_Phase.Handled)
+
+	// BUTTON_CLICK is 0, so a naive `cmd == .BUTTON_CLICK` looks right until an event sinks. Codes
+	// that are not zero go through the same split, up to the largest one the mask can carry.
+	app_code := u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 7
+	testing.expect_value(t, sciter_app.event_code(app_code | SINKING), app_code)
+	testing.expect_value(t, sciter_app.event_code(0x7FFF | HANDLED), 0x7FFF)
+}
+
+@(test)
+test_behavior_event_maps_the_params :: proc(t: ^testing.T) {
+	target := fake_element(0x1000)
+	source := fake_element(0x2000)
+
+	params := sciter.Behavior_Event_Params {
+		cmd      = u32(sciter.Behavior_Events.VALUE_CHANGED) | u32(sciter.Phase_Mask.SINKING),
+		heTarget = sciter.Helement(target),
+		he       = sciter.Helement(source),
+		reason   = uintptr(sciter.Click_Reason.BY_KEY_CLICK),
+	}
+
+	be, ok := sciter_app.behavior_event({group = {.BEHAVIOR_EVENT}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, be.code, sciter.Behavior_Events.VALUE_CHANGED)
+	testing.expect_value(t, be.phase, sciter_app.Event_Phase.Sinking)
+
+	// `heTarget` and `he` are the wrong way round from what the names suggest: the *target* is the
+	// element the behavior belongs to, and `he` is where the event came from.
+	testing.expect_value(t, be.target, target)
+	testing.expect_value(t, be.source, source)
+	testing.expect_value(t, be.reason, uintptr(sciter.Click_Reason.BY_KEY_CLICK))
+
+	// `data` points into the engine's own struct rather than being a copy - clearing it would clear
+	// the engine's Value, which is why it is documented as borrowed.
+	testing.expect(t, be.data == &params.data, "data must be borrowed, not copied")
+	testing.expect(t, be.raw == &params)
+}
+
+@(test)
+test_mouse_event_maps_the_params :: proc(t: ^testing.T) {
+	target := fake_element(0x3000)
+
+	params := sciter.Mouse_Params {
+		cmd = u32(sciter.Mouse_Events.MOUSE_DOWN),
+		target = sciter.Helement(target),
+		pos = {x = 12, y = 34},
+		pos_view = {x = 512, y = 534}, // view-relative; `pos` is the element-relative one
+		button_state = u32(sciter.Mouse_Buttons.PROP_MOUSE_BUTTON),
+	}
+
+	me, ok := sciter_app.mouse_event({group = {.MOUSE}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, me.code, sciter.Mouse_Events.MOUSE_DOWN)
+	testing.expect_value(t, me.phase, sciter_app.Event_Phase.Bubbling)
+	testing.expect_value(t, me.target, target)
+
+	// The element-relative position, not the view-relative one that sits next to it in the struct.
+	testing.expect_value(t, me.pos, [2]i32{12, 34})
+	testing.expect_value(t, me.buttons, sciter.Mouse_Buttons.PROP_MOUSE_BUTTON)
+	testing.expect(t, me.raw == &params)
+}
+
+@(test)
+test_key_event_maps_the_params :: proc(t: ^testing.T) {
+	target := fake_element(0x4000)
+
+	params := sciter.Key_Params {
+		cmd       = u32(sciter.Key_Events.CHAR) | u32(sciter.Phase_Mask.HANDLED),
+		target    = sciter.Helement(target),
+		key_code  = 'A', // a character for KEY_CHAR, a virtual key for DOWN / UP
+		alt_state = u32(sciter.Keyboard_States.SHIFT),
+	}
+
+	ke, ok := sciter_app.key_event({group = {.KEY}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, ke.code, sciter.Key_Events.CHAR)
+	testing.expect_value(t, ke.phase, sciter_app.Event_Phase.Handled)
+	testing.expect_value(t, ke.target, target)
+	testing.expect_value(t, ke.key_code, u32('A'))
+	testing.expect_value(t, u32(ke.modifiers), u32(sciter.Keyboard_States.SHIFT))
+	testing.expect(t, ke.raw == &params)
+}
+
+// The group is the only thing that says which struct `params` points at, so an accessor that cast
+// first and asked later would read past the end of a smaller struct - Key_Params is four fields,
+// Mouse_Params is ten.
+@(test)
+test_typed_params_refuse_the_wrong_group :: proc(t: ^testing.T) {
+	behavior: sciter.Behavior_Event_Params
+	mouse: sciter.Mouse_Params
+	key: sciter.Key_Params
+
+	_, from_mouse := sciter_app.behavior_event({group = {.MOUSE}, params = &mouse})
+	testing.expect(t, !from_mouse, "behavior_event must refuse a MOUSE event")
+
+	_, from_key := sciter_app.mouse_event({group = {.KEY}, params = &key})
+	testing.expect(t, !from_key, "mouse_event must refuse a KEY event")
+
+	_, from_behavior := sciter_app.key_event({group = {.BEHAVIOR_EVENT}, params = &behavior})
+	testing.expect(t, !from_behavior, "key_event must refuse a BEHAVIOR_EVENT")
+
+	// The engine names exactly one group per call. A set with two in it is not a struct anything can
+	// point at, so it is not a BEHAVIOR_EVENT either.
+	_, two_groups := sciter_app.behavior_event({group = {.BEHAVIOR_EVENT, .MOUSE}, params = &behavior})
+	testing.expect(t, !two_groups)
+
+	// HANDLE_INITIALIZATION is group zero - the empty set - and carries Initialization_Params.
+	_, initialization := sciter_app.behavior_event({group = {}, params = &behavior})
+	testing.expect(t, !initialization)
+
+	// And nil parameters, which is what a group with nothing to say looks like.
+	_, no_params := sciter_app.behavior_event({group = {.BEHAVIOR_EVENT}, params = nil})
+	testing.expect(t, !no_params)
+	_, no_mouse_params := sciter_app.mouse_event({group = {.MOUSE}, params = nil})
+	testing.expect(t, !no_mouse_params)
+	_, no_key_params := sciter_app.key_event({group = {.KEY}, params = nil})
+	testing.expect(t, !no_key_params)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The trampoline, driven by the engine
+//
+// A window is needed for the DOM, and a display for the window, so these skip themselves when there is
+// neither. The window is created once and never shown; the document is reloaded per test.
+
+@(private = "file")
+have_display :: proc() -> bool {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		// DISPLAY and WAYLAND_DISPLAY are X11/Wayland variables and are simply absent here, so testing
+		// for them would skip every windowed test on those platforms forever - silently, which is the
+		// worst way for a test to not run.
+		return true
+	} else {
+		return(
+			os.get_env("DISPLAY", context.temp_allocator) != "" ||
+			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
+		)
+	}
+}
+
+@(private = "file")
+g_window: sciter_app.Window
+
+@(private = "file")
+test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return nil, false
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+
+	if g_window == nil {
+		// The engine keeps the argv it is given and the window for the life of the process, so both
+		// are allocated outside the test runner's tracking allocator - otherwise every test after
+		// this one reports them as a leak.
+		context.allocator = runtime.default_allocator()
+
+		sciter_app.init()
+
+		w, err := sciter_app.create_window({width = 400, height = 300})
+		testing.expect_value(t, err, nil)
+		if w == nil {
+			return nil, false
+		}
+		g_window = w
+	}
+
+	// Reload, so each test sees the document with no handler left over from the one before it.
+	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
+	return g_window, true
+}
+
+// What one call into the handler carried. Recorded rather than acted on, so a test can assert about
+// the order and the phases rather than about a side effect.
+@(private = "file")
+Seen :: struct {
+	group:  sciter.Event_Groups,
+	code:   u32, // phase bits already removed
+	phase:  sciter_app.Event_Phase,
+	target: sciter_app.Element,
+	source: sciter_app.Element,
+	reason: uintptr,
+}
+
+// `Event_Handler` is embedded, not pointed at: the engine stores the handler's address as the tag it
+// hands back, so it must not move while attached.
+@(private = "file")
+Recorder :: struct {
+	handler:        sciter_app.Event_Handler,
+	seen:           [16]Seen,
+	count:          int, // every call, including ones with nothing to decode
+	claim:          bool, // what on_event returns
+	tag_ok:         bool, // the handler came back as the one that was attached
+	ctx_user_index: int, // context.user_index as seen from inside the callback
+}
+
+@(private = "file")
+record :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	r := (^Recorder)(handler.user_data)
+
+	r.tag_ok = handler == &r.handler
+	r.ctx_user_index = context.user_index
+
+	entry := Seen {
+		group  = event.group,
+		target = event.element,
+	}
+	if event.group == {} {
+		// HANDLE_INITIALIZATION is group zero, and carries ATTACH or DETACH.
+		if event.params != nil {
+			entry.code = (^sciter.Initialization_Params)(event.params).cmd
+		}
+	} else if be, ok := sciter_app.behavior_event(event); ok {
+		entry.code = u32(be.code)
+		entry.phase = be.phase
+		entry.target = be.target
+		entry.source = be.source
+		entry.reason = be.reason
+	}
+
+	if r.count < len(r.seen) {
+		r.seen[r.count] = entry
+	}
+	r.count += 1
+	return r.claim
+}
+
+// Attaches a recorder to `element` and forgets everything that arrived during the attach itself, so a
+// test asserts about what it sends rather than about initialization.
+@(private = "file")
+attach_recorder :: proc(
+	t: ^testing.T,
+	element: sciter_app.Element,
+	r: ^Recorder,
+	subscription := sciter.Event_Groups{.BEHAVIOR_EVENT},
+) {
+	r.handler = sciter_app.Event_Handler {
+		subscription = subscription,
+		on_event     = record,
+		user_data    = r,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(element, &r.handler), nil)
+	r.count = 0
+}
+
+// The root to attach to, and two elements under it. Sending to a descendant rather than to the element
+// the handler is attached to is what makes both phases visible - an event sent to the handler's own
+// element arrives once.
+@(private = "file")
+test_elements :: proc(t: ^testing.T) -> (root, tick, reset: sciter_app.Element, ok: bool) {
+	window := test_window(t) or_return
+
+	document, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	if rerr != nil {return nil, nil, nil, false}
+
+	first, berr := sciter_app.select_first(document, "#tick")
+	testing.expect_value(t, berr, nil)
+	if berr != nil {return nil, nil, nil, false}
+
+	second, serr := sciter_app.select_first(document, "#reset")
+	testing.expect_value(t, serr, nil)
+	if serr != nil {return nil, nil, nil, false}
+
+	return document, first, second, true
+}
+
+// Attaching is itself an event: the engine delivers HANDLE_INITIALIZATION / ATTACH, and DETACH on the
+// way out. A handler subscribed to nothing still gets both - which is what "initialization events are
+// delivered regardless" means.
+@(test)
+test_attach_and_detach_are_delivered :: proc(t: ^testing.T) {
+	root, _, _, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	r.handler = sciter_app.Event_Handler {
+		subscription = {},
+		on_event     = record,
+		user_data    = &r,
+	}
+
+	testing.expect_value(t, sciter_app.attach_handler(root, &r.handler), nil)
+	testing.expect(t, r.count > 0, "attaching must deliver an initialization event")
+	testing.expect_value(t, r.seen[0].group, sciter.Event_Groups{})
+	testing.expect_value(t, r.seen[0].code, u32(sciter.Initialization_Events.ATTACH))
+	testing.expect(t, r.tag_ok, "the handler must come back as the one that was attached")
+
+	r.count = 0
+	testing.expect_value(t, sciter_app.detach_handler(root, &r.handler), nil)
+	testing.expect(t, r.count > 0, "detaching must deliver an initialization event")
+	testing.expect_value(t, r.seen[0].group, sciter.Event_Groups{})
+	testing.expect_value(t, r.seen[0].code, u32(sciter.Initialization_Events.DETACH))
+}
+
+
+// `send_event`'s `source` defaults to nil, and an event sent with a nil source is not delivered at
+// all - not to the target, not to anything on the chain. It is not an error either: the call succeeds
+// and reports "not handled", which is indistinguishable from an event nobody wanted.
+//
+// This is the engine's behaviour, pinned here because the default argument makes it easy to hit:
+// `send_event(element, code)` is the natural spelling and does nothing. Every other test below names
+// a source for that reason.
+@(test)
+test_send_event_without_a_source_delivers_nothing :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r)
+	defer sciter_app.detach_handler(root, &r.handler)
+
+	handled, err := sciter_app.send_event(tick, sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled)
+	testing.expect_value(t, r.count, 0)
+
+	// The same call with a source arrives, so this is about the source and not about the code, the
+	// element or the handler.
+	testing.expect(t, send(t, tick, reset) == false)
+	testing.expect(t, r.count > 0)
+}
+
+// Sends the application event code to `to`, attributed to `source`, and returns whether a handler
+// claimed it.
+@(private = "file")
+send :: proc(t: ^testing.T, to, source: sciter_app.Element) -> bool {
+	handled, err := sciter_app.send_event(to, sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE, source = source)
+	testing.expect_value(t, err, nil)
+	return handled
+}
+
+// The whole round trip: the engine calls the trampoline, it finds the handler through the tag, and the
+// event arrives twice - once sinking towards the target, once bubbling back up. An `on_event` that
+// ignores the phase acts on every event twice, which is the bug this pins down.
+@(test)
+test_send_event_arrives_in_both_phases :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r)
+	defer sciter_app.detach_handler(root, &r.handler)
+
+	CODE :: sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE
+	REASON :: uintptr(42)
+
+	// Three distinct elements, so a mix-up between them cannot pass: the handler is on `root`, the
+	// event is sent to `tick`, and `reset` stands in for whatever caused it.
+	handled, err := sciter_app.send_event(tick, CODE, source = reset, reason = REASON)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled, "nothing claimed it, so it is not handled")
+
+	testing.expect_value(t, r.count, 2)
+	if r.count != 2 {return}
+
+	testing.expect_value(t, r.seen[0].phase, sciter_app.Event_Phase.Sinking)
+	testing.expect_value(t, r.seen[1].phase, sciter_app.Event_Phase.Bubbling)
+
+	for entry, i in r.seen[:2] {
+		testing.expectf(t, entry.group == {.BEHAVIOR_EVENT}, "event %d: group %v", i, entry.group)
+
+		// The code with the phase bits already off. `cmd` itself differs between the two.
+		testing.expect_value(t, entry.code, u32(CODE))
+		testing.expect_value(t, entry.reason, REASON)
+
+		// Which handle lands in which field, for a synthesised event, is the opposite of what the
+		// argument names suggest: SciterSendEvent's `heSource` becomes BEHAVIOR_EVENT_PARAMS.heTarget
+		// (`be.target`), and the element it was sent to becomes `he` (`be.source`). Real events from
+		// intrinsic behaviors put the acting element in `be.target`, which is why `send_event`
+		// documents itself as not being the same thing as the user doing it.
+		testing.expect_value(t, entry.target, reset)
+		testing.expect_value(t, entry.source, tick)
+	}
+}
+
+// Returning true marks the event handled: `send_event` reports it to whoever sent it, and the engine
+// sets the HANDLED bit for the rest of the trip. It does not cancel delivery - the bubbling pass still
+// arrives, which is what `Event_Phase.Handled` is for and why a handler that acts on every phase acts
+// twice even when something upstream already dealt with the event.
+@(test)
+test_claiming_an_event_marks_it_handled :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r)
+	defer sciter_app.detach_handler(root, &r.handler)
+	r.claim = true
+
+	testing.expect(t, send(t, tick, reset), "a handler returning true must be reported as handled")
+
+	testing.expect_value(t, r.count, 2)
+	if r.count != 2 {return}
+	testing.expect_value(t, r.seen[0].phase, sciter_app.Event_Phase.Sinking)
+	testing.expect_value(t, r.seen[1].phase, sciter_app.Event_Phase.Handled)
+}
+
+// The engine calls back as `proc "system"`, where Odin's implicit context does not exist. Without the
+// capture at attach time the callback would run on a zeroed context - no allocator, no logger - and
+// the first allocation inside a handler would be the crash that finds it.
+@(test)
+test_the_attach_time_context_is_restored :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	SENTINEL :: 0xC0FFEE
+
+	r: Recorder
+	{
+		context.user_index = SENTINEL
+		attach_recorder(t, root, &r)
+	}
+	defer sciter_app.detach_handler(root, &r.handler)
+
+	// The ATTACH event ran under the sentinel context too, so clear what it recorded - otherwise this
+	// would pass without a single event being delivered.
+	r.ctx_user_index = 0
+
+	// And this call is made from a context that knows nothing about the sentinel: what the callback
+	// sees has to come from the copy taken at attach time.
+	testing.expect(t, context.user_index != SENTINEL)
+
+	send(t, tick, reset)
+	testing.expect(t, r.count > 0, "nothing was delivered, so the context was never restored")
+	testing.expect_value(t, r.ctx_user_index, SENTINEL)
+	testing.expect(t, r.tag_ok, "the handler must come back as the one that was attached")
+}
+
+// The subscription reply, tested by its consequence. The engine asks once, right after attaching, and
+// only sends the groups it was told about - so a handler asking for MOUSE hears no behavior events.
+// If the trampoline stopped answering SUBSCRIPTIONS_REQUEST this is the test that would notice.
+@(test)
+test_unsubscribed_groups_are_not_delivered :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r, {.MOUSE})
+
+	send(t, tick, reset)
+	testing.expect_value(t, r.count, 0)
+
+	testing.expect_value(t, sciter_app.detach_handler(root, &r.handler), nil)
+
+	// The same handler, subscribed this time, does hear it - without this the test would pass just as
+	// well against a trampoline that delivered nothing at all.
+	subscribed: Recorder
+	attach_recorder(t, root, &subscribed, {.BEHAVIOR_EVENT})
+	defer sciter_app.detach_handler(root, &subscribed.handler)
+
+	send(t, tick, reset)
+	testing.expect(t, subscribed.count > 0, "a subscribed handler must receive the event")
+}
+
+@(test)
+test_a_detached_handler_stops_hearing :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r)
+	send(t, tick, reset)
+	testing.expect(t, r.count > 0, "attached, so it hears the event")
+
+	testing.expect_value(t, sciter_app.detach_handler(root, &r.handler), nil)
+	r.count = 0
+
+	send(t, tick, reset)
+	testing.expect_value(t, r.count, 0)
+}
+
+// A handler with no `on_event` is a legitimate thing to attach - it is how you subscribe to a group
+// and decide what to do with it later. The trampoline still has to answer SUBSCRIPTIONS_REQUEST for
+// it rather than calling through a nil pointer.
+@(test)
+test_a_nil_on_event_is_not_a_crash :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	handler := sciter_app.Event_Handler {
+		subscription = {.BEHAVIOR_EVENT},
+	}
+	testing.expect_value(t, sciter_app.attach_handler(root, &handler), nil)
+	defer sciter_app.detach_handler(root, &handler)
+
+	testing.expect(t, !send(t, tick, reset), "a handler that does nothing cannot claim the event")
+}
+
+// The window handler covers the whole document, including elements that did not exist when it was
+// attached - a different engine entry point, and one that is handed the subscription up front rather
+// than being asked for it.
+@(test)
+test_window_handler_hears_the_document :: proc(t: ^testing.T) {
+	_, tick, reset, ok := test_elements(t)
+	if !ok {return}
+	window := g_window
+
+	r: Recorder
+	r.handler = sciter_app.Event_Handler {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = record,
+		user_data    = &r,
+	}
+	testing.expect_value(t, sciter_app.attach_window_handler(window, &r.handler), nil)
+
+	r.count = 0
+	send(t, tick, reset)
+	testing.expect(t, r.count > 0, "a window handler must hear an element inside the document")
+
+	testing.expect_value(t, sciter_app.detach_window_handler(window, &r.handler), nil)
+	r.count = 0
+
+	send(t, tick, reset)
+	testing.expect_value(t, r.count, 0)
+}
+
+// `post_event` queues rather than delivers. Nothing runs the queue here, which is the point: the call
+// returns before any handler has seen it.
+@(test)
+test_post_event_does_not_deliver_synchronously :: proc(t: ^testing.T) {
+	root, tick, reset, ok := test_elements(t)
+	if !ok {return}
+
+	r: Recorder
+	attach_recorder(t, root, &r)
+	defer sciter_app.detach_handler(root, &r.handler)
+
+	err := sciter_app.post_event(tick, sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE, source = reset)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, r.count, 0)
 }

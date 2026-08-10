@@ -26,7 +26,7 @@ on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) ->
 	}
 
 	counter.count += 1
-	return true          // handled: stop it propagating
+	return true          // handled - see "The return value" below
 }
 
 // ...
@@ -120,10 +120,15 @@ struct name follows the header (`Focus_Params`, `Scroll_Params`, …).
 
 ## The return value
 
-Returning `true` marks the event handled and stops it propagating. Returning `false` lets it continue.
-Getting this wrong is subtle in one direction: swallowing a `.MOUSE` event that an intrinsic behavior
-needed makes a control stop responding for no visible reason. When in doubt, return `false` for
-anything you only observed.
+Returning `true` marks the event **handled**. Whoever sent it is told — that is the `handled` out of
+`send_event` — and the rest of the trip carries the `HANDLED` bit, so handlers further along see
+`Event_Phase.Handled` instead of `.Sinking` or `.Bubbling`.
+
+It does **not** cancel delivery. Claiming an event during the sinking phase does not stop the bubbling
+phase from reaching the same handler, which is the other half of why acting on every phase acts twice.
+What `true` does is tell intrinsic behaviors that someone dealt with it — and getting *that* wrong is
+subtle in one direction: swallowing a `.MOUSE` event that an intrinsic behavior needed makes a control
+stop responding for no visible reason. When in doubt, return `false` for anything you only observed.
 
 ## Which events exist
 
@@ -153,12 +158,21 @@ nothing.
 ## Synthesising events
 
 ```odin
-handled, err := sciter_app.send_event(el, .BUTTON_CLICK)   // synchronous, down and back up
+handled, err := sciter_app.send_event(el, .BUTTON_CLICK, source = el)   // synchronous, down and back up
 ```
 
 ```odin
-err := sciter_app.post_event(el, .BUTTON_CLICK)            // queued, returns immediately
+err := sciter_app.post_event(el, .BUTTON_CLICK, source = el)            // queued, returns immediately
 ```
+
+**`source` is not optional in practice.** It defaults to `nil`, and the engine delivers nothing at all
+for a nil source — not to `el`, not to anything on the chain. The call still succeeds and reports "not
+handled", which is indistinguishable from an event nobody wanted. Pass `el` itself when there is no
+separate originating element.
+
+The two handles also land the opposite way round from what the names suggest: `source` arrives as
+`be.target` and `el` as `be.source`. Events from intrinsic behaviors put the acting element in
+`be.target`, so a handler written against real clicks reads a synthesised one backwards.
 
 **This is not the same as the user doing it.** It injects the event code into the element chain
 directly, bypassing the intrinsic behavior that would normally produce it: sending `.BUTTON_CLICK` to a
@@ -189,6 +203,6 @@ In order of likelihood:
 2. The handler was attached to the wrong subtree — attach at `root` and narrow later.
 3. The comparison did not strip the phase. Use `be.code`, not `p.cmd`.
 4. The `Event_Handler` moved or went out of scope after attaching.
-5. Something upstream returned `true` and consumed the event.
+5. The event was synthesised with `send_event` and no `source` — nothing is delivered at all.
 6. The document reloaded. Element-attached handlers go with the old document; use
    `attach_window_handler` if you reload.

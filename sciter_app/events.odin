@@ -33,7 +33,10 @@ Event_Handler :: struct {
 	// delivered regardless.
 	subscription: sciter.Event_Groups,
 
-	// Return true to mark the event handled and stop it propagating.
+	// Return true to mark the event handled. Whoever sent it is told - `send_event` reports it - and
+	// the rest of the trip carries the HANDLED bit, so later handlers see `Event_Phase.Handled`. It
+	// does not cancel delivery: the bubbling pass still arrives at this handler, which is why acting
+	// on every phase acts twice.
 	on_event:     proc(handler: ^Event_Handler, event: Event) -> bool,
 
 	// Yours. The handler is passed back to `on_event`, so this is how state gets in.
@@ -213,6 +216,15 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 //
 // To simulate a real interaction, go through script instead - `eval(window, "document.$(sel).click()")`
 // runs the behavior and produces the genuine event.
+//
+// `source` has to be an element. The engine delivers nothing at all for a nil one - not to `element`,
+// not to anything on the chain - and says so by reporting the call as succeeded and not handled, which
+// is indistinguishable from an event nobody wanted. Pass `element` itself if there is no separate
+// originating element. The same goes for `post_event`.
+//
+// Which handle ends up where is worth knowing before matching on it: `source` arrives as the
+// parameters' *target* (`Behavior_Event.target`) and `element` as their *source*
+// (`Behavior_Event.source`), the opposite way round from an event an intrinsic behavior produced.
 send_event :: proc(
 	element: Element,
 	code: sciter.Behavior_Events,

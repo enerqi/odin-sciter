@@ -21,8 +21,8 @@ tag `6.0.4.9-bis`.
   DOM slots.
 - **`package sciter_app`** — hand-written, Odin-shaped: `string` in and out, an `Error` union that
   carries the engine's own result codes, and ownership rules stated rather than hidden. Covers the
-  application lifecycle, windows, `Value`, the DOM (elements and nodes), events, the host resource
-  callback, archives, engine options, and embedding the engine itself.
+  application lifecycle, windows, `Value`, the DOM (elements and nodes), geometry and scrolling,
+  events, the host resource callback, archives, engine options, and embedding the engine itself.
 
 ### Loading
 
@@ -44,9 +44,12 @@ Windows.
 
 ### Tests
 
-21 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
-refcounting, native functors, UTF-16 conversion, archive lookup, and the host callback's serve /
-discard / not-ours decision — run anywhere. The windowed ones skip themselves without a display.
+50 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+refcounting, native functors, UTF-16 conversion, archive lookup, the event parameter accessors and the
+event-code/phase split, the embedded engine's cache naming and write-once behaviour, and the host
+callback's serve / discard / not-ours decision — run anywhere. The windowed ones, including the event
+handler trampoline with its subscription reply and the box/origin geometry queries, skip themselves
+without a display.
 
 ### Documentation
 
@@ -70,5 +73,9 @@ checked by `just check`.
   inside the vendored engine binary, not the bindings.
 - **`SciterGetViewExpando` is NULL on every platform** in Sciter 6, so `set_global` evaluates a
   one-line assignment function instead of writing into `globalThis` directly.
-- Graphics, the request API, scroll and layout queries, element timers and drag-and-drop have no
-  wrapper yet, and are reached through `sciter.api()`.
+- Graphics, the request API, element timers and drag-and-drop have no wrapper yet, and are reached
+  through `sciter.api()`.
+- **`scroll_to_view` does nothing until the window has been shown and rendered at least once** — the
+  call succeeds and the scroll position does not change. `set_scroll_pos` has no such requirement.
+  Without `to_top` the scroll is also applied on the engine's own schedule, so reading the position
+  straight back can show the old one.

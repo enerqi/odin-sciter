@@ -27,6 +27,8 @@ DOC :: `<html>
   .done { color: #a6e3a1; }
   .todo { color: #f9e2af; }
   #summary { margin-top: 1em; padding: .6em 1em; background: #313244; border-radius: 4px; }
+  #scroller { height: 4em; overflow-y: scroll; margin-top: 1em; background: #313244; }
+  #scroller p { margin: 0; padding: .2em .6em; }
 </style></head>
 <body>
   <h1>dom_walk</h1>
@@ -37,6 +39,10 @@ DOC :: `<html>
     <li class="todo" data-id="4">vendor the Windows binary</li>
   </ul>
   <div id="summary">(Odin fills this in)</div>
+  <div id="scroller">
+    <p>one</p><p>two</p><p>three</p><p>four</p>
+    <p>five</p><p>six</p><p>seven</p><p>eight</p>
+  </div>
 </body>
 </html>`
 
@@ -129,6 +135,27 @@ main :: proc() {
 
 	html, _ := sciter_app.html(summary, true, context.temp_allocator)
 	fmt.println("#summary is now:", html)
+
+	// --- geometry -------------------------------------------------------------------------------
+	//
+	// Where layout put things. `location` takes a box and an origin because the C API packs both into
+	// one flag word: `.Border` is the painted extent, `.Root` measures from the document.
+
+	box, _ := sciter_app.location(summary, .Border, .Root)
+	fmt.printfln("#summary is %dx%d at (%d, %d)", box.width, box.height, box.x, box.y)
+
+	// What the content wants, as opposed to what it was given - the numbers CSS calls min-content and
+	// max-content, and the ones a container needs before it can decide how much room to hand out.
+	min, max, _ := sciter_app.intrinsic_widths(summary)
+	tall, _ := sciter_app.intrinsic_height(summary, min)
+	fmt.printfln("#summary wants %d..%dpx wide, and is %dpx tall at its narrowest", min, max, tall)
+
+	// #scroller is 4em tall with eight paragraphs in it, so it is the one thing here that scrolls.
+	scroller, _ := sciter_app.select_first(root, "#scroller")
+	if info, ierr := sciter_app.scroll_info(scroller); ierr == nil {
+		fmt.printfln("#scroller shows %dpx of %dpx, scrolled to %d", info.view.height, info.content.y, info.pos.y)
+		sciter_app.set_scroll_pos(scroller, {0, info.content.y}) // clamped to the end
+	}
 
 	sciter_app.show(window)
 	sciter_app.run()
@@ -334,4 +361,243 @@ test_node_insert :: proc(t: ^testing.T) {
 	after, terr := sciter_app.text(summary, context.temp_allocator)
 	testing.expect_value(t, terr, nil)
 	testing.expect(t, strings.has_suffix(after, " appended"), after)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Geometry
+//
+// These read the result of layout rather than the document, so they need the same window the tests
+// above do. `#scroller` is in the document for their benefit: it is 4em tall with eight paragraphs in
+// it, so it is the one element here that actually scrolls.
+
+@(test)
+test_location_boxes_nest_outwards :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	content, cerr := sciter_app.location(summary, .Content)
+	testing.expect_value(t, cerr, nil)
+	padding, _ := sciter_app.location(summary, .Padding)
+	border, _ := sciter_app.location(summary, .Border)
+	margin, _ := sciter_app.location(summary, .Margin)
+
+	testing.expect(t, content.width > 0 && content.height > 0, "a laid-out element has a box")
+
+	// Each box contains the one before it, which is the whole reason there are four of them.
+	nests :: proc(t: ^testing.T, outer, inner: sciter_app.Rect, name: string) {
+		testing.expectf(t, outer.x <= inner.x, "%s: left", name)
+		testing.expectf(t, outer.y <= inner.y, "%s: top", name)
+		testing.expectf(t, outer.x + outer.width >= inner.x + inner.width, "%s: right", name)
+		testing.expectf(t, outer.y + outer.height >= inner.y + inner.height, "%s: bottom", name)
+	}
+	nests(t, padding, content, "padding/content")
+	nests(t, border, padding, "border/padding")
+	nests(t, margin, border, "margin/border")
+
+	// `#summary` has padding and a margin but no border width, so those two boxes coincide - which is
+	// the check that `.Border` is not silently returning the padding box for everything.
+	testing.expect_value(t, border, padding)
+	testing.expect(t, padding.width > content.width, "padding widens the box")
+	testing.expect(t, margin.height > border.height, "the margin is outside the border")
+}
+
+@(test)
+test_location_origins :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	from_root, _ := sciter_app.location(summary, .Content, .Root)
+	from_self, _ := sciter_app.location(summary, .Content, .Self)
+	from_container, _ := sciter_app.location(summary, .Content, .Container)
+	from_view, _ := sciter_app.location(summary, .Content, .View)
+
+	// The origin moves the rectangle and never resizes it.
+	for other in ([]sciter_app.Rect{from_self, from_container, from_view}) {
+		testing.expect_value(t, other.width, from_root.width)
+		testing.expect_value(t, other.height, from_root.height)
+	}
+
+	// `.Self` is measured from the element's own content origin, so the content box starts at zero
+	// there - and an outer box comes back negative, which is how to read a padding or border width.
+	testing.expect_value(t, from_self.x, i32(0))
+	testing.expect_value(t, from_self.y, i32(0))
+
+	padding_self, _ := sciter_app.location(summary, .Padding, .Self)
+	testing.expect(t, padding_self.x < 0 && padding_self.y < 0, "padding extends behind the content origin")
+
+	// `#summary` is not at the top of its container, and the container is not at the top of the
+	// document, so these three disagree - a wrapper that ignored the origin would return one rect.
+	testing.expect(t, from_root.y != from_container.y, "root and container origins must differ")
+	testing.expect(t, from_view != from_root, "the view origin is not the root origin")
+}
+
+@(test)
+test_intrinsic_widths_bracket_the_wrapping :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	min, max, err := sciter_app.intrinsic_widths(summary)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, min > 0, "min-content is a real width")
+	testing.expect(t, min < max, "text that can wrap has a narrower min than max")
+
+	// Narrower means taller: at min-content the text wraps as hard as it can, at max-content it is on
+	// one line. This is the measurement a container makes before deciding what width to hand out.
+	tall, terr := sciter_app.intrinsic_height(summary, min)
+	testing.expect_value(t, terr, nil)
+	short, serr := sciter_app.intrinsic_height(summary, max)
+	testing.expect_value(t, serr, nil)
+
+	testing.expect(t, short > 0)
+	testing.expectf(t, tall > short, "height at min-content (%d) must exceed height at max-content (%d)", tall, short)
+}
+
+@(test)
+test_visible_and_enabled :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	shown, verr := sciter_app.visible(summary)
+	testing.expect_value(t, verr, nil)
+	testing.expect(t, shown)
+
+	on, eerr := sciter_app.enabled(summary)
+	testing.expect_value(t, eerr, nil)
+	testing.expect(t, on, "nothing here is disabled")
+
+	// `display: none` removes the box, and that is what `visible` reports. `location` is not the way
+	// to ask: it keeps answering with the last box the element had.
+	testing.expect_value(t, sciter_app.set_attribute(summary, "style", "display: none"), nil)
+	hidden, herr := sciter_app.visible(summary)
+	testing.expect_value(t, herr, nil)
+	testing.expect(t, !hidden, "display:none has no box")
+
+	// Hidden is not disabled - they are separate questions about the same element.
+	still_on, _ := sciter_app.enabled(summary)
+	testing.expect(t, still_on)
+}
+
+@(test)
+test_scroll_info_describes_the_overflow :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	scroller, _ := sciter_app.select_first(root, "#scroller")
+	tasks, _ := sciter_app.select_first(root, "#tasks")
+
+	info, err := sciter_app.scroll_info(scroller)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, info.pos, [2]i32{0, 0})
+	testing.expect(t, info.view.height > 0)
+	testing.expectf(
+		t,
+		info.content.y > info.view.height,
+		"#scroller must overflow: content %v, view %v",
+		info.content,
+		info.view,
+	)
+
+	// A list that fits needs no scrolling, and says so the same way: nothing sticking out of the view.
+	fits, ferr := sciter_app.scroll_info(tasks)
+	testing.expect_value(t, ferr, nil)
+	testing.expect_value(t, fits.pos, [2]i32{0, 0})
+	testing.expect(t, fits.content.y <= fits.view.height)
+}
+
+@(test)
+test_set_scroll_pos_moves_and_clamps :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	scroller, _ := sciter_app.select_first(root, "#scroller")
+
+	testing.expect_value(t, sciter_app.set_scroll_pos(scroller, {0, 30}), nil)
+	moved, err := sciter_app.scroll_info(scroller)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, moved.pos, [2]i32{0, 30})
+
+	// Past the end is clamped rather than refused, and clamping twice lands in the same place.
+	testing.expect_value(t, sciter_app.set_scroll_pos(scroller, {0, 100_000}), nil)
+	clamped, _ := sciter_app.scroll_info(scroller)
+	testing.expect_value(t, sciter_app.set_scroll_pos(scroller, {0, 100_000}), nil)
+	again, _ := sciter_app.scroll_info(scroller)
+	testing.expect_value(t, again.pos, clamped.pos)
+
+	testing.expect(t, clamped.pos.y > 30, "clamped to the end, not to where it already was")
+	testing.expectf(
+		t,
+		clamped.pos.y < clamped.content.y,
+		"clamped %v must be inside the content %v",
+		clamped.pos,
+		clamped.content,
+	)
+	testing.expect(t, clamped.pos.y >= clamped.content.y - clamped.view.height)
+
+	testing.expect_value(t, sciter_app.set_scroll_pos(scroller, {0, 0}), nil)
+	back, _ := sciter_app.scroll_info(scroller)
+	testing.expect_value(t, back.pos, [2]i32{0, 0})
+
+	// Scrolling moves what is inside, and which origins notice is the whole point of `Origin`:
+	// `.View` and `.Root` are both anchored outside the scrolling element and see it move, while
+	// `.Container` is measured from the container's own content origin and does not.
+	last, _ := sciter_app.select_first(scroller, "p:last-child")
+	view_before := sciter_app.location(last, .Border, .View) or_else {}
+	root_before := sciter_app.location(last, .Border, .Root) or_else {}
+	container_before := sciter_app.location(last, .Border, .Container) or_else {}
+
+	testing.expect_value(t, sciter_app.set_scroll_pos(scroller, {0, 100_000}), nil)
+
+	view_after := sciter_app.location(last, .Border, .View) or_else {}
+	root_after := sciter_app.location(last, .Border, .Root) or_else {}
+	container_after := sciter_app.location(last, .Border, .Container) or_else {}
+
+	testing.expectf(t, view_after.y < view_before.y, "view: %v -> %v", view_before, view_after)
+	testing.expectf(t, root_after.y < root_before.y, "root: %v -> %v", root_before, root_after)
+	testing.expect_value(t, container_after, container_before)
+
+	// The two window origins differ by a fixed offset - where the root element sits in the window -
+	// so scrolling moves them by exactly the same amount.
+	testing.expect_value(t, view_before.y - view_after.y, root_before.y - root_after.y)
+}
+
+// `scroll_to_view` is accepted here but does nothing: measured against this engine, it only moves the
+// content once the window has been shown and rendered at least once, and these tests deliberately
+// never show a window. What scrolling *does* work headlessly is `set_scroll_pos`, which the test above
+// covers - so this one pins down the call and the flags rather than the movement.
+//
+// With a shown window, `to_top = true` puts the element at the top of the view and the new position is
+// readable immediately; the default form asks for the shortest scroll that makes the element visible
+// and applies it on the engine's own schedule, so reading the position straight back can still show
+// the old one.
+@(test)
+test_scroll_to_view_is_accepted :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	scroller, _ := sciter_app.select_first(root, "#scroller")
+	last, lerr := sciter_app.select_first(scroller, "p:last-child")
+	testing.expect_value(t, lerr, nil)
+
+	testing.expect_value(t, sciter_app.scroll_to_view(last), nil)
+	testing.expect_value(t, sciter_app.scroll_to_view(last, to_top = true), nil)
+	testing.expect_value(t, sciter_app.scroll_to_view(last, smooth = true), nil)
+	testing.expect_value(t, sciter_app.scroll_to_view(last, to_top = true, smooth = true), nil)
+
+	// The document element scrolls too, and asking it to scroll itself into view is not an error.
+	testing.expect_value(t, sciter_app.scroll_to_view(root), nil)
 }
