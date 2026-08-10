@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twelve examples, 66 tests and nine guides
+> engine, there is an Odin-shaped layer on top of them, and fifteen examples, 86 tests and ten guides
 > cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -123,7 +123,10 @@ Run one with `just example NAME`.
 | `call_odin_from_js` | The other direction: exposing an Odin procedure to script |
 | `dom_walk` | CSS selectors, traversal, and reading and writing text and attributes |
 | `events` | Handling DOM events in Odin, without any script in the document |
+| `graphics` | Drawing with the engine's renderer: a custom-painted element, and an offscreen image |
+| `drag_and_drop` | Accepting a system drop through the `.EXCHANGE` event group |
 | `custom_loader` | Serving a document's CSS and images from memory via the `SC_LOAD_DATA` host callback |
+| `request_loader` | The same callback taken further: status codes, MIME types, and an answer that arrives a second late |
 | `archive` | The whole UI in one compressed blob inside the executable, via `packfolder` and `#load` |
 | `single_binary` | `archive` plus the engine itself embedded — one self-contained 25 MB executable |
 | `inspector` | Attaching the SDK's DevTools-style inspector to a running window |

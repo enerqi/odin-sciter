@@ -4,8 +4,9 @@ A Sciter document refers to stylesheets, images, scripts and fonts. Where those 
 the host's business — the engine asks before it fetches anything, and answering that question is how an
 application ships its whole UI inside the executable instead of beside it.
 
-Three examples cover the ladder: [`custom_loader`](../examples/custom_loader.odin) (serve from a map in
-memory), [`archive`](../examples/archive.odin) (serve from a compressed blob), and
+Four examples cover the ladder: [`custom_loader`](../examples/custom_loader.odin) (serve from a map in
+memory), [`request_loader`](../examples/request_loader.odin) (status codes, MIME types and an answer that
+arrives later), [`archive`](../examples/archive.odin) (serve from a compressed blob), and
 [`single_binary`](../examples/single_binary.odin) (the engine embedded too).
 
 ## The host callback
@@ -61,7 +62,7 @@ do the stylesheets it pulls in. A handler installed afterwards misses all of it.
 | `.OK` | carry on — with your data if `serve` filled it in, otherwise the engine loads it |
 | `.DISCARD` | refuse. The resource is never loaded. |
 | `.DELAYED` | you will answer later, out of band, with `data_ready_async(window, uri, data, raw.requestId)`. **Every delayed request must eventually be answered or it leaks.** |
-| `.MYSELF` | you take over the underlying `HREQUEST` and drive it through the `sciter-x-request` API |
+| `.MYSELF` | you take the underlying `HREQUEST` over and answer it yourself — see [Taking a request over](#taking-a-request-over) |
 
 `.DELAYED` is the one that makes a network-backed or database-backed loader possible without blocking
 the pump:
@@ -89,6 +90,71 @@ awkward, `SciterDataReady` on the raw table copies immediately.
 
 The engine asks for its own built-ins through this same callback — `sciter:window-frame.js` and
 friends. Match on your prefix and return `.OK` for everything else; do not `.DISCARD` by default.
+
+## Taking a request over
+
+`serve` answers with bytes and nothing else: status 200, type guessed from the URL, delivered inside the
+callback. The engine also hands the host its own request object on every notification, and `.MYSELF`
+takes that object over — which is how you answer with a **status code**, a **MIME type**, **later**, or
+**in chunks**. [`request_loader`](../examples/request_loader.odin) does all four; the API is in
+[`api.md`](./api.md#requests--requestodin).
+
+```odin
+// a status and a type the URL does not imply, answered inside the callback
+return sciter_app.serve_request(request, css, mime = "text/css")
+```
+
+```odin
+// a real 404 rather than a silent .DISCARD
+sciter_app.fail_request(sciter_app.request_of(request), 404)
+return .MYSELF
+```
+
+An answer that cannot be given now needs the handle to survive the callback, and that needs a reference:
+
+```odin
+// in the callback
+rq, result := sciter_app.take_request(request)   // use_request + .MYSELF
+app.pending = rq
+return result
+
+// later, on the engine's thread
+sciter_app.succeed_request(app.pending, bytes)
+sciter_app.unuse_request(app.pending)
+```
+
+Without `take_request` the handle is the engine's to recycle the moment the callback returns — measured:
+the engine handed out the same pointer for a later, unrelated request.
+
+### Deferring does not rewind the document
+
+An answer that arrives late is used for anything the document consumes **when it arrives** — images,
+fonts, media. It is *not* used for anything consumed **in order**: a `<script src>` answered after
+parsing has moved past it is fetched and never executed. Both measured on 6.0.4.9; a deferred image
+cleared its element's `.INCOMPLETE` and `.BUSY` state as soon as the answer landed, and a deferred script
+never ran.
+
+Use `.DELAYED` + `data_ready_async` for a whole-buffer answer on the engine's thread, and `.MYSELF` +
+`take_request` when the status code, the type, or streaming matters.
+
+### `.MYSELF` versus the rest
+
+| | |
+| --- | --- |
+| `serve` | bytes, now, 200, type guessed. The default. |
+| `serve_request` | bytes, now, with a status and a MIME type |
+| `.DELAYED` + `data_ready_async` | whole buffer, later, no status |
+| `take_request` + `succeed_request` | anything, later, with a status; `append_request_data` streams it |
+
+### What the request knows
+
+`request_url`, `request_method`, `request_data_type`, `request_status` → `(state, status)`,
+`request_times`, `request_data`, `request_headers` / `response_headers` / `request_parameters`, and
+`request_requestor` — which reports the element the resource is **for**, not the one that named it: a
+stylesheet pulled in by `<link>` in the head reports `html`.
+
+A failed request is answered as a failure, not as silence: 404 an image and the engine's next question
+through this same callback is `sciter:no-image.png`, its own placeholder, which has to be left alone.
 
 ## Archives
 

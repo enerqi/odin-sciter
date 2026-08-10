@@ -15,6 +15,7 @@ import sciter "../.."
 import "../../sciter_app"
 import "base:runtime"
 import "core:fmt"
+import "core:math"
 import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
@@ -533,4 +534,140 @@ delayed_on_load_data :: proc(
 
 delayed_answer :: proc(window: sciter_app.Window, uri: string, bytes: []u8, app: ^Delayed_App) {
 	sciter_app.data_ready_async(window, uri, bytes, app.pending)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// resources.md and api.md, taking a request over
+
+Request_App :: struct {
+	pending: sciter_app.Request,
+}
+
+request_serve_now :: proc(request: ^sciter_app.Load_Request, css: []u8) -> sciter_app.Load_Result {
+	return sciter_app.serve_request(request, css, mime = "text/css")
+}
+
+request_fail :: proc(request: ^sciter_app.Load_Request) -> sciter_app.Load_Result {
+	sciter_app.fail_request(sciter_app.request_of(request), 404)
+	return .MYSELF
+}
+
+request_take :: proc(request: ^sciter_app.Load_Request, app: ^Request_App) -> sciter_app.Load_Result {
+	rq, result := sciter_app.take_request(request)
+	app.pending = rq
+	return result
+}
+
+request_answer_later :: proc(app: ^Request_App, bytes: []u8) {
+	sciter_app.succeed_request(app.pending, bytes)
+	sciter_app.unuse_request(app.pending)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// events.md, drag and drop
+
+dnd_attach :: proc(
+	drop_zone: sciter_app.Element,
+	on_event: proc(_: ^sciter_app.Event_Handler, _: sciter_app.Event) -> bool,
+) {
+	handler := sciter_app.Event_Handler {
+		subscription = {.EXCHANGE},
+		on_event     = on_event,
+	}
+	sciter_app.attach_handler(drop_zone, &handler)
+}
+
+dnd_accessor :: proc(event: sciter_app.Event) {
+	if xe, ok := sciter_app.exchange_event(event); ok {
+		_ = xe.code
+		_ = xe.pos
+		_ = xe.source
+		_ = xe.mode
+		_ = xe.data
+	}
+}
+
+dnd_switch :: proc(xe: sciter_app.Exchange_Event, take: proc(_: ^sciter_app.Value)) -> bool {
+	switch xe.code {
+	case .WILL_ACCEPT_DROP:
+		return true
+	case .DRAG:
+		return true
+	case .DROP:
+		take(xe.data)
+		return true
+	case .DRAG_ENTER, .DRAG_LEAVE, .DRAG_CANCEL, .PASTE, .DRAG_REQUEST:
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------------------------------
+// graphics.md
+
+gfx_offscreen :: proc() {
+	img, _ := sciter_app.create_image(120, 120)
+	sciter_app.paint_image(img, proc(gfx: sciter_app.Graphics, w, h: u32, user: rawptr) {
+		sciter_app.set_fill_color(gfx, sciter_app.rgb(0x89, 0xb4, 0xfa))
+		sciter_app.set_line_color(gfx, sciter_app.rgb(0x89, 0xb4, 0xfa))
+		sciter_app.draw_rect(gfx, 0, 0, f32(w), f32(h))
+	})
+	png, _ := sciter_app.save_image(img, .PNG)
+	_ = png
+}
+
+gfx_attach :: proc(
+	element: sciter_app.Element,
+	on_event: proc(_: ^sciter_app.Event_Handler, _: sciter_app.Event) -> bool,
+) {
+	handler := sciter_app.Event_Handler {
+		subscription = {.DRAW},
+		on_event     = on_event,
+	}
+	sciter_app.attach_handler(element, &handler)
+}
+
+gfx_on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	de, ok := sciter_app.draw_event(event)
+	if !ok || de.layer != .CONTENT {
+		return false
+	}
+	sciter_app.set_fill_color(de.gfx, sciter_app.rgb(0xf3, 0x8b, 0xa8))
+	sciter_app.draw_ellipse(de.gfx, f32(de.area.x), f32(de.area.y), 20, 20)
+	return true
+}
+
+gfx_invalidate :: proc(dial: sciter_app.Element) {
+	sciter.api().SciterUpdateElement(sciter.Helement(dial), false)
+}
+
+gfx_ticks :: proc(gfx: sciter_app.Graphics, cx, cy, radius: f32) {
+	sciter_app.save_state(gfx)
+	sciter_app.translate(gfx, cx, cy)
+	for _ in 0 ..< 12 {
+		sciter_app.draw_line(gfx, 0, -radius + 4, 0, -radius + 12)
+		sciter_app.rotate(gfx, 2 * math.PI / 12)
+	}
+	sciter_app.restore_state(gfx)
+}
+
+gfx_path :: proc(gfx: sciter_app.Graphics) {
+	path, _ := sciter_app.create_path()
+	defer sciter_app.release_path(path)
+
+	sciter_app.path_move_to(path, 0, 0)
+	sciter_app.path_line_to(path, 16, 0)
+	sciter_app.path_bezier_to(path, 16, 8, 8, 16, 0, 16)
+	sciter_app.path_close(path)
+
+	sciter_app.draw_path(gfx, path, .FILL_AND_STROKE)
+}
+
+gfx_text :: proc(gfx: sciter_app.Graphics, element: sciter_app.Element, x, y: f32) {
+	text, _ := sciter_app.create_text(element, "42.7 °C")
+	defer sciter_app.release_text(text)
+
+	m, _ := sciter_app.text_metrics(text)
+	sciter_app.set_text_box(text, 200, 100)
+	sciter_app.draw_text(gfx, text, x, y, .Middle_Center)
+	_ = m
 }

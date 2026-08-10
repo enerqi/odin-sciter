@@ -281,6 +281,45 @@ du -sh $HOME/dev/sciter-js-sdk/.git    # 838M ... 1.5G ... 2.1G ... 3.9G
 800+ commits each carrying every platform's binaries. That is why `PLAN.md` recommends `--depth 1` or
 the release archive, and why `VENDORED.md` says so at the top.
 
+## 9. Staging an interaction the test runner cannot
+
+Drag-and-drop is delivered by the window system, so no `@(test)` can produce one and the header's
+description of the protocol - "drop target element shall consume this event in order to receive X_DROP"
+- had to be checked some other way.
+
+The rig is one small program and a nested X server, so nothing touches the real desktop:
+
+```sh
+Xephyr :77 -screen 1024x768 &          # a second X server, in a window
+DISPLAY=:77 ./drag_and_drop &          # the example under test
+DISPLAY=:77 python3 spike/xdnd/xdnd_source.py   # ctypes, no dependencies: a synthetic XDND drag source
+```
+
+The source is the smallest XDND implementation that works: find the window advertising `XdndAware`,
+own the `XdndSelection`, then `XdndEnter` -> `XdndPosition` -> read `XdndStatus` -> `XdndDrop`. The
+engine's answer in `XdndStatus` is the measurement - it says, in one bit, whether the host's handler
+convinced the engine to accept the drop.
+
+That bit is what turned a guess into a rule. Consuming `.WILL_ACCEPT_DROP` alone, which is all the
+header asks for, answers `accept=False` and no `.DROP` follows. The matrix over all combinations:
+
+| consumed | `XdndStatus` | `.DROP` delivered |
+| --- | --- | --- |
+| nothing | accept=False | no |
+| `.DRAG` | accept=False | no |
+| `.WILL_ACCEPT_DROP` | accept=False | no |
+| `.WILL_ACCEPT_DROP` + `.DRAG_ENTER` | accept=False | no |
+| `.WILL_ACCEPT_DROP` + `.DRAG` | **accept=True** | **yes** |
+
+The same rig showed two things that are easy to assume the other way: the payload `Value` arrives as an
+empty map on Linux, and consuming an event in both the sinking and the bubbling pass counts the drop
+twice.
+
+The generalisable part is the shape: put the engine in a disposable display, drive the *protocol* rather
+than the input device, and find the one bit the engine sends back that says whether it agreed. XTEST
+mouse synthesis was tried first and is strictly worse - it moves a real pointer, and it cannot tell you
+what the engine concluded.
+
 ---
 
 ## Summary of what generalises
@@ -297,3 +336,5 @@ the release archive, and why `VENDORED.md` says so at the top.
   handshake is not a compatibility check.
 - Read the crash's shape: landing in a function you never called is an offset bug.
 - Check the upstream forge's freshness before trusting a mirror, and record what you pinned.
+- When an interaction cannot be staged in a test, stage the protocol underneath it in a disposable
+  display, and measure the answer the engine sends back rather than what the screen looks like.

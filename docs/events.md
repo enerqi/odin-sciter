@@ -109,14 +109,29 @@ if ke, ok := sciter_app.key_event(event); ok {
 	// ke.key_code  - a virtual key for DOWN/UP, a character for CHAR
 	// ke.modifiers - Keyboard_States
 }
+
+if de, ok := sciter_app.draw_event(event); ok {
+	// de.layer - .BACKGROUND, .CONTENT, .FOREGROUND, .OUTLINE, in that order per repaint
+	// de.gfx   - the engine's graphics context, valid for this call only
+	// de.area  - the element's rectangle, in the context's coordinates
+	// returning true from on_event REPLACES that layer
+}
+
+if xe, ok := sciter_app.exchange_event(event); ok {
+	// xe.code   - .WILL_ACCEPT_DROP, .DRAG_ENTER, .DRAG, .DROP, ...
+	// xe.pos    - [2]i32, relative to the target element
+	// xe.source - the dragged element; nil for a drag from another application
+	// xe.mode   - .COPY / .MOVE / .LINK, as the source offered it
+	// xe.data   - the payload Value; borrowed, do not clear
+}
 ```
 
 `.raw` is on every one of them deliberately: the wrapper surfaces the fields that are used constantly
 and does not pretend to cover the rest, so nothing is out of reach.
 
-For groups without an accessor yet — `.FOCUS`, `.SCROLL`, `.TIMER`, `.SIZE`, `.EXCHANGE`,
-`.ATTRIBUTE_CHANGE` — cast `event.params` to the matching struct from `package sciter` yourself. The
-struct name follows the header (`Focus_Params`, `Scroll_Params`, …).
+For groups without an accessor yet — `.FOCUS`, `.SCROLL`, `.SIZE`, `.ATTRIBUTE_CHANGE` — cast
+`event.params` to the matching struct from `package sciter` yourself. The struct name follows the
+header (`Focus_Params`, `Scroll_Params`, …). `.TIMER` has `timer_event`, below.
 
 ## The return value
 
@@ -178,11 +193,60 @@ instead of rounding it down to a silent stop — `stop_timer` is the way to spel
   what you want, not a `.MOUSE_UP` you have to hit-test yourself.
 - **`.MOUSE`**, **`.KEY`**, **`.FOCUS`** — the raw input events, for custom controls.
 - **`.SIZE`**, **`.SCROLL`**, **`.TIMER`** — layout and timing.
-- **`.DRAW`** — a paint request. Very high frequency; subscribe only when you mean to draw.
+- **`.DRAW`** — a paint request, and the onscreen way to get a `Graphics`. Very high frequency;
+  subscribe only when you mean to draw. `draw_event(event)` decodes it — see
+  [`graphics.md`](./graphics.md#the-draw-event).
+- **`.EXCHANGE`** — system drag-and-drop. See [Drag and drop](#drag-and-drop).
 - **`.METHOD_CALL`**, **`.SCRIPTING_METHOD_CALL`** — behavior-specific method dispatch.
 
 The full lists are `Behavior_Events`, `Mouse_Events`, `Key_Events` and friends in `sciter.odin`,
 generated straight from `sciter-x-behavior.h`.
+
+## Drag and drop
+
+System drag-and-drop is one event group, `.EXCHANGE`, on an ordinary handler — there is no separate API
+table for it. [`drag_and_drop`](../examples/drag_and_drop.odin) is the whole arrangement.
+
+```odin
+handler := sciter_app.Event_Handler {
+	subscription = {.EXCHANGE},
+	on_event     = on_event,
+}
+sciter_app.attach_handler(drop_zone, &handler)   // on the target, so pos is element-relative
+```
+
+The events for one drop, measured against an X11 drag source on 6.0.4.9:
+
+```
+WILL_ACCEPT_DROP -> DRAG_ENTER -> DRAG -> WILL_ACCEPT_DROP -> DROP
+```
+
+each delivered twice, sinking then bubbling.
+
+**Consume both `.WILL_ACCEPT_DROP` and `.DRAG`** — return `true` for them — or the engine tells the drag
+source it is not interested and `.DROP` never arrives. `sciter-x-behavior.h` documents only the first of
+the two; consuming just that was measured to leave the drop refused, and `.DRAG_ENTER` makes no
+difference either way. Act in one phase: consuming a `.DROP` in both counts it twice.
+
+```odin
+switch xe.code {
+case .WILL_ACCEPT_DROP: return true    // "this element takes drops"
+case .DRAG:             return true    // ... and means it
+case .DROP:             take(xe.data); return true
+}
+```
+
+### What Linux does not do
+
+Both of these are the vendored engine's behaviour, not the bindings':
+
+- **The payload arrives empty.** A real X11 drop delivered `.DROP` with `xe.data` an empty map, so what
+  was dragged is not readable through this path. The positions, the target element and the event
+  sequence are all correct — it is only the data.
+- **There is no drag source.** Nothing in `ISciterAPI` starts a drag; the only way is script's
+  `Window.this.performDrag(data, mode)`, and on Linux it returns `null` immediately with no EXCHANGE
+  events following. `.MOUSE_DRAG_REQUEST` in the `.MOUSE` group *is* delivered, so "the user has begun
+  dragging this element" is observable; turning that into a system drag is not.
 
 ## Detaching
 

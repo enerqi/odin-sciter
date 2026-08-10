@@ -17,6 +17,8 @@ Error :: union #shared_nil {
 	                        // Not_Found, Wrong_Type
 	sciter.Scdom_Result,    // the engine's own DOM result code
 	sciter.Value_Result,    // ... and its Value result code
+	sciter.Request_Result,  // ... and its request result code
+	sciter.Graphin_Result,  // ... and its graphics result code
 }
 ```
 
@@ -207,8 +209,14 @@ engine's `SUBSCRIPTIONS_REQUEST`, which the wrapper replies to for you — a han
 nothing receives nothing.
 
 Decoding: `event_code(cmd)`, `event_phase(cmd)` → `Event_Phase{.Bubbling, .Sinking, .Handled}`, and
-the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, each returning
-`ok = false` if the event is not of that group and each exposing `.raw` for what is not surfaced.
+the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, `exchange_event`, each
+returning `ok = false` if the event is not of that group and each exposing `.raw` for what is not
+surfaced.
+
+Drag and drop is the `.EXCHANGE` group and nothing else — `exchange_event` gives
+`{code, phase, target, source, pos, view, mode, data, raw}`. Consume both `.WILL_ACCEPT_DROP` and
+`.DRAG` or no `.DROP` arrives; on Linux the payload comes through empty and there is no drag source at
+all. See [`events.md`](./events.md#drag-and-drop).
 
 Timers: `set_timer(el, interval: time.Duration, id: uintptr = 0)` and `stop_timer(el, id)`. The event
 arrives in the `.TIMER` group as `Timer_Event{id, raw}`. **The return value is inverted for this
@@ -218,6 +226,41 @@ on the element it was set on. See [`events.md`](./events.md#timers).
 Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `post_event(...)`. These
 bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
 [`events.md`](./events.md#synthesising-events).
+
+## Graphics — `graphics.odin`
+
+The engine's own 2D renderer, in a second function table. Full guide:
+[`graphics.md`](./graphics.md).
+
+`Image`, `Graphics`, `Path` and `Text` are distinct handles, all reference counted (`retain_*` /
+`release_*`; releasing nil is not an error). `Color` is built with `rgb` / `rgba`, and `graphics_api()`
+is the raw table.
+
+**You never create a `Graphics`** — `gCreate` answers `.NOTSUPPORTED` on this engine. The engine hands
+one to you, either offscreen through `paint_image(image, painter, user)` or onscreen through the
+`.DRAW` event, decoded with `draw_event(event) -> Draw_Event{layer, gfx, area, raw}`. A `DRAW` handler
+returning true **replaces** that layer.
+
+Images: `create_image`, `image_from_pixels`, `load_image`, `image_from_element`, `image_size`,
+`clear_image`, `save_image(image, encoding := .PNG, quality := 90, allocator)`. **`.RAW` is BGRA**, four
+bytes a pixel, which is how the drawing tests assert.
+
+Drawing: `set_fill_color` / `set_line_color` / `set_line_width` / `set_line_join` / `set_line_cap` /
+`set_fill_mode`, the four `set_*_gradient_*`, `save_state` / `restore_state`, `translate` / `scale` /
+`rotate` / `skew` / `transform`, `world_to_screen` / `screen_to_world`, `draw_line` / `draw_rect` /
+`draw_rounded_rect` / `draw_ellipse` / `draw_arc` / `draw_star` / `draw_polygon` / `draw_polyline` /
+`draw_path` / `draw_image` / `draw_text`, `push_clip_rect` / `push_clip_path` / `pop_clip`, and
+`flush`. Every shape both fills and strokes.
+
+Paths: `create_path`, `path_move_to`, `path_line_to`, `path_arc_to`, `path_quad_to`, `path_bezier_to`,
+`path_close`.
+
+Text: `create_text(element, text, class_name := "")`, `create_text_with_style(element, text, style)`,
+`text_metrics` → `Text_Metrics{min_width, max_width, height, ascent, descent, lines}`, `set_text_box`.
+Text is laid out against an element because that is where the font comes from.
+
+To script: `value_from_graphics` / `value_from_image` / `value_from_path` / `value_from_text` and the
+`value_to_*` inverses.
 
 ## Host callback — `host.odin`
 
@@ -237,6 +280,49 @@ For an answer that cannot be given inside the callback: return `.DELAYED`, keep 
 and answer later with `data_ready_async(window, uri, data, request_id)`. Every delayed request must
 eventually be answered or it leaks. `data_ready(window, uri, data)` is the same push without a request
 id; both copy the data, unlike `serve`.
+
+## Requests — `request.odin`
+
+The other half of `SC_LOAD_DATA`. Every load notification carries an `HREQUEST`; returning `.MYSELF`
+hands that request to the host, which can then answer with a status code and a MIME type, answer later,
+or stream the body in chunks.
+
+```odin
+// inside on_load_data - answer now, with a type the URL does not imply
+return sciter_app.serve_request(request, css, mime = "text/css")
+
+// or take it over and answer later
+rq, result := sciter_app.take_request(request)   // result is .MYSELF
+app.pending = rq
+return result
+
+// ... later, on the engine's thread
+sciter_app.succeed_request(app.pending, bytes)   // or fail_request(rq, 404)
+sciter_app.unuse_request(app.pending)
+```
+
+`Request` is a distinct `sciter.Hrequest`, `request_of(load_request)` gets one out of a callback, and
+`request_api()` is the raw `SciterRequestAPI` table.
+
+Answering: `serve_request(request, data, mime := "", encoding := "", status := 200) -> Load_Result`,
+`succeed_request(rq, data, status := 200)`, `fail_request(rq, status := 404, data = nil)`,
+`append_request_data(rq, chunk)` (chunks accumulate; `succeed_request(rq, nil)` completes them),
+`set_request_mime`, `set_request_encoding`, `set_request_header`, `set_response_header`.
+
+Lifetime: `use_request` / `unuse_request`, and `take_request` which is `use_request` plus `.MYSELF`.
+A handle is the engine's to recycle the moment the callback returns unless a reference is taken.
+
+Reading: `request_url`, `request_content_url`, `request_method` (`"GET"`), `request_data_type`,
+`request_mime`, `request_times`, `request_status` → `(state, status)`, `request_data`,
+`request_requestor`, `request_proxy_host`, `request_proxy_port`, and the three name/value lists —
+`request_parameters`, `request_headers`, `response_headers`, each with `_count` and indexed forms, all
+returning `[]Name_Value` to free with `delete_name_values`.
+
+Two measured behaviours worth knowing: deferring works for what the document consumes on arrival
+(images, fonts, media) but **not** for `<script src>`, which is fetched and never run if the answer
+misses the parse; and `request_requestor` reports the element the resource is *for* — a stylesheet
+pulled in by `<link>` in the head reports `html`, not the `<link>`. See
+[`resources.md`](./resources.md#taking-a-request-over).
 
 ## Archives — `archive.odin`
 
@@ -272,9 +358,9 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter_app.Window` is a distinct `rawptr`, `Element` a distinct `sciter.Helement`, and `Value` is
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
-Things you will reach for the raw table for today: graphics (`SciterGraphics*`), the request API
-(`sciter-x-request.h`), drag-and-drop, mouse capture (`SciterSetCapture` / `SciterReleaseCapture`),
-`SciterSetHighlightedElement`, and `SciterUpdateElement` / `SciterRefreshElementArea`.
+Things you will reach for the raw table for today: mouse capture (`SciterSetCapture` /
+`SciterReleaseCapture`), `SciterUpdateElement` / `SciterRefreshElementArea`,
+`SciterSetHighlightedElement`, and `gGetNativeDC` in the graphics table.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

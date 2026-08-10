@@ -22,8 +22,10 @@ tag `6.0.4.9-bis`.
 - **`package sciter_app`** — hand-written, Odin-shaped: `string` in and out, an `Error` union that
   carries the engine's own result codes, and ownership rules stated rather than hidden. Covers the
   application lifecycle, windows, `Value`, the DOM (elements and nodes, including building and moving
-  them), geometry and scrolling, events and element timers, the host resource callback, archives,
-  engine options, and embedding the engine itself.
+  them), geometry and scrolling, events (including drag-and-drop and custom painting) and element
+  timers, graphics (images, paths, text and the 2D renderer), the host resource callback, the request
+  API
+  (`sciter-x-request.h`) behind it, archives, engine options, and embedding the engine itself.
 
 ### Loading
 
@@ -35,9 +37,10 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Twelve, each a single self-contained file with its explanation in the header comment: `hello_window`,
-`api_map`, `load_file`, `eval`, `call_odin_from_js`, `dom_walk`, `events`, `custom_loader`, `archive`,
-`single_binary`, `inspector`, and `extension` (Odin as a native extension the engine loads).
+Fifteen, each a single self-contained file with its explanation in the header comment: `hello_window`,
+`api_map`, `load_file`, `eval`, `call_odin_from_js`, `dom_walk`, `events`, `drag_and_drop`, `graphics`,
+`custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a
+native extension the engine loads).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
 to the symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on
@@ -45,16 +48,18 @@ Windows.
 
 ### Tests
 
-66 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+74 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, archive lookup, the event parameter accessors and the
-event-code/phase split, the embedded engine's cache naming and write-once behaviour, and the host
-callback's serve / discard / not-ours decision — run anywhere. The windowed ones, including the event
-handler trampoline with its subscription reply and the box/origin geometry queries, skip themselves
-without a display.
+event-code/phase split, the embedded engine's cache naming and write-once behaviour, the host
+callback's serve / discard / not-ours decision, and every request wrapper's answer to a nil handle —
+run anywhere. The windowed ones, including the event handler trampoline with its subscription reply,
+the box/origin geometry queries, and the request API driven by a real document load, skip themselves
+without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
+the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
 ### Documentation
 
-Nine guides in `docs/`, plus `PLAN.md` (findings and decisions), `RESEARCH-METHOD.md` (how each was
+Ten guides in `docs/`, plus `PLAN.md` (findings and decisions), `RESEARCH-METHOD.md` (how each was
 established), `UPGRADING.md` (version policy, upgrade procedure, repository-size budget) and
 `WINDOWS-CHECKLIST.md`. Every Odin code block in the guides also lives in `docs/snippets/` and is type
 checked by `just check`.
@@ -82,8 +87,23 @@ checked by `just check`.
 - **A bare `SciterDetachElement` can free the element out from under the caller**, and the next use of
   the handle is a segfault rather than an error. `remove_element(el, finalize = false)` takes a
   reference first and hands it to the caller.
-- Graphics, the request API and drag-and-drop have no wrapper yet, and are reached through
-  `sciter.api()`.
+- **`gCreate` answers `.NOTSUPPORTED`**: a graphics context cannot be made from an image directly. The
+  engine hands one out instead - through `paint_image` offscreen, or a `.DRAW` event onscreen - and
+  everything else in the graphics table works normally through those.
+- **`.RAW` image encoding is BGRA**, not the `[a,b,g,r]` `sciter-x-graphics.h` describes. Measured by
+  clearing an image to pure red and reading `[0, 0, 255, 255]` back.
+- **A drop target must consume `.DRAG` as well as `.WILL_ACCEPT_DROP`.** `sciter-x-behavior.h` documents
+  only the second; consuming just that leaves the engine telling the drag source it is not interested,
+  and no `.DROP` arrives. Measured by driving a real X11 drag against every combination.
+- **Drag-and-drop on Linux delivers the events but not the data**: a real X11 drop arrives as
+  `.DROP` with the right target and position and an empty payload map. There is also no drag *source* -
+  script's `Window.this.performDrag` returns null immediately, and `ISciterAPI` has no slot for it.
+- **A deferred resource answer does not rewind the document.** Taking a request over with `.MYSELF` and
+  answering it later works for what the document consumes on arrival - a deferred image cleared its
+  element's `.INCOMPLETE` and `.BUSY` state as soon as the answer landed - but a `<script src>` answered
+  after parsing has moved past it is fetched and never executed.
+- **`request_requestor` reports the element the resource is for, not the one that named it**: a
+  stylesheet pulled in by `<link>` in the head reports `html`.
 - **A `.TIMER` handler must return true to keep its timer running.** The return value is inverted for
   that one group, so a handler ending in the usual `return false` gets exactly one tick. Timers are
   also delivered only to handlers on the element they were set on — they do not bubble.

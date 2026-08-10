@@ -203,6 +203,82 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 		true
 }
 
+// A drag-and-drop event - the engine's EXCHANGE group, which is system drag-and-drop rather than
+// anything the document does on its own.
+//
+// The sequence for one drop, measured against an X11 drag source on 6.0.4.9, is
+//
+//	WILL_ACCEPT_DROP -> DRAG_ENTER -> DRAG -> WILL_ACCEPT_DROP -> DROP
+//
+// each delivered twice, sinking then bubbling. **The target has to consume both `.WILL_ACCEPT_DROP` and
+// `.DRAG`** - that is `on_event` returning true for them - or the engine tells the drag source it is
+// not interested and no `.DROP` ever arrives. `sciter-x-behavior.h` mentions only the first of the two;
+// consuming just that was measured to leave the drop refused. See docs/events.md.
+Exchange_Event :: struct {
+	code:   sciter.Exchange_Cmd,
+	phase:  Event_Phase,
+	target: Element, // the element under the cursor
+	source: Element, // the dragged element, and nil for a drag from another application
+	pos:    [2]i32, // relative to the target element
+	view:   [2]i32, // relative to the window
+	mode:   sciter.Dd_Modes, // copy / move / link, as the source offered it
+	data:   ^Value, // the dragged payload; borrowed, do not clear
+	raw:    ^sciter.Exchange_Params,
+}
+
+exchange_event :: proc(event: Event) -> (xe: Exchange_Event, ok: bool) {
+	if event.group != {.EXCHANGE} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Exchange_Params)(event.params)
+	return Exchange_Event {
+			code = sciter.Exchange_Cmd(event_code(p.cmd)),
+			phase = event_phase(p.cmd),
+			target = Element(p.target),
+			source = Element(p.source),
+			pos = {i32(p.pos.x), i32(p.pos.y)},
+			view = {i32(p.pos_view.x), i32(p.pos_view.y)},
+			mode = sciter.Dd_Modes(p.mode),
+			data = &p.data,
+			raw = p,
+		},
+		true
+}
+
+// A paint request - the engine's DRAW group, and the onscreen way to get a `Graphics`.
+//
+// One repaint of an element produces four of these, one per layer, in order: `.BACKGROUND`, `.CONTENT`,
+// `.FOREGROUND`, `.OUTLINE`. Returning true from `on_event` **replaces** that layer: the engine's own
+// painting of it does not happen. Returning false draws over it instead, leaving the engine's own
+// background or content underneath.
+//
+// This is a high-frequency event. Subscribe to `.DRAW` only on the elements you actually draw.
+Draw_Event :: struct {
+	layer: sciter.Draw_Events,
+	gfx:   Graphics, // the engine's context, valid for this call only
+	area:  Rect, // the element's area, in the context's coordinates
+	raw:   ^sciter.Draw_Params,
+}
+
+draw_event :: proc(event: Event) -> (de: Draw_Event, ok: bool) {
+	if event.group != {.DRAW} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Draw_Params)(event.params)
+	return Draw_Event {
+			layer = sciter.Draw_Events(p.cmd),
+			gfx = Graphics(p.gfx),
+			area = Rect {
+				x = p.area.left,
+				y = p.area.top,
+				width = p.area.right - p.area.left,
+				height = p.area.bottom - p.area.top,
+			},
+			raw = p,
+		},
+		true
+}
+
 Timer_Event :: struct {
 	id:  uintptr, // the id given to `set_timer`; 0 for the element's unnamed timer
 	raw: ^sciter.Timer_Params,

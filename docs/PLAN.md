@@ -2,10 +2,11 @@
 
 Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and twelve examples build and run —
-covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events, custom
-resource loading, archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 66 `@(test)` procs, and the nine guides in `docs/` are written. What remains
+verifies all 189 `ISciterAPI` slots against the shipped engine, and fifteen examples build and run —
+covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events,
+drag-and-drop, graphics, custom resource loading (including the request API), archives, one-file
+shipping, the inspector and a native extension.
+`just example-tests` runs 86 `@(test)` procs, and the ten guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 

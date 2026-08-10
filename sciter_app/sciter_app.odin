@@ -30,6 +30,8 @@ Error :: union #shared_nil {
 	Api_Error,
 	sciter.Scdom_Result,
 	sciter.Value_Result,
+	sciter.Request_Result,
+	sciter.Graphin_Result,
 }
 
 // Failures that the engine reports as a bare "false" rather than a result code, plus the ones this
