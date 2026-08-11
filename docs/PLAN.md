@@ -6,7 +6,7 @@ verifies all 189 `ISciterAPI` slots against the shipped engine, and fifteen exam
 covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events,
 drag-and-drop, graphics, custom resource loading (including the request API), archives, one-file
 shipping, the inspector and a native extension.
-`just example-tests` runs 114 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
+`just example-tests` runs 123 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 

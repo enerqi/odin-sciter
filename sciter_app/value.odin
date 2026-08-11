@@ -65,6 +65,15 @@ value_is_null :: proc(v: ^Value) -> bool {
 	return type == .NULL
 }
 
+// True if the Value is one of the engine's *error strings*: a string carrying the `.ERROR` unit rather
+// than the `.STRING` one. That is how `value_parse` reports a bad document - the parse "succeeds" and
+// hands back a string reading "JSON parsing error in line 0 at 4 position" - and it is worth checking
+// on anything that came back from script.
+value_is_error :: proc(v: ^Value) -> bool {
+	type, units := value_type(v)
+	return type == .STRING && units == u32(sciter.Value_Unit_Type_String.ERROR)
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Construction
 //
@@ -120,6 +129,41 @@ value_from :: proc {
 	value_from_f64,
 	value_from_string,
 	value_from_bytes,
+}
+
+// Parses text into a Value, rather than storing it as one.
+//
+// `value_from_string` puts the characters in the Value and the type is STRING afterwards. This reads
+// the characters as a *literal* and produces whatever they describe, which is what you want for JSON
+// arriving over a socket, a config file, or a length written as text:
+//
+//	v := sciter_app.value_parse(`{"a":[1,2]}`) // a MAP holding an ARRAY
+//	defer sciter_app.value_clear(&v)
+//
+// `how` picks the dialect, and they differ more than the names suggest:
+//
+//   - `.JSON_LITERAL` (the default) is JSON. `"hello"` unquoted parses as a symbol, `12.5%` as the
+//     number 12.5.
+//   - `.XJSON_LITERAL` is JSON plus Sciter's extensions - the same results as `.JSON_LITERAL` for
+//     everything ordinary, and dates and currency as literals.
+//   - `.SIMPLE` parses one terminal value the way an *attribute* would: `42` is an INT, `12.5%` a
+//     LENGTH with percent units, `1976-02-03` a DATE, and anything it does not recognise - including
+//     `[1,2,3]` - stays a plain string. It never fails.
+//   - `.JSON_MAP` resumes parsing an object whose opening `{` has already been consumed - so it wants
+//     the body *and* the closing brace, `a:1}`, and keys need no quotes. Handing it a whole document,
+//     braces and all, is a parse error rather than the obvious success.
+//
+// The engine reports a parse failure in the result rather than in the return code: the call reports OK
+// and hands back a string carrying the `.ERROR` unit, whose text is the message. So on `.Parse_Failed`
+// the returned Value is that message - `value_to_string` it for the diagnosis - and it still owes a
+// `value_clear` like any other.
+value_parse :: proc(s: string, how := sciter.Value_String_Cvt_Type.JSON_LITERAL) -> (v: Value, err: Error) {
+	w := utf16_from_string(s, context.temp_allocator)
+	value_err(sciter.api().ValueFromString(&v, raw_data(w), u32(len(w) - 1), how)) or_return
+	if value_is_error(&v) {
+		return v, .Parse_Failed
+	}
+	return v, nil
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -241,6 +285,54 @@ value_set :: proc(v: ^Value, key: string, element: ^Value) -> Error {
 	k := value_from_string(key)
 	defer value_clear(&k)
 	return value_set_key(v, &k, element)
+}
+
+// Called once per element by `value_each`. Return false to stop the walk.
+//
+// `key` and `value` are borrowed for the duration of the call - the engine still owns them, so do not
+// clear them, and `value_copy` anything that has to outlive the call.
+Value_Visitor :: proc(key: ^Value, value: ^Value, user_data: rawptr) -> bool
+
+// Walks a map's pairs or an array's elements, calling `visit` for each.
+//
+// This is the engine's own enumeration rather than a loop over `value_len` / `value_at`, so it costs
+// one call instead of one per element and it does not hand you a reference to clear per element.
+//
+//	sciter_app.value_each(&map, proc(k, v: ^sciter_app.Value, _: rawptr) -> bool {
+//		name, _ := sciter_app.value_to_string(k, context.temp_allocator)
+//		fmt.println(name)
+//		return true
+//	})
+//
+// **An array's keys are undefined, not indexes.** The engine reports the key as `T_UNDEFINED` for
+// every element of an array; count in `user_data` if the position matters, or use `value_at`.
+//
+// Anything that is not a container - a number, a string - fails with `.INCOMPATIBLE_TYPE` rather than
+// visiting nothing.
+value_each :: proc(v: ^Value, visit: Value_Visitor, user_data: rawptr = nil) -> Error {
+	if visit == nil {
+		return sciter.Value_Result.BAD_PARAMETER
+	}
+	sink := Each_Sink {
+		ctx       = context,
+		visit     = visit,
+		user_data = user_data,
+	}
+	return value_err(sciter.api().ValueEnumElements(v, each_callback, &sink))
+}
+
+@(private)
+Each_Sink :: struct {
+	ctx:       runtime.Context,
+	visit:     Value_Visitor,
+	user_data: rawptr,
+}
+
+@(private)
+each_callback :: proc "system" (param: rawptr, key: ^Value, value: ^Value) -> b32 {
+	sink := (^Each_Sink)(param)
+	context = sink.ctx
+	return b32(sink.visit(key, value, sink.user_data))
 }
 
 // ---------------------------------------------------------------------------------------------------

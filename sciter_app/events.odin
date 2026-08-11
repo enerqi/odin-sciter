@@ -153,6 +153,19 @@ behavior_event :: proc(event: Event) -> (be: Behavior_Event, ok: bool) {
 		true
 }
 
+// The name carried by a `.CUSTOM` behaviour event - the one `fire_event` was given, and the one script
+// wrote in `element.on("name", …)`. Allocated in `allocator`; `""` for every other event, which have no
+// name rather than an empty one.
+//
+// It is decoded on demand rather than sitting in `Behavior_Event` because the engine hands it over as
+// UTF-16 and most handlers never look at it.
+event_name :: proc(be: Behavior_Event, allocator := context.allocator) -> string {
+	if be.raw == nil || be.raw.name == nil {
+		return ""
+	}
+	return string_from_utf16_cstring(be.raw.name, allocator)
+}
+
 Mouse_Event :: struct {
 	code:    sciter.Mouse_Events,
 	phase:   Event_Phase,
@@ -293,6 +306,34 @@ timer_event :: proc(event: Event) -> (te: Timer_Event, ok: bool) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Mouse capture
+//
+// While an element holds the capture, every mouse event goes to it wherever the pointer is - outside
+// the element, outside the window. That is what a drag needs: a `.MOUSE_DOWN` handler that starts one
+// takes the capture, follows `.MOUSE_MOVE` until `.MOUSE_UP`, and releases it there.
+//
+//	case .MOUSE_DOWN: sciter_app.set_capture(handle)
+//	case .MOUSE_UP:   sciter_app.release_capture(handle)
+//
+// Note that this is *mouse* capture, unrelated to the drag-and-drop events in this file - those are
+// the system's own drag protocol, for data crossing an application boundary.
+
+// Routes all mouse events to `element` until the capture is released. `.INVALID_HWND` if the element
+// is not in a document, since the capture belongs to the window.
+//
+// Taking the capture while another element holds it moves it, rather than failing.
+set_capture :: proc(element: Element) -> Error {
+	return dom_err(sciter.api().SciterSetCapture(sciter.Helement(element)))
+}
+
+// Gives the capture back. Releasing when nothing was captured, or when another element has it, is not
+// an error - the engine reports success either way, so this is safe to call unconditionally on the way
+// out of a drag.
+release_capture :: proc(element: Element) -> Error {
+	return dom_err(sciter.api().SciterReleaseCapture(sciter.Helement(element)))
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Timers
 //
 // A timer belongs to an element and delivers a `.TIMER` event to the handlers on it. It is the engine's
@@ -389,4 +430,68 @@ post_event :: proc(
 	reason: uintptr = 0,
 ) -> Error {
 	return dom_err(sciter.api().SciterPostEvent(sciter.Helement(element), u32(code), sciter.Helement(source), reason))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Named events
+//
+// `send_event` and `post_event` carry a code, a source and a reason. This carries a *name* and a
+// *payload* as well, which is what makes it the channel to script:
+//
+//	document.$("#chart").on("data-arrived", function(e) { redraw(e.data); });
+//
+//	value := sciter_app.value_parse(json)
+//	defer sciter_app.value_clear(&value)
+//	sciter_app.fire_event({code = .CUSTOM, name = "data-arrived", target = chart, data = &value})
+//
+// Script sees an ordinary event whose type is the name, so a document can be written against events it
+// declares and Odin can raise them without knowing what listens.
+
+// One event to raise. Everything but `code` is optional.
+Fired_Event :: struct {
+	// `.CUSTOM` for a named event; a `Behavior_Events` value at or above `.FIRST_APPLICATION_EVENT_CODE`
+	// for an application code of your own. Sending an engine code here does not run the behavior that
+	// would normally produce it - see `send_event`.
+	code:   sciter.Behavior_Events,
+
+	// The name script matches on, for `.CUSTOM`. Ignored otherwise.
+	name:   string,
+
+	// Where it goes: down to `target` and back up, the same two phases every event has.
+	//
+	// **A nil target broadcasts** - the event goes to every window's document rather than nowhere. Only
+	// handlers attached with `attach_window_handler` receive it; an element handler, `root`'s included,
+	// does not.
+	target: Element,
+
+	// Arrives as `Behavior_Event.source`. Unlike `send_event`, a nil one here still delivers.
+	source: Element,
+	reason: uintptr,
+
+	// Borrowed for the call and not consumed - the engine copies it, `post` included.
+	data:   ^Value,
+}
+
+// Raises `event`, and reports whether a handler claimed it.
+//
+// `post = false` runs the handlers before returning, and `handled` is their answer. `post = true`
+// queues it and returns immediately, so `handled` is always false and the event arrives on a later turn
+// of the message pump - measured to copy the name and the payload, so neither has to outlive the call.
+fire_event :: proc(event: Fired_Event, post := false) -> (handled: bool, err: Error) {
+	params := sciter.Behavior_Event_Params {
+		cmd      = u32(event.code),
+		heTarget = sciter.Helement(event.target),
+		he       = sciter.Helement(event.source),
+		reason   = event.reason,
+	}
+	if event.data != nil {
+		params.data = event.data^
+	}
+	if event.name != "" {
+		params.name = raw_data(utf16_from_string(event.name, context.temp_allocator))
+	}
+
+	was_handled: b32
+	dom_err(sciter.api().SciterFireEvent(&params, b32(post), &was_handled)) or_return
+	return bool(was_handled), nil
 }

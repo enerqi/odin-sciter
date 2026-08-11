@@ -76,7 +76,10 @@ set_home_url :: proc(window: Window, url: string) -> Error {
 	return nil if ok else Api_Error.Load_Failed
 }
 
-// Adds to the engine's master stylesheet, which sits under every document's own CSS.
+// Sets this window's own stylesheet, which sits under the document's CSS and over the master one.
+// `media_type` restricts it to one `@media` type; `base_url` is what its relative URLs resolve against.
+//
+// For a sheet that applies to every window, see `set_master_css` in `app.odin`.
 set_css :: proc(window: Window, css: string, base_url := "", media_type := "") -> Error {
 	base, media: [^]u16
 	if base_url != "" {
@@ -87,6 +90,104 @@ set_css :: proc(window: Window, css: string, base_url := "", media_type := "") -
 	}
 	ok := sciter.api().SciterSetCSS(rawptr(window), raw_data(css), u32(len(css)), base, media)
 	return nil if ok else Api_Error.Load_Failed
+}
+
+// Repaints whatever the window has marked dirty, now, instead of at the next turn of the message loop.
+// Only needed when something is driving the engine other than `run` - a custom loop, or a long
+// operation on this thread that has to show progress.
+update_window :: proc(window: Window) {
+	sciter.api().SciterUpdateWindow(rawptr(window))
+}
+
+// The media type the window's `@media` rules are matched against: "screen" (the default), "print",
+// "handheld", or any name the document's CSS uses.
+//
+// **Measured, and the reason to call this exactly once:** only the *first* call on a window has any
+// effect. Later calls report success and change nothing, including after loading a new document - a
+// window switched to "print" stays there. Set it before the document that needs it is loaded, and
+// treat it as a property of the window rather than as a switch.
+set_media_type :: proc(window: Window, media_type: string) -> Error {
+	w := utf16_from_string(media_type, context.temp_allocator)
+	ok := sciter.api().SciterSetMediaType(rawptr(window), raw_data(w))
+	return nil if ok else Api_Error.Load_Failed
+}
+
+// The window's media *flags* - the switchable half of `@media`, and the mechanism behind theming an
+// application without rewriting its CSS or reloading it.
+//
+// `vars` is a map of name to truthy/falsy, and every name in it becomes a media query the document's
+// CSS can match by bare name:
+//
+//	vars: sciter_app.Value
+//	defer sciter_app.value_clear(&vars)
+//	on := sciter_app.value_from(true)
+//	defer sciter_app.value_clear(&on)
+//	sciter_app.value_set(&vars, "dark", &on)
+//	sciter_app.set_media_vars(window, &vars)   // now `@media dark { … }` applies
+//
+// It is not consumed. Four measured properties, none of them in the header:
+//
+//   - **flags merge, they do not replace.** A call naming only `dark` leaves every flag already set -
+//     `screen`, which is on by default, included. To turn one off, name it with `false` (or an
+//     undefined Value); an empty map changes nothing.
+//   - **it takes effect immediately**, unlike `set_media_type`, and as often as it is called.
+//   - **it survives a reload**, where a document's globals do not.
+//   - **the syntax is a bare name.** `@media (theme: "dark")` parses and then matches *unconditionally*
+//     - it is not an error and not a flag test, which makes it an expensive mistake to make. Name the
+//     state itself: `@media dark`.
+//
+// A document already laid out keeps the style it resolved, so `update_element(el, true)` on what
+// should change, or a reload, is what makes the switch visible.
+set_media_vars :: proc(window: Window, vars: ^Value) -> Error {
+	ok := sciter.api().SciterSetMediaVars(rawptr(window), vars)
+	return nil if ok else Api_Error.Load_Failed
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Focus and highlight
+//
+// Both are properties of the *window* rather than of an element - one element per window has the focus,
+// one has the debug highlight - which is why they live here and take a `Window`.
+
+// The element with the keyboard focus, or `.Not_Found` when nothing has it. Right after a load that is
+// the usual answer: focus arrives with the first interaction.
+focus_element :: proc(window: Window) -> (element: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.api().SciterGetFocusElement(rawptr(window), &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// Gives the element the keyboard focus.
+//
+// There is no `SciterSetFocus`: the focus is the `:focus` state, and setting it is what moves it. This
+// is that call, named for what it does.
+//
+// There is no way back, either - **clearing `.FOCUS` does not leave the window with nothing focused**,
+// it just stops the element matching `:focus` while `focus_element` keeps reporting it. Move the focus
+// somewhere else instead.
+set_focus :: proc(element: Element) -> Error {
+	return set_element_state(element, {.FOCUS})
+}
+
+// The element the engine is drawing its debug highlight over - the outline the SDK's inspector puts
+// around what you hover in its tree. `.Not_Found` when there is none, which is the normal state.
+highlighted_element :: proc(window: Window) -> (element: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.api().SciterGetHighlightedElement(rawptr(window), &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// Highlights an element, or clears the highlight with a nil one. This is a debugging aid - "which
+// element is this, on screen" - and not a selection: it draws an overlay and leaves no state on the
+// element, so nothing in the document can match on it.
+set_highlighted_element :: proc(window: Window, element: Element) -> Error {
+	return dom_err(sciter.api().SciterSetHighlightedElement(rawptr(window), sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -171,22 +272,30 @@ call :: proc(window: Window, function: string, args: ..Value) -> (result: Value,
 // `value` is copied, not consumed. Globals belong to the *document*, so this has to be redone after
 // every load.
 //
-// Implementation note, because the obvious route does not work: ISciterAPI has `SciterGetViewExpando`,
-// which would hand back `globalThis` as a Value to assign into, but on Sciter 6 that slot is NULL on
-// every platform - `just example api_map` lists it among the 16 unimplemented ones, left behind by the
-// removed TIScript VM. So instead a one-line assignment function is evaluated and then invoked with
-// the name and the value as arguments, which needs no cooperation from the document.
+// The route that looks right in the header is `SciterGetViewExpando`, which would hand back
+// `globalThis` as a Value to assign into - but that slot is NULL on every platform on Sciter 6, left
+// behind by the removed TIScript VM, and `just example api_map` lists it among the 16 unimplemented
+// ones. `SciterSetVariable` is the one that works, and `window` is required despite the C parameter
+// being named `hwndOrNull`: passing NULL reports success and publishes nothing.
 set_global :: proc(window: Window, name: string, value: ^Value) -> Error {
-	setter := eval(window, "(function(n, v) { globalThis[n] = v; })") or_return
-	defer value_clear(&setter)
+	return dom_err(
+		sciter.Scdom_Result(
+			sciter.api().SciterSetVariable(rawptr(window), to_cstring(name, context.temp_allocator), value),
+		),
+	)
+}
 
-	key := value_from_string(name)
-	defer value_clear(&key)
-
-	args := [2]Value{key, value^}
-	result := value_invoke(&setter, nil, args[:]) or_return
-	value_clear(&result)
-	return nil
+// Reads a global back out of the document - one this published, or one script defined.
+//
+// A name that is not there is not an error: the Value comes back undefined, which is what script would
+// say too. The result owns a reference; `value_clear` it.
+global :: proc(window: Window, name: string) -> (value: Value, err: Error) {
+	dom_err(
+		sciter.Scdom_Result(
+			sciter.api().SciterGetVariable(rawptr(window), to_cstring(name, context.temp_allocator), &value),
+		),
+	) or_return
+	return value, nil
 }
 
 // The DOM's document element - `<html>`. Every traversal starts here.

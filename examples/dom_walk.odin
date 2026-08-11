@@ -1064,3 +1064,1381 @@ test_element_uid_is_readable_but_not_resolvable :: proc(t: ^testing.T) {
 	_, missing := sciter_app.element_by_uid(window, 0xFFFF_FFF0)
 	testing.expect(t, missing != nil)
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Attributes, style, and elements as Values
+//
+// The three that cross a boundary the rest of this file stays inside: enumerating what is written on an
+// element rather than asking for a name you already knew, reaching the style store rather than the
+// attribute store, and putting an element into a Value so script can be handed it.
+
+@(test)
+test_attributes_enumerate_in_markup_order :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#tasks li")
+
+	n, nerr := sciter_app.attribute_count(first)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, n, 2)
+
+	attrs, err := sciter_app.attributes(first, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.delete_attributes(attrs, context.temp_allocator)
+	testing.expect_value(t, len(attrs), 2)
+
+	// Markup order, not alphabetical and not the order the engine happens to store them in.
+	testing.expect_value(t, attrs[0].name, "class")
+	testing.expect_value(t, attrs[0].value, "done")
+	testing.expect_value(t, attrs[1].name, "data-id")
+	testing.expect_value(t, attrs[1].value, "1")
+
+	// Whatever the enumeration says, the by-name lookup must agree with it.
+	for a in attrs {
+		by_name, aerr := sciter_app.attribute(first, a.name, context.temp_allocator)
+		testing.expect_value(t, aerr, nil)
+		testing.expect_value(t, by_name, a.value)
+	}
+
+	// One past the end is an error rather than an empty attribute, which is the difference between
+	// "there is nothing there" and "you asked wrongly".
+	_, oob := sciter_app.attribute_at(first, n, context.temp_allocator)
+	testing.expect_value(t, oob, sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER))
+}
+
+@(test)
+test_attributes_track_writes :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	before, _ := sciter_app.attribute_count(summary)
+	testing.expect_value(t, before, 1) // id="summary"
+
+	testing.expect_value(t, sciter_app.set_attribute(summary, "data-added", "yes"), nil)
+	after, _ := sciter_app.attribute_count(summary)
+	testing.expect_value(t, after, 2)
+
+	// `set_attribute(el, name, "")` removes, so the count goes back down rather than gaining an
+	// empty one.
+	testing.expect_value(t, sciter_app.set_attribute(summary, "data-added", ""), nil)
+	removed, _ := sciter_app.attribute_count(summary)
+	testing.expect_value(t, removed, before)
+
+	// An element with nothing on it reports no attributes and an empty slice, not a failure.
+	bare, berr := sciter_app.make_element("span", "bare")
+	testing.expect_value(t, berr, nil)
+	defer sciter_app.unuse_element(bare)
+
+	none, cerr := sciter_app.attribute_count(bare)
+	testing.expect_value(t, cerr, nil)
+	testing.expect_value(t, none, 0)
+
+	empty, eerr := sciter_app.attributes(bare, context.temp_allocator)
+	testing.expect_value(t, eerr, nil)
+	testing.expect_value(t, len(empty), 0)
+}
+
+@(test)
+test_clear_attributes_takes_the_styling_with_it :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#tasks li")
+
+	// `.done` is what colours it, and `class` is what matches that rule.
+	coloured, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, coloured, "#A6E3A1")
+
+	testing.expect_value(t, sciter_app.clear_attributes(first), nil)
+
+	n, err := sciter_app.attribute_count(first)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, n, 0)
+
+	gone, _ := sciter_app.attribute(first, "class", context.temp_allocator)
+	testing.expect_value(t, gone, "")
+
+	// The element is still there and still an `li`; it is the cascade that changed.
+	tag, terr := sciter_app.tag(first)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, tag, "li")
+
+	// ...but the *style* is still the old one, because the cascade has not been re-run. Reading style
+	// reads a stored answer, and clearing attributes does not by itself invalidate it.
+	stale, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, stale, coloured)
+
+	// Forcing the update is what re-resolves it - down to what `html` gives every element, since
+	// nothing matches this `li` any more. There is no wrapper for it; the raw table is the way, and
+	// mixing the two is expected.
+	sciter.api().SciterUpdateElement(sciter.Helement(first), true)
+	restyled, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, restyled, "#CDD6F4")
+
+	// Writing an attribute, on the other hand, re-runs the cascade on its own.
+	testing.expect_value(t, sciter_app.set_attribute(first, "class", "todo"), nil)
+	rematched, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, rematched, "#F9E2AF")
+}
+
+@(test)
+test_style_reads_the_used_value :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#tasks li")
+
+	// Nothing is inline here: this comes from `.done { color: #a6e3a1; }` in the stylesheet, resolved
+	// and upper-cased by the engine. Reading style is reading the cascade's answer, not the markup.
+	from_sheet, err := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, from_sheet, "#A6E3A1")
+
+	// A property nothing set, and a property that does not exist, read the same: "".
+	unset, uerr := sciter_app.style(first, "width", context.temp_allocator)
+	testing.expect_value(t, uerr, nil)
+	testing.expect_value(t, unset, "")
+
+	nonsense, nerr := sciter_app.style(first, "no-such-property", context.temp_allocator)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, nonsense, "")
+}
+
+@(test)
+test_set_style_overrides_and_reverts :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#tasks li")
+
+	testing.expect_value(t, sciter_app.set_style(first, "color", "blue"), nil)
+
+	// Inline beats the stylesheet, and comes back as it was written rather than resolved - the
+	// resolution above was the stylesheet's, not the reader's.
+	inline, err := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, inline, "blue")
+
+	// The style store and the `style` *attribute* are two different places. Writing one does not
+	// show up in the other, which is the trap this test exists to pin.
+	attr, aerr := sciter_app.attribute(first, "style", context.temp_allocator)
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, attr, "")
+
+	// "" removes the inline property, and the cascade's answer comes back.
+	testing.expect_value(t, sciter_app.set_style(first, "color", ""), nil)
+	reverted, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, reverted, "#A6E3A1")
+
+	// An unknown property is accepted and ignored - the engine has no way to say "no such rule".
+	testing.expect_value(t, sciter_app.set_style(first, "no-such-property", "1"), nil)
+}
+
+@(test)
+test_element_value_round_trip :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	v, err := sciter_app.element_to_value(summary)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&v)
+
+	// A wrapped element is a RESOURCE, and renders as nothing - so this is one of the few Values that
+	// `value_to_display_string` cannot be used to look at.
+	type, _ := sciter_app.value_type(&v)
+	testing.expect_value(t, type, sciter.Value_Type.RESOURCE)
+
+	back, berr := sciter_app.element_from_value(&v)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, back, summary)
+
+	// A Value holding anything else is a failure rather than a null handle.
+	n := sciter_app.value_from(i32(3))
+	defer sciter_app.value_clear(&n)
+	_, wrong := sciter_app.element_from_value(&n)
+	testing.expect_value(t, wrong, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+}
+
+// The Value's reference is its own: the element outlives the caller's `use_element` reference for as
+// long as a Value wraps it. Made rather than found, because a found element is kept alive by its
+// document and would prove nothing.
+@(test)
+test_element_value_holds_a_reference :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	made, merr := sciter_app.make_element("p", "made")
+	testing.expect_value(t, merr, nil)
+
+	v, err := sciter_app.element_to_value(made)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&v)
+
+	// The only reference the caller had, given back. The handle is dead from here - touching it is a
+	// use-after-free, not an error code - so everything below goes through the Value.
+	testing.expect_value(t, sciter_app.unuse_element(made), nil)
+
+	// Churn the engine's allocator, so a surviving element is a surviving element rather than memory
+	// that has not been reused yet.
+	for _ in 0 ..< 500 {
+		junk, _ := sciter_app.make_element("span", "junk junk junk junk junk")
+		sciter_app.unuse_element(junk)
+	}
+
+	alive, aerr := sciter_app.element_from_value(&v)
+	testing.expect_value(t, aerr, nil)
+
+	tag, terr := sciter_app.tag(alive)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, tag, "p")
+}
+
+// Both directions across the script boundary: script hands Odin an element as an argument, and Odin
+// hands one back as a return value. This is what `element_to_value` is for - without it neither
+// signature can mention an element at all.
+@(private = "file")
+Boundary_State :: struct {
+	root:     sciter_app.Element,
+	seen_tag: string,
+	seen_id:  string,
+}
+
+@(private = "file")
+took_an_element :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	state := (^Boundary_State)(user_data)
+	if len(args) != 1 {
+		return sciter_app.value_from(false)
+	}
+
+	el, err := sciter_app.element_from_value(&args[0])
+	if err != nil {
+		return sciter_app.value_from(false)
+	}
+	state.seen_tag, _ = sciter_app.tag(el)
+	state.seen_id, _ = sciter_app.attribute(el, "id", context.temp_allocator)
+	return sciter_app.value_from(true)
+}
+
+@(private = "file")
+returns_an_element :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	state := (^Boundary_State)(user_data)
+	el, err := sciter_app.select_first(state.root, "#tasks")
+	if err != nil {
+		return sciter_app.value_from(false)
+	}
+	// The engine takes ownership of the returned Value's reference, so this one is not cleared here.
+	v, verr := sciter_app.element_to_value(el)
+	if verr != nil {
+		return sciter_app.value_from(false)
+	}
+	return v
+}
+
+@(test)
+test_elements_cross_the_script_boundary :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	state := Boundary_State {
+		root = root,
+	}
+
+	// Globals belong to the document, so publishing has to happen after the load `test_window` did.
+	// The engine releases a functor when the document that holds it goes away - which is the *next*
+	// test's reload, long after this test's tracking allocator has finished counting. Allocating them
+	// outside it is what keeps that from reading as a leak here and a bad free there.
+	took := sciter_app.value_from_function(took_an_element, &state, runtime.default_allocator())
+	defer sciter_app.value_clear(&took)
+	testing.expect_value(t, sciter_app.set_global(window, "odin_took", &took), nil)
+
+	gave := sciter_app.value_from_function(returns_an_element, &state, runtime.default_allocator())
+	defer sciter_app.value_clear(&gave)
+	testing.expect_value(t, sciter_app.set_global(window, "odin_gave", &gave), nil)
+
+	// In: script's element arrives as an argument and unwraps to the handle it stands for.
+	taken, terr := sciter_app.eval(window, `odin_took(document.$("#summary"))`)
+	testing.expect_value(t, terr, nil)
+	defer sciter_app.value_clear(&taken)
+
+	got, _ := sciter_app.value_to_bool(&taken)
+	testing.expect(t, got, "the argument must unwrap to an element")
+	testing.expect_value(t, state.seen_tag, "div")
+	testing.expect_value(t, state.seen_id, "summary")
+
+	// Out: what Odin returned is a real Element to script, not an opaque handle.
+	answer, aerr := sciter_app.eval(
+		window,
+		`(function(){ var el = odin_gave(); return [el instanceof Element, el.tag, el.id].join("|"); })()`,
+	)
+	testing.expect_value(t, aerr, nil)
+	defer sciter_app.value_clear(&answer)
+
+	described, _ := sciter_app.value_to_string(&answer, context.temp_allocator)
+	testing.expect_value(t, described, "true|ul|tasks")
+}
+
+@(test)
+test_node_value_round_trip :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#tasks li")
+
+	li, _ := sciter_app.node_from_element(first)
+	text, terr := sciter_app.node_first_child(li)
+	testing.expect_value(t, terr, nil)
+
+	type, _ := sciter_app.node_type(text)
+	testing.expect_value(t, type, sciter.Node_Type.TEXT)
+
+	v, err := sciter_app.node_to_value(text)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&v)
+
+	back, berr := sciter_app.node_from_value(&v)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, back, text)
+
+	// A text node is not an element, and unwrapping it as one fails rather than answering nil.
+	_, not_an_element := sciter_app.element_from_value(&v)
+	testing.expect_value(t, not_an_element, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+
+	// The other asymmetry: an element *is* a node, so an element's Value unwraps both ways.
+	ev, everr := sciter_app.element_to_value(first)
+	testing.expect_value(t, everr, nil)
+	defer sciter_app.value_clear(&ev)
+
+	as_node, nerr := sciter_app.node_from_value(&ev)
+	testing.expect_value(t, nerr, nil)
+
+	as_element, aerr := sciter_app.node_to_element(as_node)
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, as_element, first)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Ancestors, indexes, redrawing and globals
+
+@(test)
+test_select_parent_is_closest :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	item, _ := sciter_app.select_first(root, "#tasks li")
+
+	list, err := sciter_app.select_parent(item, "ul")
+	testing.expect_value(t, err, nil)
+	tasks, _ := sciter_app.select_first(root, "#tasks")
+	testing.expect_value(t, list, tasks)
+
+	// Any selector, not just a tag.
+	by_id, ierr := sciter_app.select_parent(item, "#tasks")
+	testing.expect_value(t, ierr, nil)
+	testing.expect_value(t, by_id, tasks)
+
+	// The element counts as its own first candidate - this is `closest`, not `parent`.
+	self, serr := sciter_app.select_parent(item, "li")
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, self, item)
+
+	// `depth` counts from the element itself: 1 looks only at it, 2 adds the parent.
+	_, too_shallow := sciter_app.select_parent(item, "ul", 1)
+	testing.expect_value(t, too_shallow, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	at_two, derr := sciter_app.select_parent(item, "ul", 2)
+	testing.expect_value(t, derr, nil)
+	testing.expect_value(t, at_two, tasks)
+
+	// The default, 0, is unlimited - `body` is three levels up from the item.
+	body, berr := sciter_app.select_parent(item, "body")
+	testing.expect_value(t, berr, nil)
+	testing.expect(t, body != nil)
+
+	_, missing := sciter_app.select_parent(item, "table")
+	testing.expect_value(t, missing, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	// Pinned because it is surprising and silent: <html> is an ancestor of everything and matches
+	// nothing here, at any depth. `root` is how to reach it.
+	_, no_html := sciter_app.select_parent(item, "html", 0)
+	testing.expect_value(t, no_html, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+}
+
+@(test)
+test_element_index_counts_elements_only :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	items, _ := sciter_app.select_all(root, "#tasks li", context.temp_allocator)
+	defer delete(items, context.temp_allocator)
+	testing.expect_value(t, len(items), 4)
+
+	for item, i in items {
+		index, err := sciter_app.element_index(item)
+		testing.expect_value(t, err, nil)
+		testing.expect_value(t, index, i)
+	}
+
+	// A text node in front of them does not shift the numbering, which is what makes the index safe
+	// to hand back to `child` and `insert_element`.
+	tasks, _ := sciter_app.select_first(root, "#tasks")
+	list_node, _ := sciter_app.node_from_element(tasks)
+	text, terr := sciter_app.make_text_node("loose text")
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, sciter_app.node_insert(list_node, .PREPEND, text), nil)
+
+	after, aerr := sciter_app.element_index(items[0])
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, after, 0)
+
+	// Inserting an element does shift it.
+	extra, _ := sciter_app.make_element("li", "first")
+	defer sciter_app.unuse_element(extra)
+	testing.expect_value(t, sciter_app.insert_element(extra, tasks, 0), nil)
+
+	moved, _ := sciter_app.element_index(items[0])
+	testing.expect_value(t, moved, 1)
+	testing.expect_value(t, sciter_app.element_index(extra) or_else -1, 0)
+}
+
+@(test)
+test_redraw_calls_reach_the_engine :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+
+	testing.expect_value(t, sciter_app.update_element(summary), nil)
+	testing.expect_value(t, sciter_app.update_element(summary, render = true), nil)
+	testing.expect_value(t, sciter_app.request_paint(summary), nil)
+
+	// The area is in the element's own coordinates, so this is its whole box.
+	box, berr := sciter_app.location(summary, .Border, .Self)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, sciter_app.refresh_element_area(summary, box), nil)
+
+	// A degenerate rectangle is not an error either - nothing to repaint is not a failure.
+	testing.expect_value(t, sciter_app.refresh_element_area(summary, {}), nil)
+
+	// The behaviour that makes `update_element` worth having rather than the engine doing it: it is
+	// what re-resolves style the cascade has not been re-run for.
+	first, _ := sciter_app.select_first(root, "#tasks li")
+	before, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect_value(t, sciter_app.clear_attributes(first), nil)
+	testing.expect_value(t, sciter_app.style(first, "color", context.temp_allocator) or_else "", before)
+
+	testing.expect_value(t, sciter_app.update_element(first, render = true), nil)
+	restyled, _ := sciter_app.style(first, "color", context.temp_allocator)
+	testing.expect(t, restyled != before, "the update must re-run the cascade")
+
+	sciter_app.update_window(window)
+}
+
+@(test)
+test_globals_round_trip :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	published := sciter_app.value_from(i32(42))
+	defer sciter_app.value_clear(&published)
+	testing.expect_value(t, sciter_app.set_global(window, "odin_answer", &published), nil)
+
+	// Out again through the API...
+	back, err := sciter_app.global(window, "odin_answer")
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&back)
+	n, _ := sciter_app.value_to_int(&back)
+	testing.expect_value(t, n, i32(42))
+
+	// ...and visible to script as a real global, which is the point of publishing one.
+	seen, serr := sciter_app.eval(window, "typeof odin_answer + ':' + globalThis.odin_answer")
+	testing.expect_value(t, serr, nil)
+	defer sciter_app.value_clear(&seen)
+	described, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
+	testing.expect_value(t, described, "number:42")
+
+	// A name nobody published is undefined rather than an error - the same answer script gives.
+	missing, merr := sciter_app.global(window, "odin_nothing_here")
+	testing.expect_value(t, merr, nil)
+	defer sciter_app.value_clear(&missing)
+	testing.expect(t, sciter_app.value_is_undefined(&missing))
+
+	// Script's own globals come back the same way.
+	defined, derr := sciter_app.eval(window, "globalThis.from_script = 'yes'")
+	testing.expect_value(t, derr, nil)
+	sciter_app.value_clear(&defined)
+
+	from_script, ferr := sciter_app.global(window, "from_script")
+	testing.expect_value(t, ferr, nil)
+	defer sciter_app.value_clear(&from_script)
+	s, _ := sciter_app.value_to_string(&from_script, context.temp_allocator)
+	testing.expect_value(t, s, "yes")
+
+	// Globals belong to the document, so a reload takes them with it. This is the mistake the guide
+	// warns about, pinned.
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+	gone, gerr := sciter_app.global(window, "odin_answer")
+	testing.expect_value(t, gerr, nil)
+	defer sciter_app.value_clear(&gone)
+	testing.expect(t, sciter_app.value_is_undefined(&gone), "a reload clears the document's globals")
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Media queries and the master stylesheet
+//
+// These need a window of their own. The media *type* can only be set once per window (see
+// `set_media_type`), and the master stylesheet is the whole engine's, so a test that used the shared
+// window above would leave every test after it looking at a different document than it wrote.
+
+@(private = "file")
+STYLED :: `<html><head><style>
+  #target  { color: #222222; }
+  @media screen { #target { color: #00FF00; } }
+  @media print  { #target { color: #FF0000; } }
+  @media dark   { #target { background-color: #000001; } }
+  @media compact{ #target { padding-top: 5px; } }
+</style></head><body><p id="target">styled</p></body></html>`
+
+// A second window, made fresh for each of these tests. `create_window` is not cheap, but a window that
+// has already had its media type set is no use to the next test.
+@(private = "file")
+styled_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, target: sciter_app.Element, ok: bool) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return nil, nil, false
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	// The engine keeps the window for the life of the process, so it is not the test's to account for.
+	context.allocator = runtime.default_allocator()
+
+	sciter_app.init()
+	w, err := sciter_app.create_window({width = 300, height = 200})
+	testing.expect_value(t, err, nil)
+	if w == nil {
+		return nil, nil, false
+	}
+	return w, nil, true
+}
+
+@(private = "file")
+styled_target :: proc(window: sciter_app.Window) -> sciter_app.Element {
+	root, _ := sciter_app.root(window)
+	el, _ := sciter_app.select_first(root, "#target")
+	return el
+}
+
+@(private = "file")
+styled_color :: proc(window: sciter_app.Window, property := "color") -> string {
+	s, _ := sciter_app.style(styled_target(window), property, context.temp_allocator)
+	return s
+}
+
+@(test)
+test_media_type_is_set_once :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+
+	// Set before the document is loaded, which is the only order that is reliable.
+	testing.expect_value(t, sciter_app.set_media_type(window, "print"), nil)
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window), "#FF0000")
+
+	// The second call reports success and changes nothing. This is the engine's behaviour, not this
+	// package's: pinned so that a future engine fixing it fails here rather than silently.
+	testing.expect_value(t, sciter_app.set_media_type(window, "screen"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#FF0000")
+
+	// Not even a reload takes it back.
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window), "#FF0000")
+}
+
+@(test)
+test_media_type_defaults_to_screen :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window), "#00FF00")
+}
+
+// Media *variables* are flags rather than name/value pairs: every name set truthy becomes a query the
+// CSS can match by bare name. `@media (name: "value")` looks like the obvious spelling and matches
+// unconditionally instead, so the flag model is what this pins.
+@(private = "file")
+set_flags :: proc(window: sciter_app.Window, names: []string, on := true) -> sciter_app.Error {
+	vars: sciter_app.Value
+	defer sciter_app.value_clear(&vars)
+
+	for name in names {
+		v := sciter_app.value_from(on)
+		defer sciter_app.value_clear(&v)
+		sciter_app.value_set(&vars, name, &v)
+	}
+	return sciter_app.set_media_vars(window, &vars)
+}
+
+@(test)
+test_media_vars_are_flags :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	// `screen` is on by default; nothing else is.
+	testing.expect_value(t, styled_color(window), "#00FF00")
+	testing.expect_value(t, styled_color(window, "background-color"), "")
+
+	testing.expect_value(t, set_flags(window, {"dark"}), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "background-color"), "#000001")
+
+	// Setting another flag merges rather than replaces: `dark` is still on, and so is the default
+	// `screen`. There is no way to hand over the whole set at once.
+	testing.expect_value(t, set_flags(window, {"compact"}), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "background-color"), "#000001")
+	testing.expect_value(t, styled_color(window, "padding-top"), "5px")
+	testing.expect_value(t, styled_color(window), "#00FF00")
+
+	// Off is a name set false, not a name left out.
+	testing.expect_value(t, set_flags(window, {"dark"}, on = false), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "background-color"), "")
+	testing.expect_value(t, styled_color(window, "padding-top"), "5px")
+
+	// The flags survive a reload, where the document's globals do not.
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window, "padding-top"), "5px")
+
+	// An empty map is accepted and changes nothing.
+	empty: sciter_app.Value
+	defer sciter_app.value_clear(&empty)
+	testing.expect_value(t, sciter_app.set_media_vars(window, &empty), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "padding-top"), "5px")
+}
+
+@(test)
+test_master_css_replaces_and_appends :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	// Nothing else in this file asserts letter-spacing or text-indent, which is what makes them safe
+	// to use here: the master stylesheet is the whole engine's, for the rest of the process.
+	testing.expect_value(t, styled_color(window, "letter-spacing"), "")
+
+	testing.expect_value(t, sciter_app.set_master_css("p { letter-spacing: 3px; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "letter-spacing"), "2.25pt")
+
+	testing.expect_value(t, sciter_app.append_master_css("p { text-indent: 7px; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window, "letter-spacing"), "2.25pt")
+	testing.expect_value(t, styled_color(window, "text-indent"), "7px")
+
+	// Both survive a reload - the sheet belongs to the engine, not to the document.
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window, "letter-spacing"), "2.25pt")
+
+	// `set_master_css` replaces rather than adds, so this drops both of the above. It is also how the
+	// test puts the engine back: "" is refused, so a sheet that matches nothing is the way.
+	testing.expect_value(t, sciter_app.set_master_css("no-such-element {}"), nil)
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window, "letter-spacing"), "")
+	testing.expect_value(t, styled_color(window, "text-indent"), "")
+
+	testing.expect_value(
+		t,
+		sciter_app.set_master_css(""),
+		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
+	)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Popups and mouse capture
+//
+// Both are interaction machinery, and neither can be driven for real without a user - what is testable
+// is the state the engine puts the DOM in, and which handles it refuses. The popup half additionally
+// needs a *shown* window to complete, and these tests never show one (a shown window on X11 here
+// segfaults inside the engine's input-method handling), so what they pin is the half that does work
+// headless plus the boundary where it stops.
+
+@(private = "file")
+POPUP_DOC :: `<html><head><style>
+  #menu { position: absolute; width: 100px; height: 60px; }
+</style></head><body>
+  <button id="anchor">open</button>
+  <div id="menu"><p>one</p><p>two</p></div>
+  <div id="elsewhere">elsewhere</div>
+</body></html>`
+
+@(test)
+test_show_popup_puts_the_element_out_of_flow :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, POPUP_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	anchor, _ := sciter_app.select_first(root, "#anchor")
+	menu, _ := sciter_app.select_first(root, "#menu")
+
+	before, berr := sciter_app.element_state(menu)
+	testing.expect_value(t, berr, nil)
+	testing.expect(t, .POPUP not_in before)
+
+	in_flow, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect_value(t, sciter_app.show_popup(menu, anchor, .Bottom), nil)
+
+	// The state bit is the engine's own record that the element is being shown out of flow.
+	shown, serr := sciter_app.element_state(menu)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, .POPUP in shown, "showing a popup marks the element :popup")
+
+	// And it is placed against the anchor rather than left where the document put it.
+	placed, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect(t, placed != in_flow, "the popup must move to its anchor")
+
+	// The element has not moved in the *tree*, which is what makes a popup an ordinary part of the
+	// document the rest of the time.
+	still_there, perr := sciter_app.parent(menu)
+	testing.expect_value(t, perr, nil)
+	body, _ := sciter_app.select_first(root, "body")
+	testing.expect_value(t, still_there, body)
+
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+}
+
+@(test)
+test_show_popup_at_and_placement :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, POPUP_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	anchor, _ := sciter_app.select_first(root, "#anchor")
+	menu, _ := sciter_app.select_first(root, "#menu")
+
+	testing.expect_value(t, sciter_app.show_popup_at(menu, {50, 60}, .Top_Left), nil)
+	state, _ := sciter_app.element_state(menu)
+	testing.expect(t, .POPUP in state)
+
+	at_point, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+
+	// A different point is a different place - the position argument is honoured rather than ignored.
+	testing.expect_value(t, sciter_app.show_popup_at(menu, {200, 180}, .Top_Left), nil)
+	elsewhere, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect(t, elsewhere.x > at_point.x && elsewhere.y > at_point.y)
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+
+	// Placement against an anchor: below and above are not the same place, and every keypad value is
+	// accepted.
+	testing.expect_value(t, sciter_app.show_popup(menu, anchor, .Bottom), nil)
+	below, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+
+	testing.expect_value(t, sciter_app.show_popup(menu, anchor, .Top), nil)
+	above, _ := sciter_app.location(menu, .Border, .Root)
+	testing.expect(t, above.y < below.y, "`.Top` must place it higher than `.Bottom`")
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+
+	for placement in ([]sciter_app.Popup_Placement {
+			.Bottom_Left,
+			.Bottom,
+			.Bottom_Right,
+			.Left,
+			.Center,
+			.Right,
+			.Top_Left,
+			.Top,
+			.Top_Right,
+		}) {
+		testing.expect_value(t, sciter_app.show_popup(menu, anchor, placement), nil)
+		testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+	}
+}
+
+@(test)
+test_popup_refuses_a_detached_element :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, POPUP_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	anchor, _ := sciter_app.select_first(root, "#anchor")
+
+	// A popup is shown by the window the element is in, so an element in no document has no window to
+	// be shown by. The code says `PASSIVE_HANDLE` rather than anything about popups.
+	detached, derr := sciter_app.make_element("div", "detached")
+	testing.expect_value(t, derr, nil)
+	defer sciter_app.unuse_element(detached)
+
+	testing.expect_value(
+		t,
+		sciter_app.show_popup(detached, anchor, .Bottom),
+		sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE),
+	)
+
+	// Hiding one that was never shown is not an error.
+	menu, _ := sciter_app.select_first(root, "#menu")
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+}
+
+// Pinned because it is the boundary, not the behaviour: on a window that has never been shown the
+// engine takes the call and half-does it. If a future engine completes the job here, this test fails
+// and the caveat in `show_popup`'s comment can go.
+@(test)
+test_popup_state_needs_a_shown_window :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, POPUP_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	anchor, _ := sciter_app.select_first(root, "#anchor")
+	menu, _ := sciter_app.select_first(root, "#menu")
+
+	testing.expect_value(t, sciter_app.show_popup(menu, anchor, .Bottom), nil)
+
+	// On a shown window the anchor gains `:owns-popup` here. It does not on this one.
+	anchor_state, _ := sciter_app.element_state(anchor)
+	testing.expect(t, .OWNS_POPUP not_in anchor_state, "a never-shown window does not mark the anchor")
+
+	// And the popup keeps `:popup` after being hidden, where a shown window clears it.
+	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
+	sciter_app.update_element(menu, render = true)
+
+	after, _ := sciter_app.element_state(menu)
+	testing.expect(t, .POPUP in after, "a never-shown window does not clear :popup on hide")
+
+	// `hide_popup` takes the popup, not the anchor. The anchor is a no-op the engine reports as
+	// OK_NOT_HANDLED - which `dom_err` treats as success, so this reads as nil rather than an error.
+	testing.expect_value(t, sciter_app.hide_popup(anchor), nil)
+}
+
+@(test)
+test_capture_accepts_document_elements_only :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	summary, _ := sciter_app.select_first(root, "#summary")
+	tasks, _ := sciter_app.select_first(root, "#tasks")
+
+	testing.expect_value(t, sciter_app.set_capture(summary), nil)
+
+	// Taking it twice, and taking it away from another element, both succeed - the capture moves
+	// rather than being contested.
+	testing.expect_value(t, sciter_app.set_capture(summary), nil)
+	testing.expect_value(t, sciter_app.set_capture(tasks), nil)
+
+	// Releasing from an element that no longer holds it is not an error either, which is what makes
+	// an unconditional release on the way out of a drag safe.
+	testing.expect_value(t, sciter_app.release_capture(summary), nil)
+	testing.expect_value(t, sciter_app.release_capture(tasks), nil)
+	testing.expect_value(t, sciter_app.release_capture(tasks), nil)
+
+	// The capture belongs to the window, so an element in no document cannot have it.
+	detached, derr := sciter_app.make_element("div", "detached")
+	testing.expect_value(t, derr, nil)
+	defer sciter_app.unuse_element(detached)
+
+	testing.expect_value(
+		t,
+		sciter_app.set_capture(detached),
+		sciter_app.Error(sciter.Scdom_Result.INVALID_HWND),
+	)
+	testing.expect_value(
+		t,
+		sciter_app.release_capture(detached),
+		sciter_app.Error(sciter.Scdom_Result.INVALID_HWND),
+	)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Focus, highlight, and named events
+
+@(private = "file")
+FOCUS_DOC :: `<html><body>
+  <button id="first">first</button>
+  <input id="second" type="text" />
+  <div id="box"><p id="inner">inner</p></div>
+</body></html>`
+
+@(test)
+test_focus_follows_the_state :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	first, _ := sciter_app.select_first(root, "#first")
+	second, _ := sciter_app.select_first(root, "#second")
+
+	// Nothing has the focus until something takes it.
+	_, none := sciter_app.focus_element(window)
+	testing.expect_value(t, none, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	testing.expect_value(t, sciter_app.set_focus(first), nil)
+	focused, err := sciter_app.focus_element(window)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, focused, first)
+
+	state, _ := sciter_app.element_state(first)
+	testing.expect(t, .FOCUS in state, ":focus is what the focus *is*")
+
+	// Focusing another element moves it, and takes the state off the first.
+	testing.expect_value(t, sciter_app.set_focus(second), nil)
+	moved, merr := sciter_app.focus_element(window)
+	testing.expect_value(t, merr, nil)
+	testing.expect_value(t, moved, second)
+
+	was, _ := sciter_app.element_state(first)
+	testing.expect(t, .FOCUS not_in was)
+
+	// Clearing the state does *not* leave the window unfocused - it only stops the element matching
+	// `:focus`. Pinned because it is the obvious way to try to clear the focus and it does not work.
+	testing.expect_value(t, sciter_app.set_element_state(second, {}, {.FOCUS}), nil)
+	cleared, cerr := sciter_app.element_state(second)
+	testing.expect_value(t, cerr, nil)
+	testing.expect(t, .FOCUS not_in cleared)
+
+	still, serr := sciter_app.focus_element(window)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, still, second)
+}
+
+@(test)
+test_highlight_round_trips :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	box, _ := sciter_app.select_first(root, "#box")
+
+	_, none := sciter_app.highlighted_element(window)
+	testing.expect_value(t, none, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	before, berr := sciter_app.element_state(box)
+	testing.expect_value(t, berr, nil)
+
+	testing.expect_value(t, sciter_app.set_highlighted_element(window, box), nil)
+	got, err := sciter_app.highlighted_element(window)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, got, box)
+
+	// It is an overlay, not a state: nothing about the element changes, so no CSS can match on it.
+	state, serr := sciter_app.element_state(box)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, state, before)
+
+	// A nil element clears it.
+	testing.expect_value(t, sciter_app.set_highlighted_element(window, nil), nil)
+	_, gone := sciter_app.highlighted_element(window)
+	testing.expect_value(t, gone, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+}
+
+// The handler these use records every `.CUSTOM` event it is given, which is what makes the delivery
+// rules - both phases, broadcast reaching only window handlers, posted events copying their payload -
+// observable at all.
+@(private = "file")
+Fired_Log :: struct {
+	handler: sciter_app.Event_Handler,
+	names:   [dynamic]string,
+	data:    [dynamic]string,
+	claim:   bool, // return true from the handler, so `fire_event` reports it handled
+}
+
+@(private = "file")
+record_custom :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	log := (^Fired_Log)(handler.user_data)
+
+	be, ok := sciter_app.behavior_event(event)
+	if !ok || be.code != .CUSTOM {
+		return false
+	}
+	append(&log.names, sciter_app.event_name(be, context.temp_allocator))
+
+	rendered, _ := sciter_app.value_to_display_string(be.data, .JSON_LITERAL, context.temp_allocator)
+	append(&log.data, rendered)
+	return log.claim
+}
+
+@(private = "file")
+new_log :: proc(claim := false) -> ^Fired_Log {
+	// The engine holds the handler's address for as long as it is attached, and these tests attach for
+	// the life of the window, so none of this belongs to the test's tracking allocator.
+	context.allocator = runtime.default_allocator()
+
+	log := new(Fired_Log)
+	log.names = make([dynamic]string)
+	log.data = make([dynamic]string)
+	log.claim = claim
+	log.handler = sciter_app.Event_Handler {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = record_custom,
+		user_data    = log,
+	}
+	return log
+}
+
+@(test)
+test_fire_event_carries_a_name_and_a_payload :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	inner, _ := sciter_app.select_first(root, "#inner")
+
+	log := new_log()
+	testing.expect_value(t, sciter_app.attach_handler(root, &log.handler), nil)
+	defer sciter_app.detach_handler(root, &log.handler)
+
+	payload := sciter_app.value_from("cargo")
+	defer sciter_app.value_clear(&payload)
+
+	handled, err := sciter_app.fire_event(
+		{code = .CUSTOM, name = "my-event", target = inner, source = inner, data = &payload},
+	)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled, "nothing claimed it")
+
+	// Down and back up, like every other event: two deliveries, not one.
+	testing.expect_value(t, len(log.names), 2)
+	testing.expect_value(t, log.names[0], "my-event")
+	testing.expect_value(t, log.names[1], "my-event")
+	testing.expect_value(t, log.data[0], `"cargo"`)
+
+	// The payload is borrowed, not consumed - it is still usable here.
+	still, serr := sciter_app.value_to_string(&payload, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, still, "cargo")
+}
+
+@(test)
+test_fire_event_reports_handled :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	inner, _ := sciter_app.select_first(root, "#inner")
+
+	log := new_log(claim = true)
+	testing.expect_value(t, sciter_app.attach_handler(root, &log.handler), nil)
+	defer sciter_app.detach_handler(root, &log.handler)
+
+	handled, err := sciter_app.fire_event({code = .CUSTOM, name = "claimed", target = inner})
+	testing.expect_value(t, err, nil)
+	testing.expect(t, handled, "a handler returning true is reported back to the sender")
+
+	// An application code needs no name, and is delivered the same way.
+	clear(&log.names)
+	app_handled, aerr := sciter_app.fire_event(
+		{code = sciter.Behavior_Events(u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 3), target = inner},
+	)
+	testing.expect_value(t, aerr, nil)
+	testing.expect(t, !app_handled, "the recorder only claims .CUSTOM")
+}
+
+@(test)
+test_fire_event_broadcast_reaches_window_handlers_only :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+
+	on_element := new_log()
+	testing.expect_value(t, sciter_app.attach_handler(root, &on_element.handler), nil)
+	defer sciter_app.detach_handler(root, &on_element.handler)
+
+	on_window := new_log()
+	testing.expect_value(t, sciter_app.attach_window_handler(window, &on_window.handler), nil)
+	defer sciter_app.detach_window_handler(window, &on_window.handler)
+
+	// A nil target broadcasts. It reaches the window handler and not the one on `root`, which is the
+	// whole reason to know the difference between the two attachments.
+	handled, err := sciter_app.fire_event({code = .CUSTOM, name = "everyone"})
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled)
+
+	testing.expect_value(t, len(on_window.names), 2)
+	testing.expect_value(t, on_window.names[0], "everyone")
+	testing.expect_value(t, len(on_element.names), 0)
+}
+
+@(test)
+test_posted_event_copies_its_payload :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, FOCUS_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	inner, _ := sciter_app.select_first(root, "#inner")
+
+	log := new_log()
+	testing.expect_value(t, sciter_app.attach_handler(root, &log.handler), nil)
+	defer sciter_app.detach_handler(root, &log.handler)
+
+	{
+		// Both the name and the payload go out of scope before the event is delivered. The engine
+		// copies them at the call, which is what makes `context.temp_allocator` safe for the name
+		// inside `fire_event`.
+		payload := sciter_app.value_from("copied")
+		name := strings.clone("later", context.temp_allocator)
+
+		handled, err := sciter_app.fire_event(
+			{code = .CUSTOM, name = name, target = inner, data = &payload},
+			post = true,
+		)
+		testing.expect_value(t, err, nil)
+		testing.expect(t, !handled, "a posted event has not been seen by anything yet")
+		testing.expect_value(t, len(log.names), 0)
+
+		sciter_app.value_clear(&payload)
+		free_all(context.temp_allocator)
+	}
+
+	for _ in 0 ..< 20 {
+		sciter_app.run_once()
+	}
+
+	testing.expect_value(t, len(log.names), 2)
+	testing.expect_value(t, log.names[0], "later")
+	testing.expect_value(t, log.data[0], `"copied"`)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// SOM: an Odin object script can see
+//
+// A native functor gives script a function; an asset gives it an object with properties and methods.
+// These need a window of their own because a global asset only appears in the *next* document loaded,
+// so the shared window - already carrying a document - would never see it.
+
+@(private = "file")
+SOM_DOC :: `<html><body><button id="b">b</button><input id="e" type="text"/></body></html>`
+
+@(private = "file")
+Backend :: struct {
+	count:  i32,
+	reloads: int,
+}
+
+@(private = "file")
+get_count :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	backend := (^Backend)(asset.user_data)
+	return sciter_app.value_from(backend.count), true
+}
+
+@(private = "file")
+set_count :: proc(asset: ^sciter_app.Asset, value: ^sciter_app.Value) -> bool {
+	backend := (^Backend)(asset.user_data)
+	n, err := sciter_app.value_to_int(value)
+	if err != nil {
+		return false
+	}
+	backend.count = n
+	return true
+}
+
+@(private = "file")
+get_version :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	return sciter_app.value_from("6.0.4.9"), true
+}
+
+@(private = "file")
+reload :: proc(asset: ^sciter_app.Asset, args: []sciter_app.Value) -> (sciter_app.Value, bool) {
+	backend := (^Backend)(asset.user_data)
+	backend.reloads += 1
+
+	sum := backend.count
+	for &arg in args {
+		n, _ := sciter_app.value_to_int(&arg)
+		sum += n
+	}
+	return sciter_app.value_from(sum), true
+}
+
+// The class, the asset and the state all outlive the test - the engine holds the asset's address for
+// as long as any document can reach it - so none of them belong to the test's tracking allocator.
+@(private = "file")
+backend_asset :: proc(t: ^testing.T) -> (^sciter_app.Asset, ^Backend) {
+	context.allocator = runtime.default_allocator()
+
+	state := new(Backend)
+	class, err := sciter_app.make_asset_class(
+		"Backend",
+		{{name = "count", get = get_count, set = set_count}, {name = "version", get = get_version}},
+		{{name = "reload", params = 1, call = reload}},
+	)
+	testing.expect_value(t, err, nil)
+	return sciter_app.make_asset(class, state), state
+}
+
+@(test)
+test_global_asset_is_an_object_in_script :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+
+	asset, state := backend_asset(t)
+	state.count = 5
+
+	// The document loaded *before* publishing does not see it, which is the trap this pins.
+	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
+	testing.expect_value(t, sciter_app.set_global_asset(asset), nil)
+
+	before, berr := sciter_app.eval(window, "typeof Backend")
+	testing.expect_value(t, berr, nil)
+	defer sciter_app.value_clear(&before)
+	kind, _ := sciter_app.value_to_string(&before, context.temp_allocator)
+	testing.expect_value(t, kind, "undefined")
+
+	// The next load is where it appears.
+	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
+
+	described, derr := sciter_app.eval(window, "[typeof Backend, String(Backend)].join('/')")
+	testing.expect_value(t, derr, nil)
+	defer sciter_app.value_clear(&described)
+	text, _ := sciter_app.value_to_string(&described, context.temp_allocator)
+	testing.expect_value(t, text, "object/[asset Backend]")
+
+	// A property read reaches the getter...
+	read, rerr := sciter_app.eval(window, "Backend.count")
+	testing.expect_value(t, rerr, nil)
+	defer sciter_app.value_clear(&read)
+	n, _ := sciter_app.value_to_int(&read)
+	testing.expect_value(t, n, i32(5))
+
+	// ...and a write reaches the setter, which is what makes this an object rather than a snapshot.
+	written, werr := sciter_app.eval(window, "(Backend.count = 42, Backend.count)")
+	testing.expect_value(t, werr, nil)
+	defer sciter_app.value_clear(&written)
+	back, _ := sciter_app.value_to_int(&written)
+	testing.expect_value(t, back, i32(42))
+	testing.expect_value(t, state.count, i32(42))
+
+	// A method, with its arguments.
+	called, cerr := sciter_app.eval(window, "Backend.reload(8)")
+	testing.expect_value(t, cerr, nil)
+	defer sciter_app.value_clear(&called)
+	total, _ := sciter_app.value_to_int(&called)
+	testing.expect_value(t, total, i32(50))
+	testing.expect_value(t, state.reloads, 1)
+
+	// A property with no setter is read-only, and the assignment throws rather than being dropped.
+	version, verr := sciter_app.eval(window, "Backend.version")
+	testing.expect_value(t, verr, nil)
+	defer sciter_app.value_clear(&version)
+	v, _ := sciter_app.value_to_string(&version, context.temp_allocator)
+	testing.expect_value(t, v, "6.0.4.9")
+
+	refused, assigned := sciter_app.eval(window, "Backend.version = 'nope'")
+	testing.expect_value(t, assigned, nil)
+	defer sciter_app.value_clear(&refused)
+
+	// The refusal comes back as a Value rather than as an error from `eval`: an error *string*, which
+	// is exactly what `value_is_error` is for.
+	testing.expect(t, sciter_app.value_is_error(&refused), "assigning to a read-only property throws")
+	message, _ := sciter_app.value_to_string(&refused, context.temp_allocator)
+	testing.expect(t, strings.contains(message, "setting property"), message)
+
+	// And the value is unchanged.
+	still, serr := sciter_app.eval(window, "Backend.version")
+	testing.expect_value(t, serr, nil)
+	defer sciter_app.value_clear(&still)
+	unchanged, _ := sciter_app.value_to_string(&still, context.temp_allocator)
+	testing.expect_value(t, unchanged, "6.0.4.9")
+
+	// SOM members are not enumerable: script has to know the names.
+	keys, kerr := sciter_app.eval(window, "Object.keys(Backend).length")
+	testing.expect_value(t, kerr, nil)
+	defer sciter_app.value_clear(&keys)
+	count, _ := sciter_app.value_to_int(&keys)
+	testing.expect_value(t, count, i32(0))
+
+	// Withdrawing it works on the same schedule: the loaded document keeps it, the next one does not.
+	testing.expect_value(t, sciter_app.release_global_asset(asset), nil)
+	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
+
+	after, aerr := sciter_app.eval(window, "typeof Backend")
+	testing.expect_value(t, aerr, nil)
+	defer sciter_app.value_clear(&after)
+	gone, _ := sciter_app.value_to_string(&after, context.temp_allocator)
+	testing.expect_value(t, gone, "undefined")
+}
+
+@(test)
+test_asset_class_refuses_too_many_members :: proc(t: ^testing.T) {
+	if !sciter_app.load_engine() {return}
+
+	// One thunk per member index exists, and there are `MAX_ASSET_MEMBERS` of them - so the limit is
+	// reported rather than run past.
+	too_many := make([]sciter_app.Asset_Property, sciter_app.MAX_ASSET_MEMBERS + 1, context.temp_allocator)
+	for &property, i in too_many {
+		property = {
+			name = fmt.tprintf("p%d", i),
+			get  = get_version,
+		}
+	}
+
+	_, err := sciter_app.make_asset_class("TooBig", too_many, nil, context.temp_allocator)
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Wrong_Type))
+
+	// The limit itself is fine.
+	class, ok := sciter_app.make_asset_class(
+		"JustFits",
+		too_many[:sciter_app.MAX_ASSET_MEMBERS],
+		nil,
+		context.temp_allocator,
+	)
+	testing.expect_value(t, ok, nil)
+	defer sciter_app.destroy_asset_class(class)
+	testing.expect_value(t, len(class.properties), sciter_app.MAX_ASSET_MEMBERS)
+}
+
+@(test)
+test_element_asset_finds_a_behavior :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
+
+	root, _ := sciter_app.root(window)
+	edit, _ := sciter_app.select_first(root, "#e")
+	button, _ := sciter_app.select_first(root, "#b")
+
+	// `<input type=text>` carries the `edit` behavior, and the behavior publishes an asset under that
+	// name. This is what atoms are the currency of.
+	asset, err := sciter_app.element_asset(edit, "edit")
+	testing.expect_value(t, err, nil)
+	testing.expect(t, asset != nil)
+	testing.expect(t, asset.isa != nil, "an asset carries its class")
+
+	// Anything else is `.OPERATION_FAILED` - including a real element with a different behavior, and
+	// a name no behavior has.
+	_, wrong_behavior := sciter_app.element_asset(button, "edit")
+	testing.expect_value(t, wrong_behavior, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+
+	_, no_such := sciter_app.element_asset(edit, "no-such-behavior")
+	testing.expect_value(t, no_such, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+}

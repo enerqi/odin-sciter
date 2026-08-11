@@ -18,7 +18,8 @@ tag `6.0.4.9-bis`.
   sciter.com's documentation reads across directly. All 189 `ISciterAPI` slots, verified against the
   shipped engine. Idiomatic types applied declaratively so they survive regeneration: `bit_set`s for
   the flag enums, real enums for parameters the headers type as `UINT`, and `Scdom_Result` on all 101
-  DOM slots.
+  DOM slots. `sciter-om-def.h` is part of the flattened input, so the SOM passport and its property and
+  method definition structs are generated rather than hand-written.
 - **`package sciter_app`** — hand-written, Odin-shaped: `string` in and out, an `Error` union that
   carries the engine's own result codes, and ownership rules stated rather than hidden. Covers the
   application lifecycle, windows, `Value`, the DOM (elements and nodes, including building and moving
@@ -31,7 +32,10 @@ tag `6.0.4.9-bis`.
   `closest` does; attributes enumerate; inline style has its own pair apart from the `style` attribute,
   and `update_element` / `refresh_element_area` / `request_paint` are what re-resolve and repaint it;
   the master stylesheet and the window's `@media` type and flags are settable; popups and mouse capture
-  are wrapped; `value_parse` reads text as a value and `value_each` walks a
+  are wrapped; focus and the inspector's highlight are readable and settable; `fire_event` carries a
+  named event with a payload, which is the channel to script's `element.on("name", …)`; and **SOM** -
+  `som.odin` - exposes an Odin object to script, with properties and methods, through
+  `make_asset_class` / `make_asset` / `set_global_asset`; `value_parse` reads text as a value and `value_each` walks a
   container in one call; and `atom` / `atom_name` cover the engine's interned names, which the SOM side
   of the API is keyed on.
 
@@ -56,7 +60,7 @@ Windows.
 
 ### Tests
 
-114 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+123 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -66,8 +70,10 @@ trampoline with its subscription reply, the box/origin geometry queries, attribu
 used-value/inline-value split in style, `closest`-style ancestor search, the redraw calls, globals
 published and read back, the media-type/media-flag split, the master stylesheet's replace-and-append
 behaviour, popups going out of flow and what they refuse, mouse capture's answer to an element in no
-document, elements crossing into script and back in both directions, and the request API driven by a
-real document load, skip themselves without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
+document, focus following the `:focus` state, named events with their payloads and the broadcast that
+only window handlers see, a SOM asset read, written and called from script, elements crossing into
+script and back in both directions, and the request API driven by a real document load, skip themselves
+without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
 the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
 ### Documentation
@@ -93,6 +99,14 @@ checked by `just check`.
 - **`SciterGetViewExpando` is NULL on every platform** in Sciter 6, so there is no `globalThis` Value
   to assign into. `SciterSetVariable` does the job and is what `set_global` uses — with the caveat that
   its `hwndOrNull` parameter is not optional: passing NULL reports success and publishes nothing.
+- **A SOM global asset appears at the next document load**, not when it is published, and is withdrawn
+  on the same schedule. Publish before `load_html` / `load_file`.
+- **The SOM passport's "any property" interceptors are never called.** `prop_getter` / `prop_setter`,
+  which take the property atom and would allow a dynamic member list, are ignored; only the
+  `properties` and `methods` tables are consulted. That is why an `Asset_Class` is a fixed list and why
+  `MAX_ASSET_MEMBERS` exists — the C API passes no member index, so there is one thunk per slot.
+- **Clearing `.FOCUS` does not unfocus the window.** The element stops matching `:focus` while
+  `SciterGetFocusElement` keeps reporting it. Move the focus instead; there is no "focus nothing".
 - **Popups only half-work on a window that has never been shown.** `SciterShowPopup` reports success
   and the element takes its `:popup` state, but the anchor never gains `:owns-popup` and
   `SciterHidePopup` does not clear `:popup`. On a shown window both are correct. `show_popup`

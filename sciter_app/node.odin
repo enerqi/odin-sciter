@@ -59,6 +59,31 @@ node_type :: proc(node: Node) -> (type: sciter.Node_Type, err: Error) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Nodes as Values
+//
+// The node half of `element_to_value` / `element_from_value`, and the only way to hand script a text
+// or comment node. The rules are the same: the Value owns a reference, the handle that comes back is
+// borrowed, and the wrapped Value is a `.RESOURCE` that renders as `""`.
+//
+// The two directions are not symmetric, because an element *is* a node and a text node is not an
+// element: `node_from_value` accepts a Value made by either `node_to_value` or `element_to_value`,
+// while `element_from_value` fails with `.OPERATION_FAILED` on a text node's Value.
+
+node_to_value :: proc(node: Node) -> (v: Value, err: Error) {
+	dom_err(sciter.Scdom_Result(sciter.api().SciterNodeWrap(&v, sciter.Hnode(node)))) or_return
+	return v, nil
+}
+
+node_from_value :: proc(v: ^Value) -> (node: Node, err: Error) {
+	hn: sciter.Hnode
+	dom_err(sciter.Scdom_Result(sciter.api().SciterNodeUnwrap(v, &hn))) or_return
+	if hn == nil {
+		return nil, .Not_Found
+	}
+	return Node(hn), nil
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Traversal
 //
 // Each returns `.Not_Found` at the end of the walk rather than a nil handle, so the error is the

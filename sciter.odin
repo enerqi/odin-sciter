@@ -433,7 +433,6 @@ Value_String_Cvt_Type :: enum u32 {
 }
 
 Sciter_Value :: Value
-Som_Passport_T :: struct {}
 Som_Atom_T :: Uint64
 
 Som_Asset_T :: struct {
@@ -447,12 +446,91 @@ Som_Asset_Class_T :: struct {
 	asset_get_passport:  proc "system" (thing: ^Som_Asset_T) -> ^Som_Passport_T,
 }
 
+SOM_VALUE :: Sciter_Value
+
+Som_Prop_Getter_T :: proc "system" (thing: ^Som_Asset_T, p_value: ^Sciter_Value) -> Bool32
+Som_Prop_Setter_T :: proc "system" (thing: ^Som_Asset_T, p_value: ^Sciter_Value) -> Bool32
+Som_Item_Getter_T :: proc "system" (thing: ^Som_Asset_T, p_key: ^Sciter_Value, p_value: ^Sciter_Value) -> Bool32
+Som_Item_Setter_T :: proc "system" (thing: ^Som_Asset_T, p_key: ^Sciter_Value, p_value: ^Sciter_Value) -> Bool32
+Som_Item_Next_T :: proc "system" (
+	thing: ^Som_Asset_T,
+	p_idx: ^Sciter_Value,
+	/*in/out*/
+	p_value: ^Sciter_Value,
+) -> Bool32 /*in/out*/
+Som_Any_Prop_Getter_T :: proc "system" (thing: ^Som_Asset_T, propSymbol: Uint64, p_value: ^Sciter_Value) -> Bool32
+Som_Any_Prop_Setter_T :: proc "system" (thing: ^Som_Asset_T, propSymbol: Uint64, p_value: ^Sciter_Value) -> Bool32
+Som_Method_T :: proc "system" (thing: ^Som_Asset_T, argc: Uint, argv: ^Sciter_Value, p_result: ^Sciter_Value) -> Bool32
+Som_Dispose_T :: proc "system" (thing: ^Som_Asset_T)
+Som_Name_Resolver_T :: proc "system" (
+	thing: ^Som_Asset_T,
+	propSymbol: Som_Atom_T,
+	pIndex: ^Uint,
+	pIsMethod: ^Bool32,
+) -> Bool32
+
+Som_Prop_Type :: enum u32 {
+	ACCSESSOR = 0,
+	INT32     = 1,
+	INT64     = 2,
+	FLOAT     = 3,
+	STRING    = 4,
+}
+
+Som_Property_Def_T :: struct {
+	type: c.intptr_t, // SOM_PROP_TYPE
+	name: Som_Atom_T,
+	u:    struct #raw_union {
+		accs: struct {
+			getter: Som_Prop_Getter_T,
+			setter: Som_Prop_Setter_T,
+		},
+		_i32: i32,
+		_i64: i64,
+		_f64: f64,
+		str:  cstring,
+	},
+}
+
+Som_Method_Def_T :: struct {
+	reserved: rawptr,
+	name:     Som_Atom_T,
+	params:   c.size_t,
+	func:     Som_Method_T,
+}
+
+Som_Passport_Flags :: enum u32 {
+	SEALED_OBJECT     = 0, // not extendable
+	EXTENDABLE_OBJECT = 1, // extendable, asset may have new properties added
+	HAS_NAME_RESOLVER = 2, // if name_resolver is valid
+}
+
+// definiton of object (the thing) access interface
+// this structure should be statically allocated - at least survive last instance of the engine
+Som_Passport_T :: struct {
+	flags:         Uint64,
+	name:          Som_Atom_T, // class name
+	properties:    ^Som_Property_Def_T, // virtual property thunks
+	n_properties:  c.size_t, // virtual property thunks
+	methods:       ^Som_Method_Def_T, // method thunks
+	n_methods:     c.size_t, // method thunks
+	item_getter:   Som_Item_Getter_T, // var item_val = thing[k];
+	item_setter:   Som_Item_Setter_T, // thing[k] = item_val;
+	item_next:     Som_Item_Next_T, // for(var item of thisThing)
+
+	// any property "inteceptors"
+	prop_getter:   Som_Any_Prop_Getter_T, // var prop_val = thing.k;
+	prop_setter:   Som_Any_Prop_Setter_T, // thing.k = prop_val;
+	name_resolver: Som_Name_Resolver_T,
+	reserved:      rawptr,
+}
+
 _Helement :: struct {}
 
 /**DOM element handle.*/
 Helement :: ^_Helement
-_Hnode :: struct {}
 Hnode :: ^_Hnode
+_Hnode :: struct {}
 Hrange :: rawptr
 
 /**DOM range handle.*/
@@ -649,12 +727,12 @@ Node_Ins_Target :: enum u32 {
 	PREPEND = 3,
 }
 
-Hgfx :: ^_Hgfx
 _Hgfx :: struct {}
-_Himg :: struct {}
+Hgfx :: ^_Hgfx
 Himg :: ^_Himg
-Hpath :: ^_Hpath
+_Himg :: struct {}
 _Hpath :: struct {}
+Hpath :: ^_Hpath
 _Htext :: struct {}
 Htext :: ^_Htext
 Sc_Real :: f32

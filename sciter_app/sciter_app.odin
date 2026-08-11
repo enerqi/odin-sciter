@@ -45,6 +45,8 @@ Api_Error :: enum {
 	Call_Failed, // SciterCall returned FALSE - no such function, or it threw
 	Not_Found, // a selector matched nothing
 	Wrong_Type, // a Value held something other than what was asked for
+	Parse_Failed, // value_parse was handed text the dialect does not accept
+	Asset_Failed, // the engine refused a SOM asset
 }
 
 // `sciter.Scdom_Result.OK_NOT_HANDLED` is -1 and is a success, so `!= .OK` is not the test.

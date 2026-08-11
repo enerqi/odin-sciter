@@ -55,6 +55,19 @@ hcj1 :: proc() {
 	sciter_app.set_script_features({.FILE_IO, .SOCKET_IO, .EVAL, .SYSINFO})
 }
 
+hcj2 :: proc(window: sciter_app.Window) {
+	sciter_app.set_media_type(window, "print") // before loading the document that needs it
+}
+
+hcj3 :: proc(window: sciter_app.Window) {
+	vars: sciter_app.Value
+	defer sciter_app.value_clear(&vars)
+	on := sciter_app.value_from(true)
+	defer sciter_app.value_clear(&on)
+	sciter_app.value_set(&vars, "dark", &on)
+	sciter_app.set_media_vars(window, &vars)
+}
+
 // ---------------------------------------------------------------------------------------------------
 // calling-between-odin-and-js.md
 
@@ -169,6 +182,85 @@ cbj11 :: proc(args: []sciter_app.Value) -> sciter_app.Value {
 	defer sciter_app.value_clear(&r)
 	_ = err
 	return {}
+}
+
+// The `root` the "passing elements" blocks reach for is the document root the surrounding prose has
+// already fetched.
+@(private = "file")
+g_root: sciter_app.Element
+
+cbj12 :: proc(obj: ^sciter_app.Value) {
+	sciter_app.value_each(obj, proc(k, v: ^sciter_app.Value, _: rawptr) -> bool {
+		name, _ := sciter_app.value_to_string(k, context.temp_allocator)
+		fmt.println(name)
+		return true // false stops the walk
+	})
+}
+
+@(private = "file")
+Backend :: struct {
+	count:   i32,
+	reloads: int,
+}
+
+cbj_get_count :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	state := (^Backend)(asset.user_data)
+	return sciter_app.value_from(state.count), true // the engine takes the reference
+}
+
+cbj_set_count :: proc(asset: ^sciter_app.Asset, value: ^sciter_app.Value) -> bool {
+	state := (^Backend)(asset.user_data)
+	n, err := sciter_app.value_to_int(value) // borrowed for the call
+	if err != nil {return false}
+	state.count = n
+	return true
+}
+
+cbj_reload :: proc(asset: ^sciter_app.Asset, args: []sciter_app.Value) -> (sciter_app.Value, bool) {
+	state := (^Backend)(asset.user_data)
+	state.reloads += 1
+	return sciter_app.value_from(i32(state.reloads)), true
+}
+
+cbj_som :: proc(window: sciter_app.Window, state: ^Backend, DOC: string) {
+	class, cerr := sciter_app.make_asset_class(
+		"Backend",
+		{{name = "count", get = cbj_get_count, set = cbj_set_count}},
+		{{name = "reload", params = 0, call = cbj_reload}},
+	)
+	asset := sciter_app.make_asset(class, state)
+	sciter_app.set_global_asset(asset)
+	sciter_app.load_html(window, DOC) // the asset appears in *this* document, not the last one
+	_ = cerr
+}
+
+cbj_global :: proc(window: sciter_app.Window) {
+	v, err := sciter_app.global(window, "some_setting")
+	defer sciter_app.value_clear(&v)
+	if sciter_app.value_is_undefined(&v) {}
+	_ = err
+}
+
+cbj13 :: proc() {
+	v, err := sciter_app.value_parse(`{"name":"sciter","tags":[1,2,3]}`) // a MAP holding an ARRAY
+	defer sciter_app.value_clear(&v)
+	_ = err
+}
+
+odin_took :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, err := sciter_app.element_from_value(&args[0]) // script called odin_took(document.$("#row"))
+	if err != nil { // .OPERATION_FAILED: not an element
+		return sciter_app.value_from(false)
+	}
+	sciter_app.set_style(el, "color", "red")
+	return sciter_app.value_from(true)
+}
+
+odin_gave :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, _ := sciter_app.select_first(g_root, "#tasks")
+	v, err := sciter_app.element_to_value(el)
+	if err != nil {return sciter_app.value_from(false)}
+	return v // script gets a real Element
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -317,6 +409,74 @@ my_receiver :: proc "system" (str: [^]u16, str_length: u32, param: rawptr) {
 	sink.out = sciter_app.string_from_utf16(str, uint(str_length))
 }
 
+dom_attrs :: proc(el: sciter_app.Element) {
+	attrs, err := sciter_app.attributes(el, context.temp_allocator) // markup order
+	defer sciter_app.delete_attributes(attrs, context.temp_allocator)
+	for a in attrs {
+		fmt.printfln("%s = %q", a.name, a.value)
+	}
+	_ = err
+}
+
+dom_style :: proc(el: sciter_app.Element) {
+	c, _ := sciter_app.style(el, "color", context.temp_allocator) // "#A6E3A1" - the used value
+	sciter_app.set_style(el, "color", "blue") // inline, beats the stylesheet
+	sciter_app.set_style(el, "color", "") // removes it again
+	_ = c
+}
+
+dom_element_value :: proc(el: sciter_app.Element) {
+	v, err := sciter_app.element_to_value(el) // script sees a real Element
+	defer sciter_app.value_clear(&v)
+
+	back, _ := sciter_app.element_from_value(&v) // and out again
+	_, _ = back, err
+}
+
+on_pick :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, err := sciter_app.element_from_value(&args[0])
+	if err != nil { // a number, a string, a text node
+		return sciter_app.value_from(false)
+	}
+	id, _ := sciter_app.attribute(el, "id", context.temp_allocator)
+	_ = id
+	return sciter_app.value_from(true)
+}
+
+dom_closest :: proc(clicked: sciter_app.Element) {
+	row, err := sciter_app.select_parent(clicked, "tr") // script's closest()
+	_, _ = row, err
+}
+
+dom_traverse2 :: proc(el: sciter_app.Element) {
+	n, _ := sciter_app.child_count(el)
+	first, _ := sciter_app.child(el, 0)
+	up, err := sciter_app.parent(el) // .Not_Found at the root
+	name, _ := sciter_app.tag(el) // "div", "button" - borrowed, valid for the element's life
+	i, _ := sciter_app.element_index(el) // position among the parent's elements
+	_, _, _, _, _, _ = n, first, up, err, name, i
+}
+
+dom_redraw :: proc(el: sciter_app.Element, area: sciter_app.Rect, window: sciter_app.Window) {
+	sciter_app.update_element(el, render = true) // re-run style and layout, repaint now
+	sciter_app.refresh_element_area(el, area) // repaint a rectangle in the element's own coordinates
+	sciter_app.request_paint(el) // repaint all of it at the next frame
+	sciter_app.update_window(window)
+}
+
+dom_popup :: proc(root: sciter_app.Element, button: sciter_app.Element, x, y: i32) {
+	menu, _ := sciter_app.select_first(root, "#context-menu")
+	sciter_app.show_popup(menu, button, .Bottom) // against an anchor
+	sciter_app.show_popup_at(menu, {x, y}, .Top_Left) // at a point in window coordinates
+	sciter_app.hide_popup(menu)
+}
+
+dom_focus :: proc(window: sciter_app.Window, input: sciter_app.Element) {
+	sciter_app.set_focus(input) // == set_element_state(input, {.FOCUS})
+	who, err := sciter_app.focus_element(window) // .Not_Found when nothing has it
+	_, _ = who, err
+}
+
 // ---------------------------------------------------------------------------------------------------
 // events.md
 
@@ -402,6 +562,28 @@ ev8 :: proc(event: sciter_app.Event) -> bool {
 		return true
 	}
 	return false
+}
+
+ev_capture :: proc(event: sciter_app.Event) {
+	if me, ok := sciter_app.mouse_event(event); ok {
+		#partial switch me.code {
+		case .MOUSE_DOWN:
+			sciter_app.set_capture(me.target)
+		case .MOUSE_MOVE:
+		// arrives even outside the element, because of the capture
+		case .MOUSE_UP:
+			sciter_app.release_capture(me.target)
+		}
+	}
+}
+
+ev_fire :: proc(chart: sciter_app.Element, json: string) -> (err: sciter_app.Error) {
+	value := sciter_app.value_parse(json) or_return
+	defer sciter_app.value_clear(&value)
+
+	handled, ferr := sciter_app.fire_event({code = .CUSTOM, name = "data-arrived", target = chart, data = &value})
+	_, _ = handled, ferr
+	return nil
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -670,4 +852,19 @@ gfx_text :: proc(gfx: sciter_app.Graphics, element: sciter_app.Element, x, y: f3
 	sciter_app.set_text_box(text, 200, 100)
 	sciter_app.draw_text(gfx, text, x, y, .Middle_Center)
 	_ = m
+}
+
+// ---------------------------------------------------------------------------------------------------
+// ENGINE.md, block 1 — choosing the graphics layer, before any window exists
+
+eng1 :: proc() {
+	sciter_app.set_option(.SET_GFX_LAYER, uintptr(sciter.Gfx_Layer.SKIA_OPENGL))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// ENGINE.md, block 2 — asking a running window which backend it got
+
+eng2 :: proc(window: sciter_app.Window) {
+	v, _ := sciter_app.eval(window, "Window.this.graphicsBackend") // expect x11-opengl-skia on Linux
+	_ = v
 }

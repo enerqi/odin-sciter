@@ -259,6 +259,66 @@ Detach before the `Event_Handler`'s storage goes away. A handler attached to an 
 destroyed with the document is cleaned up with it, so an application-lifetime handler on `root` needs
 nothing.
 
+## Named events
+
+`send_event` and `post_event` carry a code, a source and a reason. `fire_event` carries a **name** and a
+**payload** as well, which is what makes it the channel *to* script:
+
+```js
+document.$("#chart").on("data-arrived", function(e) { redraw(e.data); });
+```
+
+```odin
+value := sciter_app.value_parse(json) or_return
+defer sciter_app.value_clear(&value)
+
+handled, err := sciter_app.fire_event({
+	code   = .CUSTOM,
+	name   = "data-arrived",
+	target = chart,
+	data   = &value,
+})
+```
+
+Script sees an ordinary event whose type is the name, so a document can be written against events it
+declares and Odin can raise them without knowing what listens. On the receiving side in Odin,
+`event_name(be, allocator)` decodes the name — it is not in `Behavior_Event` because the engine hands it
+over as UTF-16 and most handlers never look at it.
+
+Four rules of its own:
+
+- **It goes down and back up**, like every other event, so a handler that acts on both phases acts
+  twice.
+- **A nil `target` broadcasts** to every window — and only handlers attached with
+  `attach_window_handler` receive that. An element handler, `root`'s included, does not.
+- **`post = true` copies the name and the payload**, so neither has to outlive the call. It also means
+  `handled` is always false: nothing has seen the event yet.
+- **`data` is borrowed**, not consumed. Clear it as usual.
+
+## Mouse capture
+
+While an element holds the capture, **every** mouse event goes to it — wherever the pointer is, inside
+the element or not, inside the window or not. That is what makes a drag possible: the `.MOUSE_DOWN`
+that starts one takes the capture, `.MOUSE_MOVE` keeps arriving while the button is down, and
+`.MOUSE_UP` gives it back.
+
+```odin
+if me, ok := sciter_app.mouse_event(event); ok {
+	#partial switch me.code {
+	case .MOUSE_DOWN: sciter_app.set_capture(me.target)
+	case .MOUSE_MOVE: // arrives even outside the element, because of the capture
+	case .MOUSE_UP:   sciter_app.release_capture(me.target)
+	}
+}
+```
+
+Neither call is fussy: taking the capture while another element holds it moves it, and releasing when
+nothing was captured succeeds — so an unconditional `release_capture` on the way out is safe. The one
+failure is `.INVALID_HWND`, for an element that is in no document and therefore in no window.
+
+This is *mouse* capture and has nothing to do with [drag and drop](#drag-and-drop) above, which is the
+system's own protocol for data crossing an application boundary.
+
 ## Synthesising events
 
 ```odin

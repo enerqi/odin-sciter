@@ -78,6 +78,29 @@ select_all :: proc(
 	return sink.out[:], nil
 }
 
+// The nearest **ancestor or self** matching a CSS selector - script's `element.closest(selector)`.
+//
+//	row, err := sciter_app.select_parent(clicked, "tr")
+//
+// `select_first` searches downwards, which is the wrong direction for the commonest question an event
+// handler has: given the thing that was clicked, which row/panel/form is it in.
+//
+// `depth` limits how far up to look, and it counts the element itself as the first level: the default
+// 0 is unlimited, 1 searches only `element`, 2 searches `element` and its parent, and so on. Returns
+// `.Not_Found` when nothing matches.
+//
+// One measured limitation: **`<html>` never matches**, from any element and at any depth. Use
+// `root(window)` for the document element rather than a `"html"` selector here.
+select_parent :: proc(element: Element, selector: string, depth := 0) -> (found: Element, err: Error) {
+	w := utf16_from_string(selector, context.temp_allocator)
+	he: sciter.Helement
+	dom_err(sciter.api().SciterSelectParentW(sciter.Helement(element), raw_data(w), u32(depth), &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Traversal
 
@@ -104,6 +127,15 @@ parent :: proc(element: Element) -> (parent: Element, err: Error) {
 		return nil, .Not_Found
 	}
 	return Element(he), nil
+}
+
+// The element's position among its parent's children, counting **elements only** - a text node before
+// it does not shift the index. That is the same numbering `child` and `insert_element` use, so it is
+// the number to hand back to either of them.
+element_index :: proc(element: Element) -> (index: int, err: Error) {
+	n: u32
+	dom_err(sciter.api().SciterGetElementIndex(sciter.Helement(element), &n)) or_return
+	return int(n), nil
 }
 
 // The element's tag name - "div", "button". Borrowed from the engine, valid for the element's lifetime.
@@ -173,6 +205,245 @@ set_attribute :: proc(element: Element, name: string, value: string) -> Error {
 	return dom_err(
 		sciter.api().SciterSetAttributeByName(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
 	)
+}
+
+// An attribute as `attributes` reports it. Both strings are allocated in the allocator that call was
+// given, and `delete_attributes` frees them.
+Attribute :: struct {
+	name:  string,
+	value: string,
+}
+
+// How many attributes the element carries. This counts what is *written on the element* - the ones
+// `attributes` will report - not everything the cascade gave it.
+attribute_count :: proc(element: Element) -> (n: int, err: Error) {
+	count: u32
+	dom_err(sciter.api().SciterGetAttributeCount(sciter.Helement(element), &count)) or_return
+	return int(count), nil
+}
+
+// The nth attribute, in the order it appears in the markup. Both strings are allocated in `allocator`.
+// An index past the end is `.INVALID_PARAMETER` rather than an empty result.
+attribute_at :: proc(element: Element, n: int, allocator := context.allocator) -> (attribute: Attribute, err: Error) {
+	// The name comes back as UTF-8 and the value as UTF-16 - two different receivers, which is why
+	// this is two calls rather than one.
+	name_sink := String_Sink {
+		ctx       = context,
+		allocator = allocator,
+	}
+	dom_err(
+		sciter.api().SciterGetNthAttributeNameCB(sciter.Helement(element), u32(n), bytes_receiver, &name_sink),
+	) or_return
+
+	value_sink := String_Sink {
+		ctx       = context,
+		allocator = allocator,
+	}
+	if e := dom_err(
+		sciter.api().SciterGetNthAttributeValueCB(sciter.Helement(element), u32(n), wide_receiver, &value_sink),
+	); e != nil {
+		delete(name_sink.out, allocator)
+		return {}, e
+	}
+	return {name = name_sink.out, value = value_sink.out}, nil
+}
+
+// Every attribute on the element, in markup order. The slice and both strings in each entry come from
+// `allocator`; `delete_attributes` gives them all back.
+//
+//	attrs, _ := sciter_app.attributes(el, context.temp_allocator)
+//	for a in attrs {
+//		fmt.printfln("%s = %q", a.name, a.value)
+//	}
+//
+// This is the way to discover what is on an element - `attribute` answers only for a name you already
+// know, and an absent attribute and an empty one read the same through it.
+attributes :: proc(element: Element, allocator := context.allocator) -> (found: []Attribute, err: Error) {
+	n := attribute_count(element) or_return
+	if n == 0 {
+		return nil, nil
+	}
+
+	out := make([]Attribute, n, allocator)
+	for i in 0 ..< n {
+		attribute, e := attribute_at(element, i, allocator)
+		if e != nil {
+			// Not `delete_attributes(out[:i])`: that would free the slice too, and `out` is one
+			// allocation - the second `delete` would be freeing it again.
+			for done in out[:i] {
+				delete(done.name, allocator)
+				delete(done.value, allocator)
+			}
+			delete(out, allocator)
+			return nil, e
+		}
+		out[i] = attribute
+	}
+	return out, nil
+}
+
+// Frees what `attributes` allocated.
+delete_attributes :: proc(attributes: []Attribute, allocator := context.allocator) {
+	for a in attributes {
+		delete(a.name, allocator)
+		delete(a.value, allocator)
+	}
+	delete(attributes, allocator)
+}
+
+// Removes every attribute from the element in one call, `class` and `id` included.
+//
+// The rules that were matching on those stop matching, but not until the cascade next runs, and this
+// call does not make it run: `style` keeps reporting the old answer until something else does. See the
+// note under "Style" below.
+clear_attributes :: proc(element: Element) -> Error {
+	return dom_err(sciter.api().SciterClearAttributes(sciter.Helement(element)))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Style
+//
+// Inline style - what script reaches through `element.style` and what the `style` attribute holds in
+// markup. Two things about it are not obvious and are worth having in mind before either call:
+//
+//   - **reading gives you the used value, not the inline one.** `style(el, "color")` on an element
+//     coloured only by a stylesheet answers with the stylesheet's colour, resolved: `#FF0000`, not
+//     `red` and not `""`. A property nothing set reads as `""`.
+//   - **writing does not touch the `style` attribute.** After `set_style(el, "color", "blue")`,
+//     `attribute(el, "style")` is still whatever it was, usually `""`. The two are separate stores;
+//     `set_attribute(el, "style", …)` is the other way in, and it replaces the lot.
+//
+// And a third, which is a reading hazard rather than a rule: that used value is *stored*, so it is
+// only as fresh as the last time the cascade ran. Writing an attribute re-runs it; `clear_attributes`
+// does not, and the old colour keeps being reported until something forces the update -
+// `sciter.api().SciterUpdateElement(he, true)` being the direct way.
+
+// A style property's used value - a colour as `#RRGGBB`, a length in the unit the engine resolved it
+// to. `""` for a property with no value, including one this build does not know.
+style :: proc(element: Element, name: string, allocator := context.allocator) -> (value: string, err: Error) {
+	sink := String_Sink {
+		ctx       = context,
+		allocator = allocator,
+	}
+	dom_err(
+		sciter.api().SciterGetStyleAttributeCB(
+			sciter.Helement(element),
+			to_cstring(name, context.temp_allocator),
+			wide_receiver,
+			&sink,
+		),
+	) or_return
+	return sink.out, nil
+}
+
+// Sets one inline style property, as script's `el.style.setProperty(name, value)` would. Pass `""` to
+// drop it, after which the property goes back to whatever the stylesheets say.
+//
+// The engine does not report an unknown property or an unparseable value - both come back OK and do
+// nothing - so a rule that fails to apply is a matter for the inspector rather than for the error.
+set_style :: proc(element: Element, name: string, value: string) -> Error {
+	w: [^]u16
+	if value != "" {
+		w = raw_data(utf16_from_string(value, context.temp_allocator))
+	}
+	return dom_err(
+		sciter.api().SciterSetStyleAttribute(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
+	)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Popups
+//
+// A popup is an element of the document shown *out of flow*, in a window of its own that is allowed to
+// extend past the main window's edge - a menu, a dropdown, a tooltip. The element is an ordinary part
+// of the document the rest of the time, usually hidden by CSS, and it stays where it is in the tree:
+// showing it does not move it.
+//
+//	menu, _ := sciter_app.select_first(root, "#context-menu")
+//	sciter_app.show_popup(menu, button, .Bottom)
+//	...
+//	sciter_app.hide_popup(menu)
+//
+// The declarative route is `context-menu: selector(#menu)` in CSS, which needs no Odin at all. This is
+// for the cases where what to show, or where, is decided in code.
+//
+// **A popup wants a shown window.** On a window that has never been shown the calls report success and
+// the element takes the popup state, but the engine does not finish the job: the anchor never gets its
+// `.OWNS_POPUP` state and `hide_popup` does not clear the popup's `.POPUP` state. Everything below is
+// written for a real, visible window.
+
+// Where a popup goes, named the way a numeric keypad is laid out - which is exactly how the C API
+// numbers it. The two calls read it differently:
+//
+//   - `show_popup` names the side of the *anchor* the popup goes on: `.Bottom` is below it, `.Top`
+//     above, `.Left` and `.Right` beside it.
+//   - `show_popup_at` names the corner of the *popup* that lands on the given point: `.Top_Left` puts
+//     the point at its top-left, which is the usual "here is where the mouse is" placement.
+Popup_Placement :: enum u32 {
+	Bottom_Left  = 1,
+	Bottom       = 2,
+	Bottom_Right = 3,
+	Left         = 4,
+	Center       = 5,
+	Right        = 6,
+	Top_Left     = 7,
+	Top          = 8,
+	Top_Right    = 9,
+}
+
+// Shows `popup` as a popup positioned against `anchor`.
+//
+// Both elements have to be in a document: a detached element is `.PASSIVE_HANDLE`, not an error about
+// the popup.
+show_popup :: proc(popup: Element, anchor: Element, placement := Popup_Placement.Bottom) -> Error {
+	return dom_err(sciter.api().SciterShowPopup(sciter.Helement(popup), sciter.Helement(anchor), u32(placement)))
+}
+
+// Shows `popup` at a point in the window's coordinates - the ones `location(el, .Border, .Root)`
+// reports. A mouse event's `pos` is relative to the element it was delivered to, so showing a menu
+// where the pointer is means adding that element's `.Root` origin to it.
+show_popup_at :: proc(popup: Element, pos: [2]i32, placement := Popup_Placement.Top_Left) -> Error {
+	return dom_err(sciter.api().SciterShowPopupAt(sciter.Helement(popup), {x = pos.x, y = pos.y}, u32(placement)))
+}
+
+// Hides a popup. Takes the popup element itself, or one inside it - **not** the anchor it was shown
+// against, which reports `.OK_NOT_HANDLED` and leaves the popup where it is.
+//
+// Hiding one that is not shown is not an error.
+hide_popup :: proc(popup: Element) -> Error {
+	return dom_err(sciter.api().SciterHidePopup(sciter.Helement(popup)))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Redrawing
+//
+// The engine keeps its own idea of what is dirty, and everything that goes through this package -
+// `set_text`, `set_attribute`, `set_html` - marks it. These are for the cases where it cannot know:
+// after `clear_attributes`, which leaves the resolved style stale (see "Style" above), and after
+// painting into an element from a `.DRAW` handler, where the pixels changed and the DOM did not.
+
+// Re-runs style and layout for the element. `render = true` also repaints it there and then rather
+// than at the next frame, which is what makes it the way to force the cascade to re-resolve.
+update_element :: proc(element: Element, render := false) -> Error {
+	return dom_err(sciter.api().SciterUpdateElement(sciter.Helement(element), b32(render)))
+}
+
+// Marks a rectangle *inside* the element as needing a repaint - `area` is in the element's own
+// coordinates, the ones `location(el, .Border, .Self)` reports. Neither style nor layout is re-run.
+refresh_element_area :: proc(element: Element, area: Rect) -> Error {
+	r := sciter.Rect {
+		left   = area.x,
+		top    = area.y,
+		right  = area.x + area.width,
+		bottom = area.y + area.height,
+	}
+	return dom_err(sciter.api().SciterRefreshElementArea(sciter.Helement(element), r))
+}
+
+// Asks for the whole element to be repainted at the next frame. The cheapest of the three: no style,
+// no layout, no synchronous draw.
+request_paint :: proc(element: Element) -> Error {
+	return dom_err(sciter.api().SciterRequestPaint(sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -353,6 +624,49 @@ element_uid :: proc(element: Element) -> (uid: u32, err: Error) {
 element_by_uid :: proc(window: Window, uid: u32) -> (element: Element, err: Error) {
 	he: sciter.Helement
 	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), uid, &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Elements as Values
+//
+// This is the crossing between the DOM and script's data model, and it goes both ways: an element put
+// in a Value is an `Element` to JavaScript - `instanceof Element` is true, `.tag`, `.id`, `.style` and
+// the rest all work - and an element script handed *you*, as a functor argument or a call's result,
+// comes back out as a handle.
+//
+//	// script calling into Odin: fn(document.$("#row"), 3)
+//	on_click :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+//		el, err := sciter_app.element_from_value(&args[0])
+//		...
+//	}
+//
+// Without this an element cannot be an argument or a return value, and the only way to name one across
+// the boundary is its UID (see "Identity" above) or a selector that finds it again.
+//
+// **The Value holds its own reference to the element.** An element stays alive for as long as a Value
+// wraps it, even after the `use_element` reference the caller had is given back - measured, not
+// assumed. The handle from `element_from_value` is borrowed on the same terms as every other handle
+// here: fine for the length of the call, and `use_element` if it has to outlive the Value.
+
+// Wraps an element so script can be handed it. The Value owns a reference and is cleared like any
+// other; it reports its type as `.RESOURCE` and renders as `""`, so `value_to_display_string` is no
+// use for looking at one.
+element_to_value :: proc(element: Element) -> (v: Value, err: Error) {
+	// Declared as returning UINT rather than SCDOM_RESULT, but the codes are that enum's - a wrap of a
+	// null handle or an unwrap of the wrong type answers .OPERATION_FAILED.
+	dom_err(sciter.Scdom_Result(sciter.api().SciterElementWrap(&v, sciter.Helement(element)))) or_return
+	return v, nil
+}
+
+// The element inside a Value, from script or from `element_to_value`. `.OPERATION_FAILED` if the Value
+// holds anything else - a number, a string, or a text node.
+element_from_value :: proc(v: ^Value) -> (element: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.Scdom_Result(sciter.api().SciterElementUnwrap(v, &he))) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}

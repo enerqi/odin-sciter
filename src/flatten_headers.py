@@ -45,6 +45,7 @@ HEADERS = [
     "value.h",                # VALUE, VALUE_TYPE, VALUE_UNIT_*
     "sciter-x-value.h",       # typedef VALUE SCITER_VALUE (the C branch of it)
     "sciter-om.h",            # som_asset_t and friends
+    "sciter-om-def.h",        # som_passport_t and the property/method definition structs behind it
     "sciter-x-dom.h",         # HELEMENT, HNODE, SCDOM_RESULT, element/node API
     "sciter-x-graphics.h",    # SciterGraphicsAPI - uses HELEMENT, so must follow dom
     "sciter-x-behavior.h",    # EVENT_GROUPS, ElementEventProc, all the *_PARAMS structs

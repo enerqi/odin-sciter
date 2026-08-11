@@ -96,6 +96,9 @@ exception are all completely silent.
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |
 | `set_global(window, name: string, value: ^Value) -> Error` | publishes into `globalThis`; redo after every load |
 | `global(window, name) -> (Value, Error)` | reads one back; a name nobody set is undefined, not an error |
+| `focus_element(window) -> (Element, Error)` | who has the keyboard focus; `.Not_Found` when nothing does |
+| `set_focus(element) -> Error` | moves it. There is no "clear the focus" — see [`dom.md`](./dom.md#focus) |
+| `highlighted_element` / `set_highlighted_element(window, el)` | the inspector's debug outline; a nil element clears it |
 | `root(window) -> (Element, Error)` | the `<html>` element |
 
 `Window_Options` is `{x, y, width, height: i32, flags: sciter.Sciter_Create_Window_Flags, parent: Window}`.
@@ -278,10 +281,51 @@ Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `po
 bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
 [`events.md`](./events.md#synthesising-events).
 
+Named events: `fire_event(Fired_Event{…}, post := false) -> (handled, Error)` carries a **name** and a
+**payload** where `send_event` carries only a code, which is what makes it the channel to script —
+`.CUSTOM` plus `name = "data-arrived"` arrives at `element.on("data-arrived", …)`. A nil `target`
+broadcasts to every window, and only handlers attached with `attach_window_handler` receive that.
+`event_name(be, allocator)` decodes the name on the receiving side. The engine copies both the name and
+the payload, so neither has to outlive the call even with `post = true`.
+
 Mouse capture: `set_capture(el)` / `release_capture(el)`. While an element holds it every mouse event
 goes to that element wherever the pointer is, which is what a `.MOUSE_DOWN`-to-`.MOUSE_UP` drag needs.
 Taking it from another element, and releasing when nothing was captured, both succeed;
 `.INVALID_HWND` is what an element outside any document gets.
+
+## SOM — `som.odin`
+
+A native functor gives script a *function*; an **asset** gives it an object with properties and methods.
+
+```odin
+class, _ := sciter_app.make_asset_class(
+	"Backend",
+	{{name = "count", get = get_count, set = set_count}},   // nil `set` is read-only
+	{{name = "reload", params = 1, call = reload}},
+)
+asset := sciter_app.make_asset(class, &state)
+sciter_app.set_global_asset(asset)      // *before* the document that uses it is loaded
+```
+
+| | |
+| --- | --- |
+| `make_asset_class(name, properties, methods, allocator)` | one per kind; must outlive the engine |
+| `make_asset(class, user_data, allocator)` / `destroy_asset` | one per object; the engine holds its address, so it must not move |
+| `set_global_asset(asset)` / `release_global_asset(asset)` | publishes it as a global under the class name |
+| `element_asset(el, behavior) -> (^sciter.Som_Asset_T, Error)` | a behavior's own asset — `element_asset(input, "edit")` |
+| `MAX_ASSET_MEMBERS` | 32 properties and 32 methods per class; over that is `.Wrong_Type` |
+
+```odin
+Asset_Getter :: proc(asset: ^Asset) -> (value: Value, ok: bool)   // the Value is handed to the engine
+Asset_Setter :: proc(asset: ^Asset, value: ^Value) -> bool
+Asset_Call   :: proc(asset: ^Asset, args: []Value) -> (result: Value, ok: bool)
+```
+
+Four things measured rather than assumed: a global asset **appears at the next document load**, not
+immediately (and is withdrawn on the same schedule); the passport's "any property" interceptors are
+**never called** by this engine, so a class is a fixed list of members; SOM members are **not
+enumerable**, so `Object.keys` is empty; and assigning to a property with no setter **throws** in
+script rather than being dropped.
 
 ## Graphics — `graphics.odin`
 
@@ -414,8 +458,8 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter_app.Window` is a distinct `rawptr`, `Element` a distinct `sciter.Helement`, and `Value` is
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
-Things you will reach for the raw table for today: `SciterSetHighlightedElement`,
-`SciterGetFocusElement`, `SciterFireEvent`, and `gGetNativeDC` in the graphics table.
+Things you will reach for the raw table for today: `SciterFindElement` (hit-testing a point),
+`SciterCallBehaviorMethod`, `SciterHttpRequest`, and `gGetNativeDC` in the graphics table.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

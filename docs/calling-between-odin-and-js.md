@@ -118,6 +118,17 @@ for i in 0 ..< n {
 Maps use string keys through `value_get` / `value_set`, or arbitrary `Value` keys through
 `value_get_key` / `value_set_key`. `value_key_at(v, n)` walks a map's keys by index.
 
+`value_each` walks either in one call, with no reference to clear per element — but an array reports
+its keys as *undefined* rather than as indexes, so count if the position matters:
+
+```odin
+sciter_app.value_each(&obj, proc(k, v: ^sciter_app.Value, _: rawptr) -> bool {
+	name, _ := sciter_app.value_to_string(k, context.temp_allocator)
+	fmt.println(name)
+	return true                              // false stops the walk
+})
+```
+
 ```odin
 obj: sciter_app.Value                        // a zeroed Value is a valid undefined
 defer sciter_app.value_clear(&obj)
@@ -126,6 +137,26 @@ count := sciter_app.value_from(i32(3))
 defer sciter_app.value_clear(&count)
 sciter_app.value_set(&obj, "count", &count)  // obj is now a MAP
 ```
+
+### Text in, value out
+
+`value_from_string` stores text in a `Value`; `value_parse` reads text *as* one, which is what JSON off
+a socket or a length out of a config file wants.
+
+```odin
+v, err := sciter_app.value_parse(`{"name":"sciter","tags":[1,2,3]}`)   // a MAP holding an ARRAY
+defer sciter_app.value_clear(&v)
+```
+
+The engine reports a parse failure in the *result* rather than in the return code — it hands back a
+string carrying the `.ERROR` unit. So `err` is `.Parse_Failed` and the Value that came back is the
+message ("JSON parsing error in line 0 at 4 position"), which `value_to_string` will give you. The same
+check is `value_is_error`, and it is worth running on anything that came back from script.
+
+`how` picks the dialect: `.JSON_LITERAL` (the default) and `.XJSON_LITERAL` parse documents, `.SIMPLE`
+parses one terminal value the way an attribute would — `12.5%` is a `.LENGTH`, `[1,2,3]` is just a
+string — and never fails, and `.JSON_MAP` resumes an object whose `{` has already been consumed, so it
+wants `a:1}` and rejects `{"a":1}`.
 
 ## Odin → script
 
@@ -228,11 +259,22 @@ The contract, in full:
 `set_global` publishes into the *document's* global scope, not the window's, so **it has to be redone
 after every load**. Load first, then publish, then anything script does on `ready` can see it.
 
+`global(window, name)` reads one back — the ones published here and the ones script defined itself.
+A name that is not there comes back undefined rather than as an error, which is the answer script would
+give too.
+
+```odin
+v, err := sciter_app.global(window, "some_setting")
+defer sciter_app.value_clear(&v)
+if sciter_app.value_is_undefined(&v) { … }
+```
+
 An implementation note, because the obvious route does not work: `ISciterAPI` has
 `SciterGetViewExpando`, which would hand back `globalThis` as a `Value` to assign into, but on Sciter 6
 that slot is NULL on every platform — `just example api_map` lists it among the 16 unimplemented ones,
-left behind with the removed TIScript VM. So `set_global` evaluates a one-line assignment function and
-invokes it with the name and value, which needs no cooperation from the document.
+left behind with the removed TIScript VM. `SciterSetVariable` is the pair that does work, and is what
+these two use. Its `hwndOrNull` parameter is not optional despite the name: passing NULL reports
+success and publishes nothing.
 
 ### Calling a function script gave you
 
@@ -253,6 +295,98 @@ defer sciter_app.value_clear(&r)
 To keep a callback past the current call, `value_copy` it into storage that outlives the frame, and
 clear that copy when you are done with it.
 
+### Passing elements
+
+An element can cross the boundary the same way, in either direction, through `element_to_value` /
+`element_from_value`:
+
+```odin
+odin_took :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, err := sciter_app.element_from_value(&args[0])   // script called odin_took(document.$("#row"))
+	if err != nil {                                      // .OPERATION_FAILED: not an element
+		return sciter_app.value_from(false)
+	}
+	sciter_app.set_style(el, "color", "red")
+	return sciter_app.value_from(true)
+}
+```
+
+Returning one goes the other way — and, as with any returned `Value`, the engine takes ownership of the
+reference, so it is not cleared here:
+
+```odin
+odin_gave :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, _ := sciter_app.select_first(root, "#tasks")
+	v, err := sciter_app.element_to_value(el)
+	if err != nil {return sciter_app.value_from(false)}
+	return v                                             // script gets a real Element
+}
+```
+
+Script sees an `Element`, not an opaque handle: `instanceof Element` is true and the usual properties
+work. The `Value` holds its own reference to the element, and the handle that comes back out is
+borrowed like every other handle — `use_element` it if it has to outlive the `Value`. `node_to_value` /
+`node_from_value` do the same for text and comment nodes. See
+[`dom.md`](./dom.md#elements-as-values).
+
+### Objects, not just functions
+
+A functor gives script a function. **SOM** gives it an object — properties it can read and write,
+methods it can call — which is what a document written against an application's model wants.
+
+```odin
+get_count :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	state := (^Backend)(asset.user_data)
+	return sciter_app.value_from(state.count), true          // the engine takes the reference
+}
+
+set_count :: proc(asset: ^sciter_app.Asset, value: ^sciter_app.Value) -> bool {
+	state := (^Backend)(asset.user_data)
+	n, err := sciter_app.value_to_int(value)                 // borrowed for the call
+	if err != nil {return false}
+	state.count = n
+	return true
+}
+
+reload :: proc(asset: ^sciter_app.Asset, args: []sciter_app.Value) -> (sciter_app.Value, bool) {
+	state := (^Backend)(asset.user_data)
+	state.reloads += 1
+	return sciter_app.value_from(i32(state.reloads)), true
+}
+```
+
+```odin
+class, cerr := sciter_app.make_asset_class(
+	"Backend",
+	{{name = "count", get = get_count, set = set_count}},
+	{{name = "reload", params = 0, call = reload}},
+)
+asset := sciter_app.make_asset(class, &state)
+sciter_app.set_global_asset(asset)
+sciter_app.load_html(window, DOC)        // the asset appears in *this* document, not the last one
+```
+
+```js
+Backend.count += 1;
+Backend.reload();
+```
+
+The rules, all measured against the engine:
+
+- **Publish before loading.** A global asset appears in the next document loaded, not in the one already
+  there. Releasing it works the same way round.
+- **The class and the asset must outlive the engine's use of them.** The engine stores the addresses;
+  the C header asks for the passport to be effectively static. Make one class per kind, once.
+- **A property with no `set` is read-only**, and assigning to it throws in script — `eval` reports that
+  as a Value that `value_is_error` recognises, not as an `Error`.
+- **Members are not enumerable.** `Object.keys(Backend)` is empty; script has to know the names.
+- **32 properties and 32 methods per class** (`MAX_ASSET_MEMBERS`). The C API passes no member index to
+  its callbacks, so this package writes out one thunk per slot; over the limit is `.Wrong_Type` rather
+  than a silent truncation.
+
+`element_asset(el, "edit")` is the other half: the asset an element's *behavior* publishes, which is
+what the intrinsic controls expose themselves through.
+
 ## Common mistakes
 
 | Symptom | Cause |
@@ -264,3 +398,5 @@ clear that copy when you are done with it.
 | Garbled non-ASCII text | a raw `sciter.` call given a UTF-8 pointer; the C API is UTF-16 throughout |
 | `value_to_string` returns `.INCOMPATIBLE_TYPE` | the `Value` is not a STRING — use `value_to_display_string` |
 | UI freezes when a button is clicked | blocking work inside a native functor, on the engine's thread |
+| `value_parse` "succeeded" but gave a string | it failed — check the `.Parse_Failed` error, or `value_is_error` |
+| A global asset is `undefined` in script | it was published after the document loaded; publish first |

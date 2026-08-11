@@ -16,6 +16,7 @@ import sciter ".."
 import "../sciter_app"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 DOC :: `<html>
@@ -388,4 +389,246 @@ test_native_functor_round_trip :: proc(t: ^testing.T) {
 	// The argument is borrowed for the call, not consumed, so it is still usable afterwards.
 	again, _ := sciter_app.value_to_string(&arg, context.temp_allocator)
 	testing.expect_value(t, again, "four")
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Parsing, enumeration, and atoms
+//
+// Three more pieces of the Value machinery, all of which need the engine and none of which need a
+// document: reading a Value out of text rather than storing text in one, walking a container without a
+// call per element, and the engine's interned names.
+
+@(test)
+test_value_parse_json :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	v, err := sciter_app.value_parse(`{"name":"sciter","tags":[1,2,3]}`)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&v)
+
+	type, _ := sciter_app.value_type(&v)
+	testing.expect_value(t, type, sciter.Value_Type.MAP)
+
+	name, _ := sciter_app.value_get(&v, "name")
+	defer sciter_app.value_clear(&name)
+	s, _ := sciter_app.value_to_string(&name, context.temp_allocator)
+	testing.expect_value(t, s, "sciter")
+
+	tags, _ := sciter_app.value_get(&v, "tags")
+	defer sciter_app.value_clear(&tags)
+	n, _ := sciter_app.value_len(&tags)
+	testing.expect_value(t, n, 3)
+
+	// This is the whole distinction against `value_from_string`, which would have stored the document
+	// as a string and left the type at STRING.
+	stored := sciter_app.value_from(`{"name":"sciter"}`)
+	defer sciter_app.value_clear(&stored)
+	stored_type, _ := sciter_app.value_type(&stored)
+	testing.expect_value(t, stored_type, sciter.Value_Type.STRING)
+}
+
+@(test)
+test_value_parse_reports_the_message :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	// The engine reports a parse failure in the result rather than the return code, so the wrapper
+	// has to look at what came back to know it failed at all.
+	v, err := sciter_app.value_parse("[1,2")
+	defer sciter_app.value_clear(&v)
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
+
+	testing.expect(t, sciter_app.value_is_error(&v), "the failure Value is a string carrying .ERROR")
+
+	// And the Value that came back is the diagnosis, not a husk.
+	message, merr := sciter_app.value_to_string(&v, context.temp_allocator)
+	testing.expect_value(t, merr, nil)
+	testing.expect(t, strings.contains(message, "JSON parsing error"), message)
+
+	// An ordinary string is not an error string, so the check does not fire on everything.
+	plain := sciter_app.value_from("no problem here")
+	defer sciter_app.value_clear(&plain)
+	testing.expect(t, !sciter_app.value_is_error(&plain))
+}
+
+@(test)
+test_value_parse_dialects :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	// `.SIMPLE` parses one terminal value the way an attribute would, and never fails: a container is
+	// not a container, it is the text of one.
+	simple, serr := sciter_app.value_parse("[1,2,3]", .SIMPLE)
+	testing.expect_value(t, serr, nil)
+	defer sciter_app.value_clear(&simple)
+	simple_type, _ := sciter_app.value_type(&simple)
+	testing.expect_value(t, simple_type, sciter.Value_Type.STRING)
+
+	// It does know the units an attribute can carry, which JSON has no notion of.
+	length, lerr := sciter_app.value_parse("12.5%", .SIMPLE)
+	testing.expect_value(t, lerr, nil)
+	defer sciter_app.value_clear(&length)
+	length_type, units := sciter_app.value_type(&length)
+	testing.expect_value(t, length_type, sciter.Value_Type.LENGTH)
+	testing.expect_value(t, units, u32(sciter.Value_Unit_Type.UT_PR))
+
+	// The same text under `.JSON_LITERAL` is a plain number - the `%` is dropped, not honoured.
+	number, nerr := sciter_app.value_parse("12.5%", .JSON_LITERAL)
+	testing.expect_value(t, nerr, nil)
+	defer sciter_app.value_clear(&number)
+	number_type, _ := sciter_app.value_type(&number)
+	testing.expect_value(t, number_type, sciter.Value_Type.FLOAT)
+
+	// `.JSON_MAP` resumes parsing an object whose opening `{` has already been eaten - so it wants the
+	// body *and* the closing brace, and keys need no quotes.
+	body, berr := sciter_app.value_parse(`a:1}`, .JSON_MAP)
+	testing.expect_value(t, berr, nil)
+	defer sciter_app.value_clear(&body)
+	body_type, _ := sciter_app.value_type(&body)
+	testing.expect_value(t, body_type, sciter.Value_Type.MAP)
+
+	// A whole document is therefore the failing case, not the obvious success: the `{` it starts with
+	// is one the parser has already consumed as far as it is concerned.
+	whole, werr := sciter_app.value_parse(`{"a":1}`, .JSON_MAP)
+	defer sciter_app.value_clear(&whole)
+	testing.expect_value(t, werr, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
+}
+
+@(private = "file")
+Walk :: struct {
+	keys:       [dynamic]string,
+	values:     [dynamic]i32,
+	stop_after: int,
+}
+
+@(private = "file")
+collect :: proc(key: ^sciter_app.Value, value: ^sciter_app.Value, user_data: rawptr) -> bool {
+	walk := (^Walk)(user_data)
+
+	// `value_to_string` allocates, so the key is the walk's own copy rather than a borrow of the
+	// engine's storage - which is what makes it safe to keep past the callback.
+	if k, err := sciter_app.value_to_string(key, context.temp_allocator); err == nil {
+		append(&walk.keys, k)
+	} else {
+		// An array reports its keys as undefined rather than as indexes, and that is what lands here.
+		append(&walk.keys, "")
+	}
+
+	n, _ := sciter_app.value_to_int(value)
+	append(&walk.values, n)
+
+	return walk.stop_after == 0 || len(walk.values) < walk.stop_after
+}
+
+@(test)
+test_value_each_walks_maps_and_arrays :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	m: sciter_app.Value
+	defer sciter_app.value_clear(&m)
+	for key, i in ([]string{"a", "b", "c"}) {
+		element := sciter_app.value_from(i32(i))
+		defer sciter_app.value_clear(&element)
+		sciter_app.value_set(&m, key, &element)
+	}
+
+	walk := Walk {
+		keys   = make([dynamic]string, context.temp_allocator),
+		values = make([dynamic]i32, context.temp_allocator),
+	}
+	testing.expect_value(t, sciter_app.value_each(&m, collect, &walk), nil)
+	testing.expect_value(t, len(walk.keys), 3)
+	testing.expect_value(t, walk.keys[0], "a")
+	testing.expect_value(t, walk.keys[2], "c")
+	testing.expect_value(t, walk.values[1], i32(1))
+
+	// An array walks the same way, but its keys are undefined - the position is not reported, so a
+	// caller that needs it counts.
+	array := sciter_app.value_make_array(0)
+	defer sciter_app.value_clear(&array)
+	for i in 0 ..< 3 {
+		element := sciter_app.value_from(i32(i * 7))
+		defer sciter_app.value_clear(&element)
+		sciter_app.value_set_at(&array, i, &element)
+	}
+
+	over_array := Walk {
+		keys   = make([dynamic]string, context.temp_allocator),
+		values = make([dynamic]i32, context.temp_allocator),
+	}
+	testing.expect_value(t, sciter_app.value_each(&array, collect, &over_array), nil)
+	testing.expect_value(t, len(over_array.values), 3)
+	testing.expect_value(t, over_array.values[2], i32(14))
+	testing.expect_value(t, over_array.keys[0], "")
+}
+
+@(test)
+test_value_each_stops_and_refuses :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	array := sciter_app.value_make_array(0)
+	defer sciter_app.value_clear(&array)
+	for i in 0 ..< 5 {
+		element := sciter_app.value_from(i32(i))
+		defer sciter_app.value_clear(&element)
+		sciter_app.value_set_at(&array, i, &element)
+	}
+
+	// Returning false ends the walk where it is.
+	early := Walk {
+		keys       = make([dynamic]string, context.temp_allocator),
+		values     = make([dynamic]i32, context.temp_allocator),
+		stop_after = 2,
+	}
+	testing.expect_value(t, sciter_app.value_each(&array, collect, &early), nil)
+	testing.expect_value(t, len(early.values), 2)
+
+	// Something that is not a container is a failure, not an empty walk.
+	scalar := sciter_app.value_from(i32(9))
+	defer sciter_app.value_clear(&scalar)
+
+	untouched := Walk {
+		keys   = make([dynamic]string, context.temp_allocator),
+		values = make([dynamic]i32, context.temp_allocator),
+	}
+	testing.expect_value(
+		t,
+		sciter_app.value_each(&scalar, collect, &untouched),
+		sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE),
+	)
+	testing.expect_value(t, len(untouched.values), 0)
+
+	// A nil visitor is caught here rather than handed to the engine.
+	testing.expect_value(t, sciter_app.value_each(&array, nil), sciter_app.Error(sciter.Value_Result.BAD_PARAMETER))
+}
+
+@(test)
+test_atoms_round_trip :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	width := sciter_app.atom("width")
+	testing.expect_value(t, width, sciter_app.atom("width"))
+	testing.expect(t, width != sciter_app.atom("height"))
+
+	name, ok := sciter_app.atom_name(width, context.temp_allocator)
+	testing.expect(t, ok)
+	testing.expect_value(t, name, "width")
+
+	// A name the engine has never seen is interned rather than refused, so there is no failing case
+	// on the way in - only an atom nobody else refers to.
+	fresh := sciter_app.atom("odin_sciter_atom_that_nothing_else_uses")
+	back, fok := sciter_app.atom_name(fresh, context.temp_allocator)
+	testing.expect(t, fok)
+	testing.expect_value(t, back, "odin_sciter_atom_that_nothing_else_uses")
+
+	// `ok` is false when there is no name to report, and `atom("")` is the one atom that is really
+	// like that. There is deliberately no test here for an *invented* integer: `atom_name` segfaults
+	// on some of them before `init` has run, which is the reason the doc comment says to pass only
+	// atoms `atom` handed out.
+	empty, eok := sciter_app.atom_name(sciter_app.atom(""), context.temp_allocator)
+	testing.expect(t, !eok)
+	testing.expect_value(t, empty, "")
+
+	// Names are bytes rather than text: anything outside ASCII comes back re-encoded, so atoms are
+	// for identifiers only. Pinned here because it is silent corruption otherwise.
+	mangled, _ := sciter_app.atom_name(sciter_app.atom("é"), context.temp_allocator)
+	testing.expect(t, mangled != "é", "non-ASCII atom names do not round-trip")
 }

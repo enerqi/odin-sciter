@@ -104,8 +104,56 @@ Porting instinct: `display:flex; flex-direction:row` becomes `flow:horizontal`, 
 - **`sciter:ux-master.css`** is the default stylesheet every document inherits. Read it when an
   element's default look is a mystery.
 
-`sciter_app.set_css` adds to the engine's *master* stylesheet, which sits underneath every document's
-own CSS — the place for application-wide defaults, not for overrides.
+### Three stylesheets, in order
+
+Under the document's own CSS sit two more, and they are different scopes:
+
+| | Scope | Call |
+| --- | --- | --- |
+| Master | the whole engine, every window | `set_master_css(css)` / `append_master_css(css)` |
+| Window | one window, every document loaded into it | `set_css(window, css, base_url, media_type)` |
+| Document | `<style>` and `<link>` in the markup | — |
+
+`set_master_css` **replaces** what is there, so set the base sheet once and `append_master_css`
+after that; `""` is refused rather than treated as "clear it", so a sheet that matches nothing
+(`no-such-element {}`) is how to get back to nothing. Both apply to documents that are *already*
+loaded, but the cascade has to be re-run for that to show — `update_element(el, render = true)` or a
+reload.
+
+### `@media`, and switching it at runtime
+
+The media **type** is one name per window — `screen` by default, `print`, `handheld`, or whatever the
+document's CSS uses:
+
+```odin
+sciter_app.set_media_type(window, "print")     // before loading the document that needs it
+```
+
+Only the **first** call on a window has any effect. Later ones report success and change nothing, a
+reload included, so it is a property of the window rather than a switch.
+
+The switchable half is media **variables**, which are flags rather than name/value pairs. Every name
+set truthy becomes a query the CSS matches by bare name, and this is the mechanism for a theme:
+
+```css
+@media dark { body { background: #11111b; color: #cdd6f4; } }
+```
+
+```odin
+vars: sciter_app.Value
+defer sciter_app.value_clear(&vars)
+on := sciter_app.value_from(true)
+defer sciter_app.value_clear(&on)
+sciter_app.value_set(&vars, "dark", &on)
+sciter_app.set_media_vars(window, &vars)
+```
+
+Flags **merge**: a call naming only `dark` leaves `screen` and everything else already set alone, and
+turning one off means naming it with `false`, not leaving it out. They take effect every time, and
+survive a reload.
+
+One trap, because it fails silently: `@media (name: "value")` parses and then matches
+*unconditionally*. It is not an error and not a flag test. Name the state itself — `@media dark`.
 
 ### Units
 

@@ -2,7 +2,7 @@
 
 Reading and changing the document without going through script. Everything here is
 [`sciter_app/dom.odin`](../sciter_app/dom.odin); the runnable version is
-[`examples/dom_walk.odin`](../examples/dom_walk.odin), which also carries four display-gated tests.
+[`examples/dom_walk.odin`](../examples/dom_walk.odin), which also carries 54 display-gated tests.
 
 ## Handles and lifetime
 
@@ -66,6 +66,18 @@ for item in items {
 }
 ```
 
+Upwards is a separate call, and the one an event handler usually wants — given the thing that was
+clicked, which row is it in:
+
+```odin
+row, err := sciter_app.select_parent(clicked, "tr")   // script's closest()
+```
+
+`select_parent` counts the element itself as the first candidate, so a selector the element matches
+answers with the element. `depth` limits how far up to look and counts from there: the default 0 is
+unlimited, 1 searches only the element, 2 adds its parent. One measured quirk — **`<html>` never
+matches**, at any depth; `root(window)` is how to reach the document element.
+
 `select_first` searches `element`'s subtree and returns `.Not_Found` rather than a nil handle, so the
 error check is the existence check. `select_all` returns matches in document order; the slice is
 allocated with the supplied allocator and is the caller's to `delete`, while the handles in it are
@@ -78,7 +90,11 @@ n, _      := sciter_app.child_count(el)
 first, _  := sciter_app.child(el, 0)
 up, err   := sciter_app.parent(el)      // .Not_Found at the root
 name, _   := sciter_app.tag(el)         // "div", "button" - borrowed, valid for the element's life
+i, _      := sciter_app.element_index(el)  // position among the parent's elements
 ```
+
+`element_index` counts elements only — a text node in front of an element does not shift it — which is
+the same numbering `child` and `insert_element` use.
 
 These walk *elements*, which is what an application wants nearly all of the time. Text and comment
 nodes are `Node`, a separate handle type with its own set of calls — see [Nodes](#nodes) below.
@@ -157,6 +173,114 @@ Everything that returns a string allocates into the allocator you pass — `text
 all take one, defaulting to `context.allocator`. Pass `context.temp_allocator` for scratch reads.
 Element *tags* are the exception: `tag` returns a borrowed `string` over the engine's own storage, so
 there is nothing to free.
+
+### Enumerating attributes
+
+`attribute` answers for a name you already know, and an absent attribute reads the same as an empty
+one. To discover what is actually on an element, enumerate:
+
+```odin
+attrs, err := sciter_app.attributes(el, context.temp_allocator)   // markup order
+defer sciter_app.delete_attributes(attrs, context.temp_allocator)
+for a in attrs {
+	fmt.printfln("%s = %q", a.name, a.value)
+}
+```
+
+`attribute_count(el)` and `attribute_at(el, n)` are the same thing one at a time; an index past the end
+is `.INVALID_PARAMETER` rather than an empty answer. `clear_attributes(el)` removes the lot, `class`
+and `id` included — see the note in the next section about what that does *not* immediately change.
+
+## Style
+
+Inline style is a different store from the `style` attribute, and reading it is a different question
+from reading markup:
+
+```odin
+c, _ := sciter_app.style(el, "color", context.temp_allocator)     // "#A6E3A1" — the used value
+sciter_app.set_style(el, "color", "blue")                         // inline, beats the stylesheet
+sciter_app.set_style(el, "color", "")                             // removes it again
+```
+
+Three things about that, all measured against the engine rather than taken from the header:
+
+- **Reading gives the used value.** An element coloured only by a stylesheet still answers with a
+  colour — resolved, as `#RRGGBB` — not with `""`. A property nothing set, and a property that does
+  not exist, both read as `""`.
+- **Writing does not touch the `style` attribute.** After `set_style(el, "color", "blue")`,
+  `attribute(el, "style")` is unchanged. `set_attribute(el, "style", …)` is the other way in and it
+  replaces everything.
+- **The used value is stored, so it is only as fresh as the last cascade.** Writing an attribute re-runs
+  the cascade; `clear_attributes` does not, and the old value keeps being reported until something
+  forces the update — `update_element(el, render = true)` being the direct way.
+
+An unknown property is accepted and ignored on the way in: the engine has no way to say "no such rule",
+so a declaration that fails to apply is a matter for the inspector rather than for the error code.
+
+## Focus
+
+The focus is a property of the window — one element per window has it — and it *is* the `:focus` state,
+which is why there is no `SciterSetFocus`:
+
+```odin
+sciter_app.set_focus(input)                          // == set_element_state(input, {.FOCUS})
+who, err := sciter_app.focus_element(window)         // .Not_Found when nothing has it
+```
+
+There is no way to focus *nothing*: clearing `.FOCUS` stops the element matching the pseudo-class, but
+`focus_element` keeps reporting it. Move the focus somewhere else instead.
+
+`set_highlighted_element(window, el)` is the unrelated neighbour — the debug outline the SDK's inspector
+draws, cleared with a nil element. It is an overlay and leaves no state on the element, so nothing in
+the document can match on it.
+
+## Popups
+
+A popup is an element of the document shown **out of flow**, in a window of its own that may extend
+past the main window's edge — a menu, a dropdown, a tooltip. It stays where it is in the tree; showing
+it does not move it.
+
+```odin
+menu, _ := sciter_app.select_first(root, "#context-menu")
+sciter_app.show_popup(menu, button, .Bottom)          // against an anchor
+sciter_app.show_popup_at(menu, {x, y}, .Top_Left)     // at a point in window coordinates
+sciter_app.hide_popup(menu)
+```
+
+`Popup_Placement` is named the way a numeric keypad is laid out, which is how the C API numbers it, and
+the two calls read it differently: `show_popup` names the side of the *anchor* (`.Bottom` is below it),
+while `show_popup_at` names the corner of the *popup* that lands on the point (`.Top_Left` is the usual
+"where the mouse is").
+
+Three things measured rather than assumed:
+
+- **A popup wants a shown window.** On a window that has never been shown the calls report success and
+  the element takes the `:popup` state, but the engine does not finish: the anchor never gains
+  `:owns-popup` and `hide_popup` does not clear `:popup`.
+- **`hide_popup` takes the popup**, or an element inside it — not the anchor. The anchor answers
+  `.OK_NOT_HANDLED`, which is a success code, and leaves the popup up.
+- **Both elements must be in a document.** A detached one is `.PASSIVE_HANDLE`, because it is the
+  window that shows a popup.
+
+For a menu that needs no Odin at all, CSS has `context-menu: selector(#menu)` — see
+[`html-css-js.md`](./html-css-js.md#sciter-only-css-worth-knowing). This is for deciding what to show,
+or where, in code.
+
+### Redrawing
+
+The engine tracks what is dirty, and everything in this package that writes to the DOM marks it. Three
+calls exist for what it cannot know about:
+
+```odin
+sciter_app.update_element(el, render = true)   // re-run style and layout, repaint now
+sciter_app.refresh_element_area(el, area)      // repaint a rectangle in the element's own coordinates
+sciter_app.request_paint(el)                   // repaint all of it at the next frame
+```
+
+`update_element` is the heavy one and the only one that re-runs the cascade — the answer to a `style`
+read that is stale after `clear_attributes`. The other two only mark pixels, which is what a `.DRAW`
+handler that painted something needs. `update_window(window)` flushes the lot immediately, for a custom
+message loop.
 
 ## Building and moving elements
 
@@ -249,6 +373,48 @@ sciter_app.set_element_value(input, &nv)
 ```
 
 See [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) for the `Value` rules.
+
+### Elements as Values
+
+That is an element's *value*. The other direction is putting the **element itself** into a `Value`, so
+it can be an argument to script or a return value from Odin:
+
+```odin
+v, err := sciter_app.element_to_value(el)            // script sees a real Element
+defer sciter_app.value_clear(&v)
+
+back, _ := sciter_app.element_from_value(&v)         // and out again
+```
+
+To script, that Value is an `Element`: `instanceof Element` is true and `.tag`, `.id`, `.style` and the
+rest all work. In the other direction, an element script hands to an Odin functor arrives as an
+argument you unwrap:
+
+```odin
+on_pick :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	el, err := sciter_app.element_from_value(&args[0])
+	if err != nil {                                  // a number, a string, a text node
+		return sciter_app.value_from(false)
+	}
+	id, _ := sciter_app.attribute(el, "id", context.temp_allocator)
+	...
+}
+```
+
+Without this the only way to name an element across the boundary is its UID or a selector that finds it
+again. Two rules:
+
+- **The Value holds its own reference.** An element stays alive for as long as a Value wraps it, even
+  after the `use_element` reference you had is given back.
+- **The handle from `element_from_value` is borrowed**, on the same terms as every other handle here.
+  `use_element` it if it has to outlive the Value.
+
+A wrapped element reports its type as `.RESOURCE` and renders as `""`, so `value_to_display_string` is
+no help in looking at one.
+
+`node_to_value` / `node_from_value` are the node half, and they are the only way to hand script a text
+or comment node. The two are not symmetric: an element *is* a node, so an element's Value unwraps
+either way, while `element_from_value` on a text node's Value fails with `.OPERATION_FAILED`.
 
 ## Script, scoped to an element
 

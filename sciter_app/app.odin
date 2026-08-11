@@ -172,3 +172,33 @@ default_debug_output :: proc "system" (
 	msg := string_from_utf16(text, uint(text_length), context.temp_allocator)
 	fmt.eprintfln("[sciter %v %v] %s", subsystem, severity, strings.trim_right_space(msg))
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The master stylesheet
+//
+// The sheet under every document in the process, and the only styling that is not per window: it is
+// where an application's default look goes - the one the SDK ships as `master.css` and a document's
+// own CSS then overrides. There is no window argument because there is one of these for the engine.
+//
+// Two measured properties worth knowing before reaching for it:
+//
+//   - **it applies to documents that are already loaded**, not only to the next one - but the cascade
+//     has to be re-run for that to show, so `update_element(el, true)` or a reload is what makes it
+//     visible. It survives the reload.
+//   - **`set_master_css` replaces, it does not add.** A second call drops everything the first one and
+//     any `append_master_css` put there. Set the base sheet once, then append.
+
+// Replaces the master stylesheet.
+//
+// `""` is refused rather than treated as "clear it" - the engine answers false and keeps what it has -
+// so a sheet that matches nothing, `no-such-element {}`, is how to get back to no master styling.
+set_master_css :: proc(css: string) -> Error {
+	ok := sciter.api().SciterSetMasterCSS(raw_data(css), u32(len(css)))
+	return nil if ok else Api_Error.Load_Failed
+}
+
+// Adds to the master stylesheet, keeping what is already there.
+append_master_css :: proc(css: string) -> Error {
+	ok := sciter.api().SciterAppendMasterCSS(raw_data(css), u32(len(css)))
+	return nil if ok else Api_Error.Load_Failed
+}
