@@ -108,6 +108,56 @@ intrinsic_height :: proc(element: Element, for_width: i32) -> (height: i32, err:
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Window metrics
+//
+// The two questions a window has about itself: what a pixel is worth here, and how small it is allowed
+// to get.
+
+// The window's resolution, in dots per inch, horizontally and vertically. 96 is the unscaled desktop
+// value and the one every CSS pixel in the document is defined against, so `dpi / 96` is the scale
+// factor to multiply a hand-computed pixel size by.
+//
+// Everything else in this package - `location`, `Rect`, `show_popup_at`, `element_at` - is already in
+// the engine's scaled pixels ("ppx"), so this is only needed when talking to something that is not:
+// a bitmap to be drawn at the right size, a platform API, a saved window geometry.
+ppi :: proc(window: Window) -> (dpi: [2]u32) {
+	x, y: u32
+	sciter.api().SciterGetPPI(rawptr(window), &x, &y)
+	return {x, y}
+}
+
+// The narrowest the window's content can be, and the height it needs at a given width - the engine's
+// `SciterGetMinWidth` / `SciterGetMinHeight`, the pair a resizable window's minimum size is meant to
+// come from.
+//
+// **Measured, and it is the whole story about these two: they report the *root element's* intrinsic
+// size, not the document's.** They come back exactly equal to `intrinsic_widths(root).min` and
+// `intrinsic_height(root, …)` on every document tried. Because `<html>` fills the view by default, its
+// min-content width is a small constant - 16px against this engine - however wide the content inside
+// it is, so on an ordinary document `min_width` answers 16 for a 600px-wide child and for an empty
+// body alike. It only becomes the content's width when the root is sized by its content:
+//
+//	html, body { width: max-content; height: max-content }   // now min_width is the real thing
+//
+// with which a 500x250 child measured 516 and 296.
+//
+// Two more measured details. `min_height` **ignores its `width` argument** - the same number comes
+// back for 100, 400 and 800 - so it is a single number rather than the height-for-width curve the
+// signature suggests. And both are only meaningful once the document has been laid out; read straight
+// after `load_html`, before the pump has turned, they can be off by a factor of a hundred.
+//
+// For "how big does this document want to be", `intrinsic_widths` and `intrinsic_height` on the
+// element that actually holds the content - usually `<body>` - are the calls that answer.
+min_width :: proc(window: Window) -> i32 {
+	return i32(sciter.api().SciterGetMinWidth(rawptr(window)))
+}
+
+// See `min_width`. `for_width` is accepted because the C API takes it, and is ignored by this engine.
+min_height :: proc(window: Window, for_width: i32) -> i32 {
+	return i32(sciter.api().SciterGetMinHeight(rawptr(window), u32(for_width)))
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Scrolling
 
 // Where a scrollable element is scrolled to, and how much there is to scroll.

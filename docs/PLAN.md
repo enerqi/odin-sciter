@@ -2,11 +2,11 @@
 
 Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and fifteen examples build and run —
-covering windows, loading from disk, JS evaluation, calling Odin from script, the DOM, events,
-drag-and-drop, graphics, custom resource loading (including the request API), archives, one-file
-shipping, the inspector and a native extension.
-`just example-tests` runs 123 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
+verifies all 189 `ISciterAPI` slots against the shipped engine, and seventeen examples build and run —
+covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
+the DOM, events, behavior methods, background threads, drag-and-drop, graphics, custom resource loading
+(including the request API), archives, one-file shipping, the inspector and a native extension.
+`just example-tests` runs 137 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -291,19 +291,28 @@ resolve.
 
 ```
 odin-sciter/
-  sciter.odin                     # GENERATED - package sciter, ~1800 lines
+  sciter.odin                     # GENERATED - package sciter, ~2760 lines
   bindgen.sjson                   # bindgen configuration
   src/prelude.odin                # hand-written; pasted into sciter.odin by bindgen
   src/flatten_headers.py          # headers -> build/sciter.h
   src/postprocess_bindings.py     # proc "c" -> proc "system"; drops the `-> Void` returns
   sciter_app/                     # hand-written ergonomic layer - package sciter_app
-    sciter_app.odin               # errors, UTF-16 conversion
-    app.odin                      # load_engine, init, run, stop, debug output
-    window.odin                   # create, load, eval, call, set_global, state
+    sciter_app.odin               # errors, UTF-16 conversion, overload groups
+    app.odin                      # load_engine, init, run, stop, options, debug output, master CSS
+    window.odin                   # create, load, eval, call, set_global, focus, state
     value.odin                    # VALUE construction/extraction, arrays, maps, native functors
-    dom.odin                      # selectors, traversal, text, HTML, attributes
-    events.odin                   # Event_Handler, typed event params, synthesised events
-    host.odin                     # SC_LOAD_DATA host callback - custom resource loading
+    atom.odin                     # interned names - the currency of the SOM API
+    dom.odin                      # selectors, hit testing, traversal, text, HTML, attributes, popups
+    node.odin                     # text and comment nodes, the half of the tree dom.odin skips
+    layout.odin                   # boxes, intrinsic sizes, window metrics, scrolling
+    behavior.odin                 # behavior methods: control_type, do_click, METHOD_CALL both ways
+    events.odin                   # Event_Handler, typed event params, timers, synthesised events
+    graphics.odin                 # the graphics API: paths, text, images, layers
+    som.odin                      # SOM assets - an Odin object script can read, write and call
+    host.odin                     # SC_LOAD_DATA host callback, and post_callback across threads
+    request.odin                  # the HREQUEST side of a .MYSELF load
+    archive.odin                  # packfolder blobs opened in place
+    embed.odin                    # the engine binary embedded in the executable
   external/sciter/
     include/                      # vendored headers, unmodified
     LICENSE                       # BSD 3-Clause (SDK contents)
@@ -314,20 +323,29 @@ odin-sciter/
     hello_window.odin             # window + HTML + CSS + app loop, raw bindings only
     api_map.odin                  # ISciterAPI slot/symbol verification
     load_file.odin                # load from disk, base URLs, relative references
-    eval.odin                     # JS from Odin, Value round-trips (+6 headless tests)
-    call_odin_from_js.odin        # native functors: script calling into Odin
-    dom_walk.odin                 # selectors, traversal, text/attributes (+4 tests)
-    events.odin                   # ELEMENT_EVENT_PROC, subscriptions, phases
+    eval.odin                     # JS from Odin, Value round-trips (+15 tests)
+    call_odin_from_js.odin        # native functors and a SOM asset: script calling into Odin
+    dom_walk.odin                 # selectors, traversal, text/attributes, nodes, SOM (+54 tests)
+    events.odin                   # ELEMENT_EVENT_PROC, subscriptions, phases, timers (+21 tests)
+    behavior.odin                 # do_click vs send_event, control_type, hit testing (+9 tests)
+    worker_thread.odin            # post_callback: a background thread driving the UI (+5 tests)
+    graphics.odin                 # painting from a .DRAW handler (+12 tests)
+    drag_and_drop.odin            # the EXCHANGE group (+3 tests)
     custom_loader.odin            # SC_LOAD_DATA: serving CSS and images from memory
-    archive.odin                  # packfolder blob + #load, resources inside the executable
-    single_binary.odin            # archive + the engine embedded too - one file, Linux x64 only
+    request_loader.odin           # .MYSELF: answering a load through the request API (+5 tests)
+    archive.odin                  # packfolder blob + #load, resources inside the executable (+6 tests)
+    single_binary.odin            # archive + the engine embedded too - one file, Linux x64 (+7 tests)
     inspector.odin                # SW_ENABLE_DEBUG + SCITER_SET_DEBUG_MODE
     extension.odin                # NOT an app - a native extension .so, see section 11
     assets/                       # hello.htm + css + svg; extension/index.htm
       app/                        # the folder packfolder packs, for `archive`
       app.pak                     # COMMITTED 2 KB archive, so `archive` needs no SDK
-  spike/smoke/main.odin           # minimal ABI handshake, no generated code
+  spike/
+    smoke/main.odin               # minimal ABI handshake, no generated code
+    xdnd/xdnd_source.py           # a minimal X11 drag source, to measure a real system drop
+    skeleton/main.odin            # the template main this repo started from; no Sciter in it
   docs/
+    snippets/snippets.odin        # every Odin block in docs/*.md, wrapped just enough to compile
 ```
 
 `src/prelude.odin` is the hand-written half. It has no `foreign import` — the library is opened at
@@ -437,7 +455,7 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all fifteen examples run, and the eleven guides are
+9. ~~**Examples and guides** — §9~~ **done**: all seventeen examples run, and the eleven guides are
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
@@ -496,7 +514,8 @@ description of what the engine actually implements.
 2. ~~`api_map`~~ — done (diagnostic rather than tutorial, but it belongs here)
 3. ~~`load_file`~~ — done: loading from disk, base URLs, relative references
 4. ~~`eval`~~ — done, with 9 headless `Value` round-trip tests
-5. ~~`call_odin_from_js`~~ — done, via native functors
+5. ~~`call_odin_from_js`~~ — done, via native functors and a SOM asset (`Backend`), which is the
+   runnable demonstration of `som.odin`
 6. ~~`dom_walk`~~ — done, with 23 display-gated tests: selectors, traversal, nodes, the geometry
    queries, and building/moving/sorting elements
 7. ~~`events`~~ — done, with 21 tests: the parameter accessors and the code/phase split headless,
@@ -514,6 +533,10 @@ description of what the engine actually implements.
     behaviour
 14. ~~`inspector`~~ — done
 15. ~~`extension`~~ — done: Odin as a native extension the engine loads, via `adopt` (§11)
+16. ~~`behavior`~~ — done, with 9 tests: `control_type`, `do_click` against `send_event`, a method of
+    the caller's own through a `.METHOD_CALL` handler, hit testing and the window metrics
+17. ~~`worker_thread`~~ — done, with 5 tests: `post_callback` from this thread and from a worker, the
+    ordering, delivery by `heartbeat` alone, and the window that drops what it has no handler for
 
 Testing is example-driven — there is no engine source to unit-test against. Follow odin-dds and put
 `@(test)` procs inside `examples/*.odin`. Headless-testable: library loading, the version handshake,

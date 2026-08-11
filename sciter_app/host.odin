@@ -93,12 +93,79 @@ data_ready :: proc(window: Window, uri: string, data: []u8) -> Error {
 	return nil if ok else Api_Error.Load_Failed
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Posting work to the engine's thread
+//
+// Everything in this package has to be called from the thread that ran `init` - see
+// docs/architecture.md. That is the constraint every application with a background thread runs into
+// first: the worker has an answer, and it cannot touch the DOM to show it.
+//
+// `post_callback` is the way across. It is safe to call from any thread, it returns immediately, and
+// the message comes back out on the engine's thread as `Host_Handler.on_posted`, where the DOM is
+// reachable again.
+//
+//	// on a worker thread
+//	sciter_app.post_callback(window, ROWS_READY, uintptr(len(rows)))
+//
+//	// on_posted, on the engine's thread
+//	on_posted :: proc(handler: ^Host_Handler, posted: Posted) {
+//		if posted.wparam == ROWS_READY { redraw(...) }
+//	}
+//
+// Two words is all it carries, so anything bigger travels as a pointer to something the worker owns
+// and the handler takes - or as an index into a queue the two share.
+//
+// Measured, and worth knowing before designing around it:
+//
+//   - **it is delivery, not a call.** The C API's `timeoutms` parameter is not surfaced because it did
+//     nothing: with a timeout of 3 seconds, from a worker thread, against an engine thread deliberately
+//     stalled for 300ms, the call still returned in microseconds. There is no "wait for the answer"
+//     mode and the notification's `lreturn` does not come back to the poster.
+//   - **the messages arrive in the order they were posted**, one per turn of the pump.
+//   - **`heartbeat` delivers them**, not only `run_once` - so a thread that is pumping the engine
+//     without processing input still gets them.
+//   - **a window with no host handler drops them**, silently. So does a nil window.
+
+// A message that came back from `post_callback`.
+Posted :: struct {
+	// The two words the poster passed. What they mean is between the two ends.
+	wparam: uintptr,
+	lparam: uintptr,
+
+	// The engine's own struct, for `lreturn` - which this engine does not deliver back to the poster,
+	// but which is the field the C API defines for it.
+	raw:    ^sciter.Scn_Posted_Notification,
+}
+
+// Posts two words to `window`'s host handler, from any thread. Returns immediately.
+//
+// The message is dropped if `window` has no host handler - `set_host_handler` with an `on_posted` is
+// what receives it.
+post_callback :: proc(window: Window, wparam: uintptr, lparam: uintptr = 0) {
+	sciter.api().SciterPostCallback(rawptr(window), wparam, lparam, 0)
+}
+
+// The `user_data` of the host handler attached to `window`, straight from the engine - nil for a
+// window that has none.
+//
+// This is the way a `proc "system"` callback that was handed only an HWINDOW finds its way back to the
+// application's own state without a global. Note it is the *handler* pointer that comes back, since
+// that is what `set_host_handler` gives the engine, so the shape is
+// `(^Host_Handler)(callback_param(window)).user_data`.
+callback_param :: proc(window: Window) -> rawptr {
+	return sciter.api().SciterGetCallbackParam(rawptr(window))
+}
+
 // A host callback. Like `Event_Handler`, the engine stores its address, so it must not move and must
 // outlive the window it is attached to.
 Host_Handler :: struct {
 	// Called for every resource the document refers to. Return `.OK` to let the engine load it
 	// normally, or call `serve` to answer it yourself.
 	on_load_data: proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
+
+	// Called on the engine's thread for each `post_callback`, in the order they were posted. See
+	// "Posting work to the engine's thread" above.
+	on_posted:    proc(handler: ^Host_Handler, posted: Posted),
 
 	// Yours; passed back on every call.
 	user_data:    rawptr,
@@ -113,13 +180,25 @@ Host_Handler :: struct {
 // Do this **before** loading a document: the callback has to be in place for the load of the document
 // itself, or its stylesheets and images will have been fetched the ordinary way before the handler
 // exists.
+// A nil handler detaches whatever was there, which is also what makes `callback_param` nil again.
+//
+// Detaching leaves the trampoline in place with a null parameter rather than clearing the callback
+// itself: a window whose callback pointer is NULL **segfaults inside the engine** at the next
+// notification - the next `load_html` is enough - because it calls the pointer without checking it.
 set_host_handler :: proc(window: Window, handler: ^Host_Handler) {
+	if handler == nil {
+		sciter.api().SciterSetCallback(rawptr(window), host_trampoline, nil)
+		return
+	}
 	handler.ctx = context
 	sciter.api().SciterSetCallback(rawptr(window), host_trampoline, handler)
 }
 
 @(private)
 host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, param: rawptr) -> u32 {
+	if param == nil {
+		return u32(Load_Result.OK) // detached - see set_host_handler
+	}
 	handler := (^Host_Handler)(param)
 	context = handler.ctx
 
@@ -138,6 +217,14 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 			raw  = ld,
 		}
 		return u32(handler.on_load_data(handler, &request))
+
+	case sciter.SC_POSTED_NOTIFICATION:
+		if handler.on_posted == nil {
+			return 0
+		}
+		pn := (^sciter.Scn_Posted_Notification)(pns)
+		handler.on_posted(handler, Posted{wparam = pn.wparam, lparam = pn.lparam, raw = pn})
+		return 0
 	}
 
 	return u32(Load_Result.OK)

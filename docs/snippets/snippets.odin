@@ -190,11 +190,14 @@ cbj11 :: proc(args: []sciter_app.Value) -> sciter_app.Value {
 g_root: sciter_app.Element
 
 cbj12 :: proc(obj: ^sciter_app.Value) {
-	sciter_app.value_each(obj, proc(k, v: ^sciter_app.Value, _: rawptr) -> bool {
-		name, _ := sciter_app.value_to_string(k, context.temp_allocator)
-		fmt.println(name)
-		return true // false stops the walk
-	})
+	sciter_app.value_each(
+		obj,
+		proc(k, v: ^sciter_app.Value, _: rawptr) -> bool {
+			name, _ := sciter_app.value_to_string(k, context.temp_allocator)
+			fmt.println(name)
+			return true // false stops the walk
+		},
+	)
 }
 
 @(private = "file")
@@ -249,7 +252,7 @@ cbj13 :: proc() {
 
 odin_took :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
 	el, err := sciter_app.element_from_value(&args[0]) // script called odin_took(document.$("#row"))
-	if err != nil { // .OPERATION_FAILED: not an element
+	if err != nil { 	// .OPERATION_FAILED: not an element
 		return sciter_app.value_from(false)
 	}
 	sciter_app.set_style(el, "color", "red")
@@ -435,7 +438,7 @@ dom_element_value :: proc(el: sciter_app.Element) {
 
 on_pick :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
 	el, err := sciter_app.element_from_value(&args[0])
-	if err != nil { // a number, a string, a text node
+	if err != nil { 	// a number, a string, a text node
 		return sciter_app.value_from(false)
 	}
 	id, _ := sciter_app.attribute(el, "id", context.temp_allocator)
@@ -668,6 +671,74 @@ api6 :: proc() {
 	api := sciter.api()
 	api.SciterSetOption(nil, .SET_DEBUG_MODE, 1)
 	api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// dom.md, hit testing and window metrics
+
+dom_hit :: proc(window: sciter_app.Window, x, y: i32) {
+	el, err := sciter_app.element_at(window, {x, y}) // .Not_Found off the document
+	_, _ = el, err
+}
+
+dom_metrics :: proc(window: sciter_app.Window) {
+	dpi := sciter_app.ppi(window) // 96 is unscaled; dpi.x / 96 is the scale factor
+	narrowest := sciter_app.min_width(window)
+	_, _ = dpi, narrowest
+}
+
+// ---------------------------------------------------------------------------------------------------
+// events.md, driving a behavior
+
+events_do_click :: proc(checkbox: sciter_app.Element) {
+	handled, err := sciter_app.do_click(checkbox) // :checked flips, VALUE_CHANGED then BUTTON_CLICK
+	_, _ = handled, err
+}
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, a behavior method of your own
+
+SET_ZOOM :: u32(sciter.Behavior_Method_Identifiers.FIRST_APPLICATION_METHOD_ID)
+
+Set_Zoom_Params :: struct {
+	method_id: u32,
+	factor:    f32,
+	applied:   b32,
+} // id must be first
+
+api_call_method :: proc(chart: sciter_app.Element) {
+	p := Set_Zoom_Params {
+		method_id = SET_ZOOM,
+		factor    = 1.5,
+	}
+	handled, err := sciter_app.call_behavior_method(chart, &p)
+	_, _ = handled, err
+}
+
+api_answer_method :: proc(event: sciter_app.Event) -> bool {
+	mc := sciter_app.method_call(event) or_return
+	switch args in sciter_app.method_args(mc) {
+	case ^sciter.Value_Params:
+		args.val = sciter_app.value_from(i32(42)); return true
+	case ^sciter.Is_Empty_Params:
+		args.is_empty = 1; return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, posting to the engine's thread
+
+api_post :: proc(window: sciter_app.Window) {
+	ROWS_READY :: uintptr(1)
+	sciter_app.post_callback(window, ROWS_READY, uintptr(3))
+}
+
+api_on_posted :: proc(handler: ^sciter_app.Host_Handler, posted: sciter_app.Posted) {
+	ROWS_READY :: uintptr(1)
+	if posted.wparam == ROWS_READY {
+		// redraw(...)
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------

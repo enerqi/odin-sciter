@@ -384,13 +384,15 @@ stop_timer :: proc(element: Element, id: uintptr = 0) -> Error {
 // claimed it.
 //
 // This is *not* the same as the user doing it. It injects the event code into the element chain
-// directly, which bypasses the intrinsic behavior that would normally produce it: sending
-// `.BUTTON_CLICK` to a <button> does not go through the button behavior, and a handler watching for
-// clicks will not see one. Use it for application event codes of your own (BEHAVIOR_EVENTS values at
-// or above `FIRST_APPLICATION_EVENT_CODE`), which have no behavior behind them.
+// directly, which bypasses the intrinsic behavior that would normally produce it. Handlers do hear the
+// event - a window handler counting `.BUTTON_CLICK`s counts this one - but nothing else happens:
+// measured on a checkbox, sending `.BUTTON_CLICK` leaves `:checked` exactly as it was. Use it for
+// application event codes of your own (BEHAVIOR_EVENTS values at or above
+// `FIRST_APPLICATION_EVENT_CODE`), which have no behavior behind them.
 //
-// To simulate a real interaction, go through script instead - `eval(window, "document.$(sel).click()")`
-// runs the behavior and produces the genuine event.
+// To drive the widget rather than announce it, call the behavior: `do_click` in `behavior.odin` flips
+// the checkbox and raises the events a real click would. Going through script -
+// `eval(window, "document.$(sel).click()")` - is the other way there.
 //
 // `source` has to be an element. The engine delivers nothing at all for a nil one - not to `element`,
 // not to anything on the chain - and says so by reporting the call as succeeded and not handled, which

@@ -161,6 +161,7 @@ do not clear it.
 | `select_first(el, selector) -> (Element, Error)` | `.Not_Found` if nothing matched |
 | `select_all(el, selector, allocator) -> ([]Element, Error)` | document order; `delete` the slice |
 | `select_parent(el, selector, depth := 0) -> (Element, Error)` | `closest()`: nearest ancestor **or self**; `depth` counts from the element, 0 is unlimited |
+| `element_at(window, pos: [2]i32) -> (Element, Error)` | hit testing: the topmost element at a point in the window's client area. Off the document is `.Not_Found` |
 | `child_count` / `child` / `parent` | traversal, elements only |
 | `element_index(el) -> (int, Error)` | position among the parent's *elements*; text nodes do not shift it |
 | `tag(el) -> (string, Error)` | borrowed — do not free |
@@ -192,6 +193,58 @@ do not clear it.
 
 `state(x)` and `set_state(x, …)` are overload groups resolving to the element or window version.
 
+## Behavior methods — `behavior.odin`
+
+The native code *behind* an element: the intrinsic behavior that makes a button a button. Neither the
+DOM nor script reaches it.
+
+| | |
+| --- | --- |
+| `control_type(el) -> (sciter.Ctl_Type, Error)` | which behavior the element carries: `.BUTTON`, `.CHECKBOX`, `.EDIT`, `.DD_SELECT`, … `.NO` for an element with none |
+| `do_click(el) -> (handled: bool, Error)` | a **real** click: the widget's state changes and it raises the events a user's click would |
+| `behavior_value(el)` / `set_behavior_value(el, ^Value)` | the `GET_VALUE` / `SET_VALUE` protocol |
+| `behavior_is_empty(el)` | the `IS_EMPTY` protocol |
+| `call_behavior_method(el, params: rawptr) -> (handled: bool, Error)` | any method id, including your own |
+| `method_call(event) -> (Method_Call, ok)` / `method_args(mc) -> Method_Args` | the receiving side, in a `.METHOD_CALL` handler |
+
+`handled` is separate from `err` because the engine answers a method nothing implements with
+`OK_NOT_HANDLED`, which is a success: `handled = false`, `err = nil`. A detached element is
+`.PASSIVE_HANDLE` and that *is* an error.
+
+**`do_click` is not `send_event(el, .BUTTON_CLICK)`.** `send_event` injects the event code into the
+element chain and nothing else happens — measured on a checkbox, `:checked` is untouched. `do_click`
+calls the behavior, so the checkbox flips and a `VALUE_CHANGED` arrives ahead of the `BUTTON_CLICK`.
+The state change is synchronous; the events it raises are queued, so a handler has not seen them until
+the pump turns.
+
+**No intrinsic behavior implements `GET_VALUE`, `SET_VALUE` or `IS_EMPTY` on Sciter 6.** Measured on a
+text `<input>`, a `<select>` and a `<div>`: every one answers `handled = false`. `element_value` /
+`set_element_value` (`SciterGetValue`, a different call) is what reads an `<input>`. The three exist
+for behaviors of your own.
+
+Going the other way, a method call arrives as a `.METHOD_CALL` event whose parameter block is the
+caller's struct, written in place:
+
+```odin
+Set_Zoom_Params :: struct { method_id: u32, factor: f32, applied: b32 }   // id must be first
+
+// caller
+p := Set_Zoom_Params{method_id = SET_ZOOM, factor = 1.5}
+handled, err := sciter_app.call_behavior_method(chart, &p)
+
+// handler, subscribed to {.METHOD_CALL} and attached with attach_handler
+mc, ok := sciter_app.method_call(event)
+switch args in sciter_app.method_args(mc) {
+case ^sciter.Value_Params:    args.val = sciter_app.value_from(i32(42)); return true
+case ^sciter.Is_Empty_Params: args.is_empty = 1;                    return true
+}
+```
+
+Returning true is what makes the caller's `handled` true. Ids at or above
+`sciter.Behavior_Method_Identifiers.FIRST_APPLICATION_METHOD_ID` (256) are yours. **A method call is
+delivered only to handlers attached to that exact element** — it does not sink or bubble, and a
+handler attached with `attach_window_handler` never sees one. See `examples/behavior.odin`.
+
 ## Geometry — `layout.odin`
 
 Reads the result of layout, so it answers once layout has run and not before.
@@ -207,9 +260,19 @@ Reads the result of layout, so it answers once layout has run and not before.
 | `scroll_info(el) -> (Scroll_Info, Error)` | `pos`, `view` and `content` together |
 | `set_scroll_pos(el, pos, smooth := false)` | clamped, not refused |
 | `scroll_to_view(el, to_top := false, smooth := false)` | needs a shown window — see [`dom.md`](./dom.md#geometry) |
+| `ppi(window) -> [2]u32` | the window's resolution; 96 is unscaled, so `dpi / 96` is the scale factor |
+| `min_width(window) -> i32` / `min_height(window, for_width) -> i32` | the **root element's** intrinsic size, not the document's — see below |
 
 An element with no box keeps reporting the last rectangle it had, so `location` is never the way to
 ask whether an element is there — `visible` is.
+
+`min_width` / `min_height` are measured to return exactly `intrinsic_widths(root).min` and
+`intrinsic_height(root, …)`. Because `<html>` fills the view by default its min-content width is a
+small constant — 16px on this engine — whatever the content inside it is, so on an ordinary document
+`min_width` answers the same number for a 600px-wide child and for an empty body. They mean something
+only when the root is sized by its content (`html, body { width: max-content }`), and `min_height`
+ignores its `for_width` argument. To size a window to its document, ask `intrinsic_widths` /
+`intrinsic_height` of the element that holds the content.
 
 ## Nodes — `node.odin`
 
@@ -367,12 +430,15 @@ To script: `value_from_graphics` / `value_from_image` / `value_from_path` / `val
 ```odin
 Host_Handler :: struct {
 	on_load_data: proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
+	on_posted:    proc(handler: ^Host_Handler, posted: Posted),
 	user_data:    rawptr,
 	ctx:          runtime.Context,
 }
 ```
 
-`set_host_handler(window, &h)` — **before** loading a document. `serve(request, data)` answers with
+`set_host_handler(window, &h)` — **before** loading a document. A nil handler detaches (the trampoline
+stays installed with a null parameter: a window whose callback pointer is actually NULL segfaults
+inside the engine at the next notification). `serve(request, data)` answers with
 bytes and returns the right code. `Load_Request` is `{uri: string, type: Sciter_Resource_Type, raw:
 ^Scn_Load_Data}`; `Load_Result` is the engine's `.OK` / `.DISCARD` / `.DELAYED` / `.MYSELF`.
 
@@ -380,6 +446,23 @@ For an answer that cannot be given inside the callback: return `.DELAYED`, keep 
 and answer later with `data_ready_async(window, uri, data, request_id)`. Every delayed request must
 eventually be answered or it leaks. `data_ready(window, uri, data)` is the same push without a request
 id; both copy the data, unlike `serve`.
+
+### Posting work to the engine's thread
+
+`post_callback(window, wparam, lparam := 0)` is **the only call in this package that is safe from
+another thread**. It returns immediately and the two words come back out on the engine's thread as
+`on_posted(handler, Posted{wparam, lparam, raw})`, where the DOM is reachable again — which is how a
+background thread gets its results into the UI.
+
+Measured: it is delivery, not a call — the C API's `timeoutms` is not surfaced because a 3-second
+timeout from a worker thread against an engine thread stalled for 300ms still returned in
+microseconds, and the notification's `lreturn` never reaches the poster. Messages arrive in the order
+they were posted; `heartbeat` delivers them as well as `run_once`; a window with no host handler, and a
+nil window, drop them silently. Two words is a wake-up, not a transport — anything larger travels in a
+structure the two threads share. See `examples/worker_thread.odin`.
+
+`callback_param(window) -> rawptr` returns the handler pointer the engine holds, for a `proc "system"`
+callback that was handed only an HWINDOW: `(^Host_Handler)(callback_param(w)).user_data`.
 
 ## Requests — `request.odin`
 
@@ -458,8 +541,8 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 `sciter_app.Window` is a distinct `rawptr`, `Element` a distinct `sciter.Helement`, and `Value` is
 `sciter.Value` outright, so converting is a cast or nothing at all.
 
-Things you will reach for the raw table for today: `SciterFindElement` (hit-testing a point),
-`SciterCallBehaviorMethod`, `SciterHttpRequest`, and `gGetNativeDC` in the graphics table.
+Things you will reach for the raw table for today: `SciterHttpRequest`, and `gGetNativeDC` in the
+graphics table.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

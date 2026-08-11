@@ -1,0 +1,626 @@
+// Behavior methods: driving the engine's built-in widgets from Odin, and implementing methods of
+// your own.
+//
+//   just example behavior
+//   odin test examples/behavior.odin -file      # needs a display; skips itself without one
+//
+// A `<button>` is a `<button>` because of native code inside the engine - its *intrinsic behavior* -
+// and that code is reachable neither through the DOM nor through script. `SciterCallBehaviorMethod` is
+// the door to it, and `do_click` is the one call that matters in practice: it produces a real click,
+// where `send_event(el, .BUTTON_CLICK)` only injects the event code and leaves the widget untouched.
+//
+// The same call runs the other way. A method arrives at the element's own handlers as a `.METHOD_CALL`
+// event, so an `Event_Handler` can implement a method for native code to call - the native-to-native
+// counterpart of a scripting method.
+//
+// Hit testing and the window's metrics ride along here because they answer the same kind of question:
+// what is actually at this point, and how big does this window have to be.
+package main
+
+import sciter ".."
+import "../sciter_app"
+import "base:runtime"
+import "core:fmt"
+import "core:os"
+import "core:testing"
+
+DOC :: `<html>
+<head><style>
+  html     { background: #1e1e2e; color: #cdd6f4; font: 16px system; }
+  body     { padding: 2em; margin: 0; }
+  h1       { color: #89b4fa; margin-top: 0; }
+  p        { margin: .4em 0; }
+  #meter   { display: block; width: 220px; height: 40px; background: #313244; border-radius: 4px;
+             padding: .4em .8em; }
+  #out     { margin-top: 1em; padding: .6em 1em; background: #313244; border-radius: 4px;
+             font: 14px monospace; white-space: pre-wrap; }
+</style></head>
+<body>
+  <h1>behavior</h1>
+  <p><input id="agree" type="checkbox"> <label>a checkbox Odin will tick</label></p>
+  <p><button id="go">a button Odin will click</button></p>
+  <p><input id="name" type="text" value="typed by hand"></p>
+  <p><select id="pick"><option value="1">one</option><option value="2">two</option></select></p>
+  <div id="meter">a plain div with a behavior method of its own</div>
+  <div id="out">(Odin fills this in)</div>
+</body>
+</html>`
+
+// A method id of our own. Everything below `.FIRST_APPLICATION_METHOD_ID` (256) belongs to the engine.
+SET_LEVEL :: u32(sciter.Behavior_Method_Identifiers.FIRST_APPLICATION_METHOD_ID) + 0
+
+// Its parameter block. The **first field must be the u32 method id**; the rest is between the caller
+// and the handler, and the handler writes its answer back into the same struct.
+Set_Level_Params :: struct {
+	method_id: u32,
+	level:     u32, // in
+	clamped:   b32, // out - the handler says whether it had to clamp
+}
+
+// The handler that implements SET_LEVEL for #meter. It is an ordinary `Event_Handler`; the only thing
+// special about it is the `.METHOD_CALL` subscription.
+Meter :: struct {
+	using handler: sciter_app.Event_Handler,
+	element:       sciter_app.Element,
+	level:         u32,
+	calls:         int,
+}
+
+MAX_LEVEL :: 100
+
+on_meter_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	meter := (^Meter)(h)
+
+	mc, ok := sciter_app.method_call(event)
+	if !ok {
+		return false
+	}
+	meter.calls += 1
+
+	switch mc.id {
+	case SET_LEVEL:
+		p := (^Set_Level_Params)(mc.params)
+		p.clamped = b32(p.level > MAX_LEVEL)
+		meter.level = min(p.level, MAX_LEVEL)
+		sciter_app.set_text(meter.element, fmt.tprintf("level %d of %d", meter.level, MAX_LEVEL))
+		return true // this is what makes the caller's `handled` true
+	}
+
+	// The engine's own value protocol, which nothing in a plain document implements - so implementing
+	// it here is what makes `behavior_value(meter)` answer at all.
+	switch args in sciter_app.method_args(mc) {
+	case ^sciter.Value_Params:
+		if mc.id == u32(sciter.Behavior_Method_Identifiers.GET_VALUE) {
+			args.val = sciter_app.value_from(i32(meter.level))
+			return true
+		}
+		v, err := sciter_app.value_to_int(&args.val)
+		if err != nil {
+			return false
+		}
+		meter.level = u32(min(max(v, 0), MAX_LEVEL))
+		return true
+	case ^sciter.Is_Empty_Params:
+		args.is_empty = 1 if meter.level == 0 else 0
+		return true
+	}
+	return false
+}
+
+// Counts the BUTTON_CLICKs the document produces, so the difference between `do_click` and
+// `send_event` is visible rather than asserted.
+Clicks :: struct {
+	using handler: sciter_app.Event_Handler,
+	count:         int,
+	last:          sciter_app.Element,
+}
+
+on_click_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	clicks := (^Clicks)(h)
+	if be, ok := sciter_app.behavior_event(event); ok {
+		// Every behavior event arrives twice, sinking then bubbling. Count one of the two.
+		if be.code == .BUTTON_CLICK && be.phase != .Sinking {
+			clicks.count += 1
+			clicks.last = be.target
+		}
+	}
+	return false
+}
+
+main :: proc() {
+	if !sciter_app.load_engine() {
+		os.exit(1)
+	}
+	sciter_app.set_default_debug_output()
+
+	if err := sciter_app.init(); err != nil {
+		fmt.eprintln("init failed:", err)
+		os.exit(1)
+	}
+
+	window, werr := sciter_app.create_window({width = 720, height = 520})
+	if werr != nil {
+		fmt.eprintln("could not create a window:", werr)
+		os.exit(1)
+	}
+	if err := sciter_app.load_html(window, DOC); err != nil {
+		fmt.eprintln("could not load the document:", err)
+		os.exit(1)
+	}
+
+	root, _ := sciter_app.root(window)
+
+	// --- what is each element, really -----------------------------------------------------------
+
+	// The tag says what the markup called it; this says what the engine made of it. A <div> with
+	// `behavior: button` in its CSS would answer .BUTTON here.
+	fmt.println("control types:")
+	for selector in ([?]string{"#agree", "#go", "#name", "#pick", "#meter"}) {
+		el, err := sciter_app.select_first(root, selector)
+		if err != nil {
+			continue
+		}
+		type, _ := sciter_app.control_type(el)
+		fmt.printfln("  %-7s -> %v", selector, type)
+	}
+
+	// --- driving a widget -----------------------------------------------------------------------
+
+	clicks := new(Clicks)
+	clicks.subscription = {.BEHAVIOR_EVENT}
+	clicks.on_event = on_click_event
+	sciter_app.attach_window_handler(window, clicks)
+
+	agree, _ := sciter_app.select_first(root, "#agree")
+	button, _ := sciter_app.select_first(root, "#go")
+
+	// A real click: the checkbox flips and raises the events a user's click would.
+	handled, _ := sciter_app.do_click(agree)
+	state, _ := sciter_app.state(agree)
+	fmt.printfln("do_click(#agree)  handled=%v  now :checked = %v", handled, .CHECKED in state)
+
+	handled, _ = sciter_app.do_click(button)
+	// The state change is synchronous; the event the behavior raises is queued, so the pump has to turn
+	// once before a handler has seen it.
+	for _ in 0 ..< 10 {
+		sciter_app.run_once()
+	}
+	fmt.printfln("do_click(#go)     handled=%v  BUTTON_CLICKs seen so far = %d", handled, clicks.count)
+
+	// The contrast: this only injects the event code. Handlers hear a BUTTON_CLICK; the checkbox does
+	// not move, because the behavior never ran.
+	before, _ := sciter_app.state(agree)
+	sciter_app.send_event(agree, .BUTTON_CLICK, agree)
+	after, _ := sciter_app.state(agree)
+	fmt.printfln(
+		"send_event(#agree) :checked %v -> %v  (unchanged: the behavior was bypassed)",
+		.CHECKED in before,
+		.CHECKED in after,
+	)
+
+	// An element with no behavior has nothing to click.
+	meter_el, _ := sciter_app.select_first(root, "#meter")
+	handled, _ = sciter_app.do_click(meter_el)
+	fmt.printfln("do_click(#meter)  handled=%v  (a <div> has no behavior)", handled)
+
+	// --- a method of our own --------------------------------------------------------------------
+
+	meter := new(Meter)
+	meter.subscription = {.METHOD_CALL}
+	meter.on_event = on_meter_event
+	meter.element = meter_el
+	// A method call reaches only handlers attached to the element itself: not the window's, not an
+	// ancestor's. `attach_handler` on the element is the only attachment that receives one.
+	sciter_app.attach_handler(meter_el, meter)
+
+	p := Set_Level_Params {
+		method_id = SET_LEVEL,
+		level     = 42,
+	}
+	handled, _ = sciter_app.call_behavior_method(meter_el, &p)
+	fmt.printfln("SET_LEVEL 42      handled=%v clamped=%v", handled, bool(p.clamped))
+
+	p = Set_Level_Params {
+		method_id = SET_LEVEL,
+		level     = 9000,
+	}
+	sciter_app.call_behavior_method(meter_el, &p)
+	fmt.printfln("SET_LEVEL 9000    clamped=%v level is now %d", bool(p.clamped), meter.level)
+
+	// And the engine's own value protocol, answered by the same handler.
+	value, got, _ := sciter_app.behavior_value(meter_el)
+	defer sciter_app.value_clear(&value)
+	n, _ := sciter_app.value_to_int(&value)
+	fmt.printfln("behavior_value(#meter) handled=%v -> %d", got, n)
+
+	// Whereas no *intrinsic* behavior implements it: this is the one thing about these methods that
+	// has to be measured rather than read off the header.
+	name, _ := sciter_app.select_first(root, "#name")
+	_, got, _ = sciter_app.behavior_value(name)
+	text, _ := sciter_app.element_value(name)
+	defer sciter_app.value_clear(&text)
+	s, _ := sciter_app.value_to_string(&text, context.temp_allocator)
+	fmt.printfln("behavior_value(#name)  handled=%v   element_value -> %q", got, s)
+
+	// --- hit testing and window metrics ---------------------------------------------------------
+
+	// Where the button is, and then: what is at its middle? The point is in the window's client area,
+	// the same space `location(el, .Border, .View)` reports.
+	box, _ := sciter_app.location(button, .Border, .View)
+	if hit, err := sciter_app.element_at(window, {box.x + box.width / 2, box.y + box.height / 2}); err == nil {
+		tag, _ := sciter_app.tag(hit)
+		id, _ := sciter_app.attribute(hit, "id", context.temp_allocator)
+		fmt.printfln("element_at(centre of #go) -> <%s id=%q>", tag, id)
+	}
+	if _, err := sciter_app.element_at(window, {-10, -10}); err != nil {
+		fmt.printfln("element_at(-10,-10)       -> %v", err)
+	}
+
+	dpi := sciter_app.ppi(window)
+	body, _ := sciter_app.select_first(root, "body")
+	content_min, content_max, _ := sciter_app.intrinsic_widths(body)
+	fmt.printfln("ppi = %dx%d  (scale %.2f)", dpi.x, dpi.y, f32(dpi.x) / 96)
+	fmt.printfln(
+		"min_width = %d, min_height = %d  -- the *root's* intrinsic size, not the document's",
+		sciter_app.min_width(window),
+		sciter_app.min_height(window, 720),
+	)
+	fmt.printfln("<body> intrinsic widths = %d..%d  -- what the content actually wants", content_min, content_max)
+
+	out, _ := sciter_app.select_first(root, "#out")
+	sciter_app.set_html(
+		out,
+		fmt.tprintf(
+			"do_click produced %d BUTTON_CLICK(s)<br>meter level = %d<br>ppi = %dx%d",
+			clicks.count,
+			meter.level,
+			dpi.x,
+			dpi.y,
+		),
+	)
+
+	sciter_app.show(window)
+	sciter_app.run()
+	sciter_app.shutdown()
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tests
+//
+// These need a window, because a behavior has to exist before it can be called, and skip themselves
+// where there is no display. `ODIN_TEST_THREADS=1` is required - see the `example-tests` recipe.
+
+@(private = "file")
+have_display :: proc() -> bool {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		return true
+	} else {
+		return(
+			os.get_env("DISPLAY", context.temp_allocator) != "" ||
+			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
+		)
+	}
+}
+
+@(private = "file")
+g_window: sciter_app.Window
+
+@(private = "file")
+test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return nil, nil, false
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+
+	if g_window == nil {
+		// The engine holds the argv and the window for the life of the process, so both are allocated
+		// outside the test runner's tracking allocator - otherwise every test reports them as a leak.
+		context.allocator = runtime.default_allocator()
+
+		sciter_app.init()
+
+		w, err := sciter_app.create_window({width = 500, height = 400})
+		testing.expect_value(t, err, nil)
+		if w == nil {
+			return nil, nil, false
+		}
+		g_window = w
+	}
+
+	// Reload, so each test sees the document unmodified by the one before it. That also drops every
+	// handler attached to an element, which is what keeps the METHOD_CALL tests independent.
+	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
+	r, rerr := sciter_app.root(g_window)
+	testing.expect_value(t, rerr, nil)
+	return g_window, r, true
+}
+
+// The events a behavior raises are queued, not delivered inside the call that caused them, so a test
+// that watches for one has to let the pump turn first.
+@(private = "file")
+settle :: proc(n := 10) {
+	for _ in 0 ..< n {
+		sciter_app.run_once()
+	}
+}
+
+@(test)
+test_control_type_reports_the_behavior :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	for pair in ([?]struct {
+			selector: string,
+			type:     sciter.Ctl_Type,
+		} {
+			{"#agree", .CHECKBOX},
+			{"#go", .BUTTON},
+			{"#name", .EDIT},
+			{"#pick", .DD_SELECT},
+			{"#meter", .NO}, // a plain <div> has no behavior at all
+		}) {
+		el, err := sciter_app.select_first(root, pair.selector)
+		testing.expect_value(t, err, nil)
+		type, terr := sciter_app.control_type(el)
+		testing.expect_value(t, terr, nil)
+		testing.expectf(t, type == pair.type, "%s: got %v, want %v", pair.selector, type, pair.type)
+	}
+
+	// The document element too, which no selector reaches - see `select_first`.
+	root_type, rerr := sciter_app.control_type(root)
+	testing.expect_value(t, rerr, nil)
+	testing.expect_value(t, root_type, sciter.Ctl_Type.NO)
+}
+
+@(test)
+test_do_click_runs_the_behavior :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	clicks := Clicks {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = on_click_event,
+	}
+	testing.expect_value(t, sciter_app.attach_window_handler(window, &clicks), nil)
+	defer sciter_app.detach_window_handler(window, &clicks)
+
+	agree, _ := sciter_app.select_first(root, "#agree")
+
+	before, _ := sciter_app.element_state(agree)
+	testing.expect(t, .CHECKED not_in before, "the checkbox starts unticked")
+
+	handled, err := sciter_app.do_click(agree)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, handled, "a checkbox has a behavior, so DO_CLICK is handled")
+
+	after, _ := sciter_app.element_state(agree)
+	testing.expect(t, .CHECKED in after, "do_click ticked it - synchronously, unlike the event")
+
+	settle()
+	testing.expect_value(t, clicks.count, 1)
+
+	// It is a click, not a "set": clicking again toggles back.
+	sciter_app.do_click(agree)
+	settle()
+	again, _ := sciter_app.element_state(agree)
+	testing.expect(t, .CHECKED not_in again, "the second click unticked it")
+	testing.expect_value(t, clicks.count, 2)
+}
+
+@(test)
+test_send_event_does_not_run_the_behavior :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	clicks := Clicks {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = on_click_event,
+	}
+	testing.expect_value(t, sciter_app.attach_window_handler(window, &clicks), nil)
+	defer sciter_app.detach_window_handler(window, &clicks)
+
+	agree, _ := sciter_app.select_first(root, "#agree")
+
+	// The event code is delivered - a handler watching for clicks sees one - but the checkbox does not
+	// move, because the intrinsic behavior is bypassed entirely. That is the whole reason `do_click`
+	// exists next to `send_event`.
+	_, err := sciter_app.send_event(agree, .BUTTON_CLICK, agree)
+	testing.expect_value(t, err, nil)
+	settle()
+	testing.expect_value(t, clicks.count, 1)
+
+	state, _ := sciter_app.element_state(agree)
+	testing.expect(t, .CHECKED not_in state, "send_event left :checked alone")
+}
+
+@(test)
+test_do_click_on_an_element_without_a_behavior :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	meter, _ := sciter_app.select_first(root, "#meter")
+	handled, err := sciter_app.do_click(meter)
+	testing.expect_value(t, err, nil) // OK_NOT_HANDLED is a success
+	testing.expect(t, !handled, "a <div> has nothing to click")
+
+	// A detached element is a real failure, not an unhandled call.
+	orphan, oerr := sciter_app.make_element("button", "x")
+	testing.expect_value(t, oerr, nil)
+	defer sciter_app.unuse_element(orphan)
+	_, derr := sciter_app.do_click(orphan)
+	testing.expect_value(t, derr, sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
+}
+
+@(test)
+test_intrinsic_behaviors_do_not_implement_the_value_methods :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	name, _ := sciter_app.select_first(root, "#name")
+
+	// Measured on this engine, and the reason `behavior_value` carries a warning: the edit behavior
+	// answers GET_VALUE with "not handled" and no value.
+	value, handled, err := sciter_app.behavior_value(name)
+	defer sciter_app.value_clear(&value)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled, "no intrinsic behavior implements GET_VALUE on Sciter 6")
+
+	_, ihandled, ierr := sciter_app.behavior_is_empty(name)
+	testing.expect_value(t, ierr, nil)
+	testing.expect(t, !ihandled, "nor IS_EMPTY")
+
+	// SciterGetValue is the call that does answer, and it is a different one.
+	text, terr := sciter_app.element_value(name)
+	defer sciter_app.value_clear(&text)
+	testing.expect_value(t, terr, nil)
+	s, _ := sciter_app.value_to_string(&text, context.temp_allocator)
+	testing.expect_value(t, s, "typed by hand")
+}
+
+@(test)
+test_a_method_of_your_own_round_trips :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	meter_el, _ := sciter_app.select_first(root, "#meter")
+	meter := Meter {
+		subscription = {.METHOD_CALL},
+		on_event     = on_meter_event,
+		element      = meter_el,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(meter_el, &meter), nil)
+	defer sciter_app.detach_handler(meter_el, &meter)
+
+	// In, and out: the parameter block is the caller's memory, written in place by the handler while
+	// the call is still on the stack.
+	p := Set_Level_Params {
+		method_id = SET_LEVEL,
+		level     = 42,
+	}
+	handled, err := sciter_app.call_behavior_method(meter_el, &p)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, handled, "the handler returned true")
+	testing.expect(t, !bool(p.clamped), "42 is in range")
+	testing.expect_value(t, meter.level, 42)
+
+	p = Set_Level_Params {
+		method_id = SET_LEVEL,
+		level     = 9000,
+	}
+	sciter_app.call_behavior_method(meter_el, &p)
+	testing.expect(t, bool(p.clamped), "the handler reported the clamp back to the caller")
+	testing.expect_value(t, meter.level, MAX_LEVEL)
+
+	// An id nobody implements is not an error - it is a call nothing answered.
+	unknown := Set_Level_Params {
+		method_id = SET_LEVEL + 77,
+	}
+	uhandled, uerr := sciter_app.call_behavior_method(meter_el, &unknown)
+	testing.expect_value(t, uerr, nil)
+	testing.expect(t, !uhandled, "an unimplemented method id is unhandled, not failed")
+
+	// The engine's own ids reach the same handler, so a document element can implement the value
+	// protocol its behavior does not.
+	value, vhandled, verr := sciter_app.behavior_value(meter_el)
+	defer sciter_app.value_clear(&value)
+	testing.expect_value(t, verr, nil)
+	testing.expect(t, vhandled, "the handler answered GET_VALUE")
+	n, _ := sciter_app.value_to_int(&value)
+	testing.expect_value(t, n, i32(MAX_LEVEL))
+
+	empty, ehandled, _ := sciter_app.behavior_is_empty(meter_el)
+	testing.expect(t, ehandled, "the handler answered IS_EMPTY")
+	testing.expect(t, !empty, "level is not zero")
+}
+
+@(test)
+test_a_method_call_reaches_only_the_element :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	meter_el, _ := sciter_app.select_first(root, "#meter")
+	button, _ := sciter_app.select_first(root, "#go")
+
+	// The same handler, attached to the whole document rather than to one element.
+	watcher := Meter {
+		subscription = {.METHOD_CALL},
+		on_event     = on_meter_event,
+		element      = meter_el,
+	}
+	testing.expect_value(t, sciter_app.attach_window_handler(window, &watcher), nil)
+	defer sciter_app.detach_window_handler(window, &watcher)
+
+	p := Set_Level_Params {
+		method_id = SET_LEVEL,
+		level     = 5,
+	}
+	handled, err := sciter_app.call_behavior_method(button, &p)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled, "a window handler does not receive method calls")
+	testing.expect_value(t, watcher.calls, 0)
+}
+
+@(test)
+test_element_at_hit_tests_a_point :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	button, _ := sciter_app.select_first(root, "#go")
+	box, err := sciter_app.location(button, .Border, .View)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, box.width > 0 && box.height > 0, "the button was laid out")
+
+	hit, herr := sciter_app.element_at(window, {box.x + box.width / 2, box.y + box.height / 2})
+	testing.expect_value(t, herr, nil)
+	// The innermost element painted there - a <button> paints its own label, so it is the button.
+	tag, _ := sciter_app.tag(hit)
+	testing.expect_value(t, tag, "button")
+
+	// Off the document is Not_Found rather than an error.
+	_, merr := sciter_app.element_at(window, {-10, -10})
+	testing.expect_value(t, merr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	_, ferr := sciter_app.element_at(window, {30_000, 30_000})
+	testing.expect_value(t, ferr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	// And a nil window is a real failure, not an empty answer.
+	_, nerr := sciter_app.element_at(nil, {1, 1})
+	testing.expect_value(t, nerr, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+}
+
+@(test)
+test_window_metrics :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	// Let layout settle: these read the result of it, and are unstable before it has run.
+	for _ in 0 ..< 10 {
+		sciter_app.run_once()
+	}
+
+	dpi := sciter_app.ppi(window)
+	testing.expect(t, dpi.x > 0 && dpi.y > 0, "a window always has a resolution")
+
+	// The measured identity that the doc comment on `min_width` is about: these report the *root
+	// element's* intrinsic size. They are not "how big does this document want to be" - `<html>` fills
+	// the view, so its min-content width is a small constant whatever is inside it.
+	rmin, _, ierr := sciter_app.intrinsic_widths(root)
+	testing.expect_value(t, ierr, nil)
+	testing.expect_value(t, sciter_app.min_width(window), rmin)
+
+	rheight, herr := sciter_app.intrinsic_height(root, 400)
+	testing.expect_value(t, herr, nil)
+	testing.expect_value(t, sciter_app.min_height(window, 400), rheight)
+
+	// The width argument is ignored by this engine - the same number comes back for any of them.
+	testing.expect_value(t, sciter_app.min_height(window, 100), sciter_app.min_height(window, 800))
+
+	// The content's own width, which is the number a "size the window to its document" wants, comes
+	// from the element that holds the content.
+	body, _ := sciter_app.select_first(root, "body")
+	_, content_max, _ := sciter_app.intrinsic_widths(body)
+	testing.expect(t, content_max > sciter_app.min_width(window), "the content is wider than the root's minimum")
+}

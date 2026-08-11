@@ -117,6 +117,12 @@ if de, ok := sciter_app.draw_event(event); ok {
 	// returning true from on_event REPLACES that layer
 }
 
+if mc, ok := sciter_app.method_call(event); ok {
+	// mc.id     - the method id; yours if >= FIRST_APPLICATION_METHOD_ID (256)
+	// mc.params - the caller's parameter block, written in place
+	// method_args(mc) types it for the engine's own ids - see api.md, "Behavior methods"
+}
+
 if xe, ok := sciter_app.exchange_event(event); ok {
 	// xe.code   - .WILL_ACCEPT_DROP, .DRAG_ENTER, .DRAG, .DROP, ...
 	// xe.pos    - [2]i32, relative to the target element
@@ -339,8 +345,19 @@ The two handles also land the opposite way round from what the names suggest: `s
 `be.target`, so a handler written against real clicks reads a synthesised one backwards.
 
 **This is not the same as the user doing it.** It injects the event code into the element chain
-directly, bypassing the intrinsic behavior that would normally produce it: sending `.BUTTON_CLICK` to a
-`<button>` does not go through the button behavior, and a handler watching for clicks will not see one.
+directly, bypassing the intrinsic behavior that would normally produce it. Handlers do hear the event —
+a window handler counting `.BUTTON_CLICK`s counts this one — but nothing else happens: measured on a
+checkbox, `send_event(cb, .BUTTON_CLICK, cb)` leaves `:checked` exactly as it was.
+
+To drive the widget rather than announce it, call the behavior:
+
+```odin
+handled, err := sciter_app.do_click(checkbox)   // :checked flips, VALUE_CHANGED then BUTTON_CLICK
+```
+
+`do_click` is in [`behavior.odin`](../sciter_app/behavior.odin); `examples/behavior.odin` puts the two
+side by side. The state change is synchronous, the events it raises are queued, so a handler has not
+seen them until the pump turns.
 
 Use it for **application event codes of your own** — `Behavior_Events` values at or above
 `FIRST_APPLICATION_EVENT_CODE` — which have no behavior behind them and are exactly what this is for.
@@ -354,10 +371,11 @@ sciter_app.eval(window, "document.$('#ok').click()")
 
 That runs the behavior and produces the genuine event.
 
-`post_event` is also the tidy way to get work from a non-engine thread onto the engine's thread: queue
-an application event code and handle it in the pump. See
-[`architecture.md`](./architecture.md#threading) — every `ISciterAPI` call has to come from the thread
-that ran `SCITER_APP_INIT`.
+`post_event` queues an application event code for a later turn of the pump, but it is **not** the way
+in from another thread: like everything else here it has to be called on the engine's thread.
+[`post_callback`](./api.md#posting-work-to-the-engines-thread) is the one call that is safe from a
+worker. See [`architecture.md`](./architecture.md#threading) — every `ISciterAPI` call has to come from
+the thread that ran `SCITER_APP_INIT`.
 
 ## Debugging a handler that never fires
 

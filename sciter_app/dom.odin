@@ -101,6 +101,28 @@ select_parent :: proc(element: Element, selector: string, depth := 0) -> (found:
 	return Element(he), nil
 }
 
+// The topmost element at a point in the window - hit testing, the question a mouse asks.
+//
+//	el, err := sciter_app.element_at(window, {x, y})
+//
+// `pos` is in the window's client area, which is the space `location(el, .Border, .View)` reports and
+// the space `show_popup_at` takes - so a context menu at the pointer is these two calls back to back.
+// A point outside the document is `.Not_Found` rather than an error, and so is a negative one.
+//
+// "Topmost" is what a click would reach: the innermost element painted at that point, with `z-index`
+// and popups respected. Note that Sciter 6 draws its own titlebar as part of the document, so a point
+// near the top of the window can legitimately answer `<window-caption>`.
+//
+// A window that has never been shown still hit-tests, as long as its document has been laid out.
+element_at :: proc(window: Window, pos: [2]i32) -> (element: Element, err: Error) {
+	he: sciter.Helement
+	dom_err(sciter.api().SciterFindElement(rawptr(window), {x = pos.x, y = pos.y}, &he)) or_return
+	if he == nil {
+		return nil, .Not_Found
+	}
+	return Element(he), nil
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Traversal
 

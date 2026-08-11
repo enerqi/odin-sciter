@@ -118,9 +118,12 @@ Two traps found the hard way:
 Sciter is single-threaded. Every `ISciterAPI` call has to come from the thread that ran
 `SCITER_APP_INIT`. There is no locking to opt into and no "call from any thread" mode.
 
-To drive the UI from a worker, get back onto the engine's thread first. The options are `run_once` +
-`heartbeat` instead of `run` (so your own event source can share the thread), or a queued
-[`post_event`](./events.md#synthesising-events), or `SciterPostCallback` through the raw table.
+To drive the UI from a worker, get back onto the engine's thread first.
+[`post_callback(window, wparam, lparam)`](./api.md#posting-work-to-the-engines-thread) is the way, and
+the only call in `sciter_app` that is safe from another thread: it returns immediately and the two
+words come back out on the engine's thread as `Host_Handler.on_posted`. The other options are
+`run_once` + `heartbeat` instead of `run`, so your own event source can share the thread, and a queued
+[`post_event`](./events.md#synthesising-events) once you are already on the right thread.
 
 Odin's test runner is parallel by default, which is why every test recipe passes
 `-define:ODIN_TEST_THREADS=1`. Without it the engine's heap gets corrupted instead of the tests

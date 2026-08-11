@@ -120,11 +120,57 @@ content and route native access through an explicit bridge.
 | --- | --- | --- | --- | --- |
 | [Tauri](https://github.com/tauri-apps/tauri) / wry | Rust | MIT / Apache-2.0 | Rust — shim required | The mature one. Allowlisted `invoke` bridge, real mobile story |
 | [webview/webview](https://github.com/webview/webview) | Single C header | MIT | **Directly bindable** — one C header | No framework around it, which is the point |
-| [WebUI](https://github.com/webui-dev/webui) | C library | MIT | **Directly bindable** | Different bet again: uses the user's *installed browser*, bundles no webview at all. Smallest possible shipped artifact, at the cost of depending on whatever browser is present. Steady: 28 commits/90d |
+| [WebUI](https://github.com/webui-dev/webui) | C library | MIT | **Already bound**: `webui-dev/odin-webui` | Different bet again: drives the user's *installed browser*, bundles no webview at all. Smallest possible shipped artifact, at the cost of depending on whatever browser is present. See [below](#webui-in-detail) |
 | [Photino](https://www.tryphotino.io/) | .NET | MIT | Not practical | <1MB own binary but needs the .NET runtime present |
 | [Wails](https://github.com/wailsapp/wails) | Go | MIT | Not practical | The Go-ecosystem equivalent of Tauri |
 | [Neutralinojs](https://github.com/neutralinojs/neutralinojs) | Any language, over a local WebSocket/IPC protocol | MIT | Usable **without bindings** — talk the protocol | Loosest coupling in the table; also the least direct control |
 | [saucer](https://github.com/saucer/saucer) | C++ | MIT | C++ — shim required | Modern C++ webview wrapper. 1 commit on the default branch in the trailing 90 days — the repo's recent `pushed_at` reflects other branches, which is exactly the trap `pushed_at` sets |
+
+### WebUI, in detail
+
+WebUI gets its own subsection because it is the only entry in this document with **official Odin
+bindings maintained by the upstream project**, which makes it the shortest path from here to a
+sandboxed UI.
+
+It is not really an OS-webview wrapper, despite sitting in that table. It ships no engine and embeds no
+webview: it starts a local server, launches **a browser the user already has**, and talks to the page
+over a binary WebSocket protocol. Your document loads `webui.js` and that is the whole client side.
+
+```odin
+package main
+
+import ui "webui"
+
+main :: proc() {
+    my_window: uint = ui.new_window()
+    ui.show(my_window, "<html><script src=\"webui.js\"></script>Thanks for using WebUI!</html>")
+    ui.wait()
+}
+```
+
+Installation is a git submodule plus a `setup.sh` / `setup.ps1` that fetches the C library — no package
+manager, no system dependencies. Contrast `webview/webview`, which on Linux needs
+`libgtk-4-dev` + `libwebkitgtk-6.0-dev` (or the GTK3 / webkit2gtk-4.1 pairing) at build *and* run time.
+
+| | |
+| --- | --- |
+| Shipped size | "Few Kb library" per its README, plus your binary. Nothing else — no engine, no runtime |
+| Browsers driven | Firefox, Chrome, Edge, Chromium, Yandex, Brave, Vivaldi on all three platforms. Safari macOS "coming soon", unavailable on Linux/Windows. Opera "coming soon" everywhere |
+| Optional WebView mode | Yes, if you would rather embed than launch a browser |
+| Transport | Binary WebSocket over localhost; optional TLS via OpenSSL |
+| Isolation | The UI is a real browser page in a **private profile** — the strongest content sandbox in this document, stronger than CEF's, because it is a whole separate browser process tree you do not own |
+| Native access | Only what you expose across the socket. There is no ambient filesystem or device access from the page |
+
+**Health, and the caveat that matters.** The core is active — 28 commits in the trailing 90 days — but
+its newest release is **`2.5.0-beta.3`, published 2025-03-07**: no stable 2.5 has ever shipped, and the
+tag is more than a year old. The Odin bindings are worse: `webui-dev/odin-webui` has **0 commits in the
+trailing 90 days**, last pushed 2026-03-26, pinned at `v2.5.0-beta.3`. So "already bound for Odin" is
+true, and "actively maintained bindings" is not. Budget for carrying them yourself; they are a thin
+wrapper over a C API, which is the saving grace.
+
+The deeper tradeoff is architectural rather than technical, and it is covered in
+[the last section](#sandboxed-small-fast-and-reachable-from-odin): a WebUI app is a client/server
+application in which the server happens to be your own process.
 
 ### Not HTML/CSS at all
 
@@ -150,6 +196,7 @@ a hypothetical port of a C++ toolkit:
 | `vendor:raylib` (+ raygui) | Ships with the compiler | Game-oriented, includes basic widgets |
 | [Clay](https://github.com/nicbarker/clay) | Single-header C, **official Odin bindings** in `bindings/odin/` (verified present), zlib | Flexbox-like retained layout, renderer-agnostic, has an HTML renderer. **Cooling**: 8 commits in the trailing 90 days, all of them before 2026-05-20, so nothing for nearly three months. Usable and dependency-free regardless — it is a single header you vendor. [Full comparison below](#clay-in-detail) |
 | `vendor:nanovg`, `vendor:fontstash` | Ship with the compiler | Vector drawing and text, if you are building the UI layer yourself |
+| [`odin-webui`](https://github.com/webui-dev/odin-webui) | Upstream-authored Odin bindings, MIT, 104★ — but **0 commits in the trailing 90 days** | The sandboxed option: HTML/CSS/JS in the user's own browser, driven from Odin over a localhost socket. [Detail above](#webui-in-detail) |
 
 None of these give you HTML/CSS authoring, and that is exactly the trade: Sciter costs a 25MB
 proprietary binary and a binding layer; microui costs an import statement.
@@ -560,3 +607,110 @@ curl -s "https://api.github.com/repos/orca-app/orca/releases?per_page=100" | gre
 
 Read: maintained, not dead, but pre-1.0, cooling, no ship date, and missing the platform this project
 targets first. A watch item, not a dependency.
+
+## Sandboxed, small, fast, and reachable from Odin
+
+The combination worth asking about directly, since it is the one Sciter *doesn't* satisfy — Sciter is
+small-ish and Odin-reachable, but deliberately not sandboxed. Filtering the whole document against all
+four constraints at once produces a short list and one structural surprise.
+
+### Sandboxed and Clay cannot be combined for a native app
+
+Not a gap in the options — a consequence of what the words mean here. "Sandboxed" in this document means
+the UI content runs inside something else's process boundary: a browser, a webview, or a wasm host. In
+all three, the UI language is fixed by the host — HTML/CSS/JS for the first two, the host's own canvas
+API for Orca. [Clay](#clay-in-detail) emits render commands for a native graphics backend *you* own, so
+there is nowhere to put it inside a sandbox someone else defines.
+
+Clay becomes available again only when **your Odin code is the thing inside the sandbox** — i.e. when
+you compile to wasm. That splits the answer into two routes that share no components.
+
+### Route A — sandboxed content, Odin stays native
+
+The UI is HTML/CSS/JS in a browser or webview; Odin is the host on the other side of a bridge. Clay is
+irrelevant here.
+
+| | Verdict |
+| --- | --- |
+| **[WebUI](#webui-in-detail)** | **Best fit.** Pure C, few-KB library, official (if stale) Odin bindings, no GTK/WebKit build dependency, strongest isolation of the three because the page runs in a separate browser in a private profile. Costs a browser dependency at runtime and a beta-only release history |
+| `webview/webview` | Directly bindable from one C header, but on Linux drags in **GTK + WebKitGTK** at build and run time — the toolkit dependency this project exists without — and gives you three different rendering engines across platforms. No Odin bindings |
+| Neutralinojs | No bindings needed at all (local WebSocket protocol), but NOASSERTION licensing, an extra process, and the least control of the three |
+
+### Route B — Odin inside the sandbox, Clay as the toolkit
+
+| | Verdict |
+| --- | --- |
+| **Odin `js_wasm32` + Clay** | Clay's Odin bindings ship a **`wasm/clay.o`**, so this actually works: browser sandbox, tiny, Clay does layout, everything in Odin. You still write the canvas/WebGL backend and the text-measure callback. The catch is not technical — it is a web page, so no filesystem and distribution is a URL |
+| Orca | The **only option in this document that satisfies all four constraints simultaneously** — sandboxed by design, small, capability-gated file access, and a first-class Odin target (`-target:orca_wasm32`, `core:sys/orca`). And it is unavailable here: Windows and macOS only, no Linux, pre-1.0, never released, 7 commits/90d |
+
+That Orca is the clean answer and cannot be used is the honest summary of this axis.
+
+### When the sandbox and the local logic are actually needed
+
+Route A has a property worth noticing: **a WebUI or Neutralino app is a client/server application in
+which the server happens to be your own process.** Having chosen it, you inherit the entire hypermedia
+argument — the same one [Datastar](#hypermedia-datastar) is built around, and the same one that plays
+out between server-rendered HTML and single-page applications.
+
+The usual framing of that debate is misleading, and the confusion carries directly into this decision.
+It is not "server state versus client state". Every architecture keeps UI-only state on the client —
+which panel is open, what is hovered, which row is selected, what is focused, what is optimistically
+shown before confirmation. Hypermedia advocates do not dispute that; Datastar ships signals precisely
+for it. The real axis is narrower:
+
+> **Does the interaction loop have to cross a boundary, and what does that boundary cost?**
+
+Which makes it a latency question, and the boundaries in this document differ by orders of magnitude:
+
+| Boundary | Order of magnitude | Fits inside a 60fps frame? |
+| --- | --- | --- |
+| In-process call — Sciter's `sciter::om`, native ImGui/Clay | sub-microsecond | Thousands of times over |
+| Localhost socket — **WebUI**, Neutralino | tens of microseconds to ~1ms | Yes, comfortably |
+| Process-sandbox IPC — CEF, Electron, Tauri's `invoke` | ~microseconds to ~1ms | Yes |
+| Network round trip — Datastar and any real hypermedia app | ~10–200ms | No, not once |
+
+(Orders of magnitude, from the architectures rather than measured here — unlike the engine figures
+elsewhere in this document, which were measured. The 16.7ms frame budget is arithmetic: 1/60s.)
+
+The conclusion that matters: **the objection usually raised against hypermedia — "a round trip per
+interaction is too slow for a rich UI" — largely does not apply to Route A.** A localhost round trip is
+two to four orders of magnitude cheaper than an internet one, and disappears inside a frame. Most of
+what makes server-driven UI feel sluggish on the web is simply absent when the server is a process on
+the same machine.
+
+What *does* survive the move to localhost, and is the real cost of Route A:
+
+- **You must serialize.** Every value crossing the boundary is encoded and decoded. Pointers, handles
+  and large buffers do not cross; they get copied or referenced by id.
+- **You cannot do per-frame work across it.** One round trip inside a frame is fine. Sixty round trips
+  per second, each carrying a re-serialized data structure, is a different proposition — and dragging,
+  resizing, canvas painting, timeline scrubbing and data-driven animation are exactly that.
+- **You cannot share memory.** A large table, an image buffer or a mesh lives on one side. Interactions
+  that need it on the other side pay for it repeatedly.
+
+So the genuine requirement for local logic and no boundary is not "the app is complex" or "the app is
+interactive". It is one of:
+
+1. **Sub-frame interaction over shared data** — drag, scrub, paint, live-resize, direct manipulation of
+   something big.
+2. **Data too large or too pointer-shaped to serialize per interaction.**
+3. **Native APIs with no serializable shape** — file handles, devices, GPU resources.
+4. **A hard no-runtime-dependency guarantee** — no browser present, offline, locked-down machine.
+
+If none of those hold — forms, CRUD, settings, wizards, dashboards, navigation, anything whose loop runs
+at human pace — the boundary is free, and Route A gives you a sandbox, a few-KB dependency and no engine
+to ship. That is a genuinely better trade than a 25MB proprietary binary.
+
+If one of them holds, the boundary is the whole problem, and the choice is between Sciter (no boundary,
+HTML/CSS/JS, 25MB, closed vendor) and a native toolkit (no boundary, no markup, small, and you write
+more of it — [Clay](#clay-in-detail) plus `vendor:raylib` or `vendor:sdl3`).
+
+### Summary
+
+| If you need | Take |
+| --- | --- |
+| Sandbox + tiny + Odin + native window, human-paced interaction | **WebUI** via `odin-webui`, carrying the bindings yourself |
+| Sandbox + Clay as the toolkit, and a URL is acceptable delivery | **Odin `js_wasm32` + Clay** (`wasm/clay.o`) |
+| All four constraints properly satisfied | **Orca** — and wait for Linux support, or pick something else |
+| Sub-frame interaction, big local data, native APIs — and HTML/CSS authoring | **Sciter**, which is why it has no sandbox |
+| Sub-frame interaction, and no need for HTML/CSS | **Clay + `vendor:raylib`/`vendor:sdl3`** — smallest, fastest, entirely in-tree |

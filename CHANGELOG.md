@@ -33,7 +33,13 @@ tag `6.0.4.9-bis`.
   and `update_element` / `refresh_element_area` / `request_paint` are what re-resolve and repaint it;
   the master stylesheet and the window's `@media` type and flags are settable; popups and mouse capture
   are wrapped; focus and the inspector's highlight are readable and settable; `fire_event` carries a
-  named event with a payload, which is the channel to script's `element.on("name", …)`; and **SOM** -
+  named event with a payload, which is the channel to script's `element.on("name", …)`; **behavior
+  methods** - `behavior.odin` - reach the native code behind an element, so `do_click` produces a real
+  click where `send_event` only injects the event code, `control_type` says which behavior an element
+  actually carries, and a `.METHOD_CALL` handler can implement a method for native code to call;
+  `element_at` hit-tests a point and `ppi` / `min_width` / `min_height` report the window's metrics;
+  `post_callback` is the one call safe from another thread, delivering two words to the engine's thread
+  as `Host_Handler.on_posted`, which is how a worker gets its results into the UI; and **SOM** -
   `som.odin` - exposes an Odin object to script, with properties and methods, through
   `make_asset_class` / `make_asset` / `set_global_asset`; `value_parse` reads text as a value and `value_each` walks a
   container in one call; and `atom` / `atom_name` cover the engine's interned names, which the SOM side
@@ -49,10 +55,11 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Fifteen, each a single self-contained file with its explanation in the header comment: `hello_window`,
-`api_map`, `load_file`, `eval`, `call_odin_from_js`, `dom_walk`, `events`, `drag_and_drop`, `graphics`,
-`custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a
-native extension the engine loads).
+Seventeen, each a single self-contained file with its explanation in the header comment:
+`hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
+`dom_walk`, `events`, `behavior`, `worker_thread`, `drag_and_drop`, `graphics`, `custom_loader`,
+`request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a native extension
+the engine loads).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
 to the symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on
@@ -60,7 +67,7 @@ Windows.
 
 ### Tests
 
-123 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+137 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -72,8 +79,12 @@ published and read back, the media-type/media-flag split, the master stylesheet'
 behaviour, popups going out of flow and what they refuse, mouse capture's answer to an element in no
 document, focus following the `:focus` state, named events with their payloads and the broadcast that
 only window handlers see, a SOM asset read, written and called from script, elements crossing into
-script and back in both directions, and the request API driven by a real document load, skip themselves
-without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
+script and back in both directions, the behavior methods - `do_click` toggling a checkbox where
+`send_event` leaves it alone, a method of the caller's own round-tripping through a `.METHOD_CALL`
+handler, and the measured fact that no intrinsic behavior implements `GET_VALUE` / `SET_VALUE` /
+`IS_EMPTY` on this engine - hit testing and the window metrics, posted callbacks from this thread and
+from a worker with their ordering and their delivery by `heartbeat` alone, and the request API driven
+by a real document load, skip themselves without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
 the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
 ### Documentation

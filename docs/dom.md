@@ -83,6 +83,21 @@ error check is the existence check. `select_all` returns matches in document ord
 allocated with the supplied allocator and is the caller's to `delete`, while the handles in it are
 borrowed and are **not** `use_element`ed.
 
+### By position
+
+The other way to find an element is to point at it — hit testing, the question a mouse asks:
+
+```odin
+el, err := sciter_app.element_at(window, {x, y})     // .Not_Found off the document
+```
+
+The point is in the window's client area, which is the space `location(el, .Border, .View)` reports
+and the space `show_popup_at` takes — so "put a context menu where the pointer is" is those two calls
+back to back. What comes back is what a click would reach: the innermost element painted there, with
+`z-index` and popups respected. Sciter 6 draws its own titlebar as part of the document, so a point
+near the top of the window can legitimately answer `<window-caption>`. A window that has never been
+shown still hit-tests, as long as its document has been laid out.
+
 ## Traversal
 
 ```odin
@@ -467,6 +482,32 @@ This is the measurement a container makes before deciding how much room to hand 
 min, max, _ := sciter_app.intrinsic_widths(el)   // narrowest wrap, and one line
 tall, _ := sciter_app.intrinsic_height(el, min)  // narrower is taller
 ```
+
+### Window metrics
+
+```odin
+dpi := sciter_app.ppi(window)                    // 96 is unscaled; dpi.x / 96 is the scale factor
+narrowest := sciter_app.min_width(window)
+```
+
+`ppi` is only needed when talking to something that is not already in the engine's scaled pixels —
+everything in this package, `location` and `element_at` included, already is.
+
+`min_width` and `min_height` look like "how small may this window be", and they are not.
+**Measured, on five documents: they return exactly `intrinsic_widths(root).min` and
+`intrinsic_height(root, …)`.** Because `<html>` fills the view by default its min-content width is a
+small constant — 16px against the vendored engine — however wide the content inside it is, so
+`min_width` answers the same number for a 600px-wide child as for an empty body. They mean something
+only when the root itself is sized by its content:
+
+```css
+html, body { width: max-content; height: max-content }   /* now min_width is the content's width */
+```
+
+with which a 500×250 child measured 516 and 296. `min_height` also **ignores its `for_width`
+argument** — the same number comes back for 100, 400 and 800 — and both are only meaningful once
+layout has run. To size a window to its document, ask `intrinsic_widths` / `intrinsic_height` of the
+element that actually holds the content, usually `<body>`.
 
 ### Scrolling
 

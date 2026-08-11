@@ -8,8 +8,8 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and fifteen examples, 123 tests and eleven guides
-> cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
+> engine, there is an Odin-shaped layer on top of them, and seventeen examples, 137 tests and eleven
+> guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
 
@@ -124,9 +124,11 @@ Run one with `just example NAME`.
 | `api_map` | Walks all 189 `ISciterAPI` slots and resolves each to its symbol. The upgrade check. |
 | `load_file` | Loading a document from disk, and why relative URLs need a base URL |
 | `eval` | Running JavaScript from Odin and reading results back as `Value`s |
-| `call_odin_from_js` | The other direction: exposing an Odin procedure to script |
+| `call_odin_from_js` | The other direction: exposing an Odin procedure — and an Odin object — to script |
 | `dom_walk` | CSS selectors, traversal, and reading and writing text and attributes |
 | `events` | Handling DOM events in Odin, without any script in the document |
+| `behavior` | Driving the built-in widgets — a real click, hit testing, and a behavior method of your own |
+| `worker_thread` | Getting work off the UI thread and its results back on, with `post_callback` |
 | `graphics` | Drawing with the engine's renderer: a custom-painted element, and an offscreen image |
 | `drag_and_drop` | Accepting a system drop through the `.EXCHANGE` event group |
 | `custom_loader` | Serving a document's CSS and images from memory via the `SC_LOAD_DATA` host callback |

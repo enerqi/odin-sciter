@@ -1,16 +1,28 @@
-// Exposing an Odin procedure to JavaScript.
+// Exposing Odin to JavaScript, both ways round: a procedure, and an object.
 //
 //   just example call_odin_from_js
 //
-// `eval` and `call` go one way: Odin drives script. This is the other direction. A VALUE can hold a
-// pointer to an Odin procedure - a "native functor" - and script then calls it like any other
-// function. Put one in the document's globals and it is reachable as `globalThis.name`.
+// `eval` and `call` go one way: Odin drives script. This is the other direction, and there are two
+// shapes of it.
 //
-// Two things to keep straight:
+// A **native functor** is a VALUE holding a pointer to an Odin procedure. Script calls it like any
+// other function; put one in the document's globals and it is `globalThis.name`. That is
+// `odin_reverse` and `odin_stats` below.
 //
-//   - the globals belong to the *document*, not the window, so this has to be redone after every load
-//   - the procedure runs on the engine's thread, inside script's stack frame. Blocking here freezes
-//     the UI, and panicking here unwinds through C++
+// A **SOM asset** is an Odin *object*: properties script can read and write, and methods it can call,
+// under one name. That is `Backend` below. It is the shape to reach for when the document is written
+// against an application model rather than against a handful of loose functions - `Backend.calls`
+// reads a getter in Odin, `Backend.calls = 0` runs a setter, `Backend.reset()` runs a method.
+//
+// Three things to keep straight:
+//
+//   - the globals belong to the *document*, not the window, so a functor has to be republished after
+//     every load. An asset is the other way round: **it has to be published *before* the load**, and
+//     appears in the next document rather than the current one.
+//   - both run on the engine's thread, inside script's stack frame. Blocking there freezes the UI, and
+//     panicking there unwinds through C++
+//   - SOM properties are not enumerable: `Object.keys(Backend)` is empty even though every property
+//     works. Script has to know the names, which is the normal case for an interface.
 package main
 
 import "../sciter_app"
@@ -41,6 +53,17 @@ DOC :: `<html>
       "  uptime  = " + s.uptime.toFixed(3) + "s\n" +
       "  message = " + s.message;
   });
+  // Backend is not defined in this document either. Odin published it as a SOM asset, before the
+  // document was loaded - which is the one thing an asset needs that a functor does not.
+  document.on("click", "button#asset", function() {
+    Backend.greeting = "set from script";
+    document.$("#out").innerText =
+      "Backend is " + Backend + "\n" +
+      "  Backend.calls    = " + Backend.calls + "   (a getter, in Odin)\n" +
+      "  Backend.greeting = " + Backend.greeting + "   (just written by a setter, in Odin)\n" +
+      "  Backend.sum(2,3) = " + Backend.sum(2, 3) + "   (a method, in Odin)\n" +
+      "  Object.keys()    = [" + Object.keys(Backend) + "]   (SOM members are not enumerable)";
+  });
 </script>
 </head>
 <body>
@@ -49,16 +72,19 @@ DOC :: `<html>
   <p>
     <button id="reverse">odin_reverse(input)</button>
     <button id="stats">odin_stats()</button>
+    <button id="asset">Backend (a SOM asset)</button>
   </p>
   <div id="out">Click a button. Both handlers call into Odin.</div>
 </body>
 </html>`
 
 // State the exposed procedures share. Its address is handed to `value_from_function` as user_data and
-// comes back on every call, which is how a native functor gets at anything other than globals.
+// comes back on every call, which is how a native functor gets at anything other than globals. An
+// asset carries the same pointer, as `Asset.user_data`.
 App :: struct {
-	calls:   int,
-	started: time.Time,
+	calls:    int,
+	started:  time.Time,
+	greeting: string,
 }
 
 main :: proc() {
@@ -73,14 +99,45 @@ main :: proc() {
 	}
 
 	app := App {
-		started = time.now(),
+		started  = time.now(),
+		// Cloned rather than assigned from the literal: the setter below frees what is there before
+		// replacing it, and a string literal lives in static memory and cannot be freed.
+		greeting = strings.clone("built in Odin"),
 	}
+	defer delete(app.greeting)
+
+	// The asset's class - the shape script sees. It has to outlive every asset built from it *and* the
+	// engine, per the C header, so one made here and destroyed at shutdown is the intended lifetime.
+	class, cerr := sciter_app.make_asset_class(
+		"Backend",
+		{
+			{name = "calls", get = get_calls, set = set_calls},
+			{name = "greeting", get = get_greeting, set = set_greeting},
+		},
+		{{name = "sum", params = 2, call = backend_sum}, {name = "reset", call = backend_reset}},
+	)
+	if cerr != nil {
+		fmt.eprintln("could not build the asset class:", cerr)
+		os.exit(1)
+	}
+	defer sciter_app.destroy_asset_class(class)
+
+	backend := sciter_app.make_asset(class, &app)
+	defer sciter_app.destroy_asset(backend)
 
 	window, werr := sciter_app.create_window({width = 720, height = 460})
 	if werr != nil {
 		fmt.eprintln("could not create a window:", werr)
 		os.exit(1)
 	}
+	// Before the load, not after: a global asset appears in the *next* document, and publishing it
+	// after this line would leave `Backend` undefined for the document that uses it.
+	if err := sciter_app.set_global_asset(backend); err != nil {
+		fmt.eprintln("could not publish the Backend asset:", err)
+		os.exit(1)
+	}
+	defer sciter_app.release_global_asset(backend)
+
 	if err := sciter_app.load_html(window, DOC); err != nil {
 		fmt.eprintln("could not load the document:", err)
 		os.exit(1)
@@ -115,6 +172,24 @@ main :: proc() {
 
 		s, _ := sciter_app.value_to_string(&v, context.temp_allocator)
 		fmt.printfln(`script called odin_reverse("stressed") -> %q`, s)
+	}
+
+	// The same proof for the asset: script reaching an Odin object by name - a method, a setter and a
+	// getter in one line.
+	{
+		v, err := sciter_app.eval(
+			window,
+			`Backend.greeting = "set by script"; Backend.sum(20, 22) + ":" + Backend.greeting`,
+		)
+		if err != nil {
+			fmt.eprintln("eval failed:", err)
+			os.exit(1)
+		}
+		defer sciter_app.value_clear(&v)
+
+		s, _ := sciter_app.value_to_string(&v, context.temp_allocator)
+		fmt.printfln("script evaluated a Backend expression -> %q", s)
+		fmt.printfln("Odin now holds greeting = %q", app.greeting) // the setter ran in Odin
 	}
 
 	sciter_app.show(window)
@@ -170,6 +245,68 @@ odin_stats :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Va
 	sciter_app.value_set(&result, "message", &message)
 
 	return result
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The Backend asset
+//
+// A getter hands the engine a Value and gives up its reference - do not clear it. A setter borrows the
+// one it is given. Both, and every method, get the asset back, so `asset.user_data` is the way to the
+// application's state.
+
+get_calls :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	app := (^App)(asset.user_data)
+	return sciter_app.value_from(i32(app.calls)), true
+}
+
+set_calls :: proc(asset: ^sciter_app.Asset, value: ^sciter_app.Value) -> bool {
+	app := (^App)(asset.user_data)
+	n, err := sciter_app.value_to_int(value)
+	if err != nil {
+		return false // reported to script as a failed assignment
+	}
+	app.calls = int(n)
+	return true
+}
+
+get_greeting :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {
+	app := (^App)(asset.user_data)
+	return sciter_app.value_from(app.greeting), true
+}
+
+set_greeting :: proc(asset: ^sciter_app.Asset, value: ^sciter_app.Value) -> bool {
+	app := (^App)(asset.user_data)
+	s, err := sciter_app.value_to_string(value, context.temp_allocator)
+	if err != nil {
+		return false
+	}
+	// The Value is borrowed for the call, so anything kept has to be copied out of it.
+	delete(app.greeting)
+	app.greeting = strings.clone(s)
+	return true
+}
+
+// A method. `args` is borrowed; the result is handed to the engine like a getter's.
+backend_sum :: proc(asset: ^sciter_app.Asset, args: []sciter_app.Value) -> (sciter_app.Value, bool) {
+	app := (^App)(asset.user_data)
+	app.calls += 1
+
+	// The engine reports a method's arity but does not enforce it, so the count is worth checking.
+	total: i32
+	for &arg in args {
+		n, err := sciter_app.value_to_int(&arg)
+		if err != nil {
+			return sciter_app.value_from("sum takes numbers"), true
+		}
+		total += n
+	}
+	return sciter_app.value_from(total), true
+}
+
+backend_reset :: proc(asset: ^sciter_app.Asset, args: []sciter_app.Value) -> (sciter_app.Value, bool) {
+	app := (^App)(asset.user_data)
+	app.calls = 0
+	return {}, true // an undefined Value, which is script's `undefined`
 }
 
 utf8_runes :: proc(s: string, allocator := context.allocator) -> []rune {
