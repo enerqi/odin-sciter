@@ -7,6 +7,67 @@ that needs discipline, so it comes first.
 Runnable versions of everything here: [`examples/eval.odin`](../examples/eval.odin) and
 [`examples/call_odin_from_js.odin`](../examples/call_odin_from_js.odin).
 
+## Why lifetime is the hard part
+
+The rules below look fussy in isolation. They exist because binding two languages to one set of objects
+creates a specific, well-known problem: **two ownership systems, one object.** Every language binding to
+a native UI toolkit hits it, and the three big resolutions of it are worth knowing, because this package
+picked the third.
+
+The problem produces two symmetric failures, which read as unrelated bugs until you see the shape:
+
+| | Cause | Symptom |
+| --- | --- | --- |
+| **Premature free** | Your side dropped the last reference while the engine still expected the object | Crash, or a mysteriously empty UI |
+| **Dangling wrapper** | The engine freed it while you still hold a handle | Crash on next use — and there is no safe way to test the handle first |
+
+And, in a garbage-collected host, a third: **cross-language cycles**, where the collector cannot trace
+through the native side and the cycle simply leaks.
+
+### Three ways this gets resolved
+
+**The browser DOM — solved, expensively.** DOM nodes are C++ objects with JavaScript wrappers, exactly
+this problem at enormous scale. Browser engines answered it with cross-heap tracing: the collector
+follows references through the C++ objects into the script wrappers and back, so cycles spanning the
+boundary are reclaimed. It works, and it is why the wrapper graph is a *throughput* cost — a large
+retained tree is a lot to trace, discussed in
+[`ALTERNATIVES.md`](./ALTERNATIVES.md#gc-pauses--yes-but-not-only-javascript) — rather than a
+correctness cost. The price was years of engine work that only a browser vendor can afford.
+
+**Qt and PyQt/PySide — unsolved, delegated to you.** Every `QObject` gets a Python wrapper, and two
+lifetime disciplines run over the same memory: Python's refcount and cycle collector, and Qt's
+parent-child ownership, where a parent deletes its children and calls like `layout.addWidget(w)` or
+`setParent()` transfer ownership across the boundary implicitly. Both failure modes above are routine —
+a parentless widget collected too early, or the famous
+`RuntimeError: wrapped C/C++ object of type X has been deleted` for the reverse. Cross-language cycles
+just leak, because Python's collector cannot see C++ parent chains. The decisive weakness is that
+**ownership is per-API and implicit**: which side owns an object depends on which call you last made,
+and that fact is not in the type.
+
+**This package — the problem shrinks, but does not vanish.** Odin has no garbage collector, so the cycle
+class disappears outright: nothing traces, so nothing can fail to trace. What remains is ownership, and
+the answer here is to make it explicit per object kind rather than clever:
+
+| Kind | Discipline | Where |
+| --- | --- | --- |
+| `Value` | Engine-returned values own a reference; the receiver owes a `value_clear`. `value_copy` owes a second. A `Value` passed *to* the engine is not consumed | below, and `sciter_app/value.odin` |
+| `Element` | Handles are **borrowed** — valid while the element is in the document. To outlive the callback, `use_element` / `unuse_element`. An element you *made* is already yours | [Passing elements](#passing-elements), `sciter_app/dom.odin` |
+| `Asset` | The Odin side owns the storage outright | `sciter_app/som.odin` |
+
+That third row is the general escape hatch, and it is worth stating as a technique rather than a
+detail. The engine reference counts assets, and this package **declines to participate**:
+`asset_add_ref` and `asset_release` return a constant `1` and never free anything, because — as the
+comment there puts it — "an Asset belongs to whoever made it, and freeing it from under `destroy_asset`
+would be worse than holding it a moment too long."
+
+> **Do not let a foreign reference count decide when your memory dies.** Let the other side count for
+> its own bookkeeping, and keep allocation lifetime on exactly one side.
+
+That is precisely the option PyQt does not have, because Qt genuinely does own widgets and will delete
+them whatever Python thinks. Sciter's SOM assets leave the choice open, so this package takes it. Where
+the engine really does own the object — `Value`'s referenced payloads, elements in the document — the
+rules below are not avoidable, and `defer value_clear` is the discipline that pays for them.
+
 ## Value
 
 `Value` is the engine's variant type — 16 bytes of plain data that may own a reference to something

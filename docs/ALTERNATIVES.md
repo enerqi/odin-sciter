@@ -714,3 +714,242 @@ more of it — [Clay](#clay-in-detail) plus `vendor:raylib` or `vendor:sdl3`).
 | All four constraints properly satisfied | **Orca** — and wait for Linux support, or pick something else |
 | Sub-frame interaction, big local data, native APIs — and HTML/CSS authoring | **Sciter**, which is why it has no sandbox |
 | Sub-frame interaction, and no need for HTML/CSS | **Clay + `vendor:raylib`/`vendor:sdl3`** — smallest, fastest, entirely in-tree |
+
+## Dropping the Odin constraint
+
+The same question with the binding requirement removed — sandboxed, fast, cross-platform, any language.
+It mostly does collapse into the HTML/CSS/JS world, but for a more specific reason than "web won", and
+with one escape hatch that is easy to miss.
+
+### There are only three sandbox technologies
+
+That is the whole reason the field feels collapsed. Trustworthy sandboxes were built by browser vendors
+and wasm runtimes; nobody else ships one, so requiring a sandbox means adopting somebody else's.
+
+| Sandbox | Provided by | What it confines |
+| --- | --- | --- |
+| Browser / webview process sandbox | Chromium, WebKit | The UI **content**, from your host process |
+| WASM | A browser, or a standalone host (Orca, Wasmtime/WASI) | **Your code**, from the machine |
+| **OS-level** — Flatpak, macOS App Sandbox, Windows AppContainer/MSIX, seccomp | The operating system | **Your whole application, whatever toolkit it uses** — but see the caveat below |
+
+The first two drag you into the browser world. The third does not, and it is routinely forgotten — but
+it is also **not one sandbox**. It is three unrelated ones with a shared goal, which matters more than
+it first appears:
+
+| | Mechanism | Applies when |
+| --- | --- | --- |
+| Linux | Flatpak (or Snap): builder manifest, `--filesystem=` grants, xdg-desktop-portal for file dialogs and screen capture | Only if the user installs *that package*. A `.deb` or a tarball is unconfined |
+| macOS | App Sandbox: entitlements plist; separately, hardened runtime and notarization | Mandatory for the App Store, optional outside it |
+| Windows | AppContainer / MSIX: package manifest capabilities | Mandatory for the Store, optional outside it |
+
+Three manifest formats, three capability vocabularies, three sets of "what breaks once confined" bugs —
+file dialogs, IPC, auto-update, GPU access, font enumeration — and three test matrices. Worse for a
+security argument: **the confinement only exists if the user installed through that channel.** A
+side-loaded build of the same application is unconfined on all three platforms.
+
+The browser and wasm sandboxes have neither property. One model, everywhere, always on, regardless of
+how the application was delivered. If cross-platform consistency is a floor requirement rather than a
+preference — and for most application developers it is — that uniformity is the entire point, and it is
+what the OS-level route cannot offer.
+
+Which leaves a real gap worth naming: **there is no mature cross-platform sandbox that is not a
+browser.** The slot belongs to wasm hosts with one capability model everywhere, and in practice it is
+empty — Orca is pre-1.0, unreleased and missing Linux; WASI has no UI story at all. That absence is why
+the field collapses toward browser engines, more than any property of HTML or CSS.
+
+### The threat model decides this, not the toolkit
+
+Two questions that look identical and have opposite answers:
+
+- **Untrusted content** — you render HTML/JS you did not author: plugins, user scripts, remote pages,
+  anything user-supplied. You need an *in-app content* boundary, so you need a browser engine or a wasm
+  host. This genuinely does collapse to HTML/CSS/JS, and it is the case Sciter explicitly does not serve
+  — see [Security patching](#security-patching-the-cost-of-no-sandbox).
+- **Untrusted app, trusted content** — you wrote every line of the UI, and you want blast-radius limits
+  or a store's confinement requirement satisfied. Then OS-level sandboxing does the job with **no change
+  to the UI architecture**: Qt, Slint, Flutter, Avalonia, Dear ImGui, Clay + SDL, or for that matter a
+  Sciter app, all run inside Flatpak / App Sandbox / AppContainer at full native speed. The UI stays
+  cross-platform; the *confinement layer* does not, and that is the bill — three manifests and three
+  capability models, as above. It is close to free only when you are already shipping through the stores
+  that demand those manifests anyway.
+
+Most desktop applications are the second case and reach for the first anyway. That mismatch is where a
+good deal of "why is this Electron app using 400MB" comes from.
+
+### What actually costs speed
+
+JS execution is not the bottleneck people assume. Modern JITs are within a small multiple of native, and
+typical UI work is not compute-bound. The real costs, roughly in order:
+
+1. **Style and layout recalculation over a large DOM** — the dominant cost, and not JavaScript at all.
+2. **Memory baseline** — a bundled Chromium starts in the hundreds of MB before your code runs.
+3. **Cold start** — spinning up that runtime.
+4. **GC pauses** — what turns a good average frame time into visible stutter.
+5. **The serialization boundary** — fine once per interaction, fatal once per frame. Same argument as
+   [the previous section](#sandboxed-small-fast-and-reachable-from-odin).
+
+Where a browser engine genuinely loses: sustained 60/120fps over large scenes, very large data grids
+without virtualization, low-latency input (drawing, audio, instruments), predictable frame timing, and
+memory-constrained targets.
+
+Items 1, 4 and 5 are the ones usually misdiagnosed, so they are worth taking apart.
+
+#### Why style and layout cost what they do
+
+Not because DOM nodes are heavy objects. Because **style and layout are global, interdependent
+computations with poor locality**, and because the invalidation rules propagate much further than the
+code that triggered them suggests.
+
+**Style recalculation** answers "which declarations apply to this element, and what is its computed
+style". Three things make it expensive:
+
+- **Selectors match right-to-left.** For `.sidebar .item span`, the engine starts at each candidate
+  `span` and walks *up* the ancestor chain, because the rightmost part is the most selective. Cost
+  therefore tracks tree depth and how many rules share a rightmost key, not the number of elements you
+  think the rule "is about".
+- **The cascade is a sort plus an inheritance walk.** Matched declarations are ordered by origin,
+  specificity and document order, then merged with the parent's computed style to resolve inherited
+  properties and relative units. Every element gets its own computed-style struct out of this.
+- **Invalidation is subtree-shaped.** Toggling a class on a container can dirty everything beneath it;
+  descendant and sibling combinators mean a change here forces re-matching *there*. Custom properties
+  are the sharpest edge — changing one variable on `:root` invalidates every element that inherits it,
+  which is usually the whole document.
+
+The engine only restyles *dirty* elements, so cost scales with what you invalidated. Bad invalidation
+patterns invalidate everything, and that is the difference between a UI that scales to 50,000 nodes and
+one that stalls at 5,000.
+
+**Layout** then computes geometry, and it is inherently interdependent: a width change flows into
+children, re-wrapping changes their heights, which flows back out to parents and siblings.
+
+- **Some layouts need multiple passes.** Intrinsic sizing (`min-content`, `max-content`, `auto` flex
+  bases, `auto` grid tracks, tables) requires measuring children before the parent can size itself, so
+  the tree gets walked more than once.
+- **Text is the expensive inner loop** — line breaking, font fallback, shaping with ligatures, kerning
+  and bidi. For text-heavy UI this frequently dominates everything else.
+- **Reading geometry forces synchronous layout.** This is the classic killer and it is an *access
+  pattern*, not an engine flaw. Touching `offsetHeight` or `getBoundingClientRect()` after a write
+  obliges the engine to flush pending layout immediately to give a correct answer. Do that in a loop —
+  write, read, write, read — and you get N full layout passes in a frame instead of one. "The DOM is
+  slow" is usually this.
+
+Which explains why a few hundred lines of layout code can beat a browser engine on a specific UI:
+**it isn't doing the general case.** [Clay](#clay-in-detail) resolves fit/grow/fixed/percent in a
+fixed number of passes with no selectors, no cascade, no inheritance and no custom properties — so it
+has no invalidation problem to get wrong. That is the entire performance story of immediate-mode UI, and
+it is a scope argument rather than a cleverness argument. CSS containment (`contain`,
+`content-visibility`) exists to buy back some of the same bounded-propagation property inside a browser.
+
+#### GC pauses — yes, but not only JavaScript
+
+The instinct is right: pauses come from garbage-collected languages, and in a browser that means JS.
+Two refinements matter for the architecture, though.
+
+**The DOM is a large share of what the collector has to trace.** DOM nodes are native objects with
+script wrappers, and a live tree keeps a big cross-language object graph reachable. A document of tens
+of thousands of nodes is GC pressure that exists whether or not your own code allocates.
+
+**wasm linear memory is not garbage collected.** That is the underrated reason the canvas + wasm pattern
+scales: a document model living in wasm memory is invisible to the JS collector no matter how large it
+gets, and it has no DOM wrappers. The usual pitch for wasm is raw compute speed; for UI work the bigger
+win is usually *escaping GC and escaping the DOM's object graph*. Note the corollary — the newer
+WasmGC proposal reintroduces a collected heap, so this property belongs to linear-memory wasm, not to
+"wasm" as a blanket term.
+
+#### Why the serialization boundary costs what it does
+
+Every value crossing a process or language boundary is encoded, copied, decoded and rebuilt on the other
+side. Four costs, only the first of which is obvious:
+
+- **CPU for encode/decode**, roughly linear in payload size.
+- **Allocation on both sides.** You materialize a second copy of the data — which, on the JS side,
+  becomes GC pressure proportional to how chatty the boundary is. Costs 4 and 5 in the list above are
+  the same cost seen twice.
+- **Loss of referential identity.** Pointers and handles do not cross. Shared subgraphs get duplicated,
+  cycles need special handling, and the receiver cannot mutate the original — only ask for it to be
+  mutated.
+- **The payload-size asymmetry**, which is the one that actually bites: cost scales with *how much data
+  you send*, not with *how much meaning changed*. Dragging a slider one pixel can re-send an entire
+  model. This is exactly why once per interaction is free and once per frame is fatal.
+
+Browsers provide escape hatches, and their shape confirms the diagnosis: `Transferable` objects move
+buffers instead of copying them, and `SharedArrayBuffer` shares memory outright. Both amount to "stop
+serializing".
+
+**The JS↔wasm boundary has its own version of this**, and it surprises people. The *call* is cheap —
+close to a direct function call. Passing anything that is not a number is not, because wasm cannot hold
+a JS reference: strings and objects must be copied into or out of linear memory by hand. A chatty
+wasm API taking string arguments can easily be slower than the equivalent plain JavaScript.
+
+**So WASM narrows the compute gap and fixes only some of the rest.** It removes GC pressure for data
+that lives in linear memory and it sidesteps the DOM if you render to canvas — but it does nothing for
+DOM layout cost if you keep the DOM, it adds a boundary of its own, and in the browser it has no threads
+without `SharedArrayBuffer` and the COOP/COEP headers that unlock it.
+
+### The pattern that actually works
+
+The shell falls into HTML/CSS/JS; the hot path should not. Use the browser engine for what it is good
+at — sandboxing, portability, tooling, ecosystem — and put the performance-critical surface on
+canvas/WebGL/WebGPU with wasm behind it, bypassing the DOM entirely.
+
+The worked example is **Figma**, a browser-based interface-design tool, and it is worth citing precisely
+rather than by reputation. From its co-founder's own write-up,
+[*WebAssembly cut Figma's load time by 3x*](https://www.figma.com/blog/webassembly-cut-figmas-load-time-by-3x/)
+(Evan Wallace, 8 June 2017):
+
+> "our product is written in **C++**, which can easily be compiled into WebAssembly"
+>
+> "a browser-based interface design tool with a powerful **2D WebGL rendering engine** that supports very
+> large documents"
+
+The split is exactly the one recommended above:
+
+| Layer | Built with |
+| --- | --- |
+| Chrome around the edges — panels, menus, toolbars, dialogs | DOM |
+| The design canvas — document model, layout, rendering | C++ compiled to WebAssembly, painted through WebGL, **no DOM** |
+
+The migration numbers in that post are the clearest public measurement of the wasm case: load time
+improved **more than 3x regardless of document size**, because wasm **parses around 20x faster than
+asm.js**. (A 2017 post, so treat the figures as of that migration; the architecture has persisted.)
+
+The caveat that citation carries, and the reason "just use canvas" is not the easy advice it sounds
+like: to get there they wrote **their own 2D renderer and their own text layout engine** — precisely the
+things Sciter, or the DOM, hand you for free. It works, at a cost most projects cannot pay.
+
+Which produces the one lesson that transfers to a small project: **once you are writing your own
+renderer anyway, the browser stops being the obvious host.** Figma-in-a-tab and
+[Clay](#clay-in-detail) + `vendor:raylib` are the same architectural bet — own layout, own paint, no
+DOM — differing only in whether a browser wraps the result. If the renderer cost is being paid either
+way, the browser buys a sandbox and URL distribution, and charges wasm's constraints and the JS boundary
+for them.
+
+The cross-platform caveat is real and checkable rather than folklore: WebKit's own feature registry
+(`Source/WebCore/features.json` on `WebKit/WebKit@main`) still lists **WebGPU with
+`status: "In Development"`**, while Chromium-family webviews shipped it some time ago. Since WKWebView
+and WebKitGTK both derive from WebKit, a WebGPU-based hot path is a Chromium-first strategy today. WebGL
+remains the portable floor.
+
+### The options, ranked for this constraint set
+
+| | When it wins |
+| --- | --- |
+| **Tauri** | Best overall. Ships no engine (sub-600KB core), and v2 has a real security model — a **capabilities** system that grants or denies named **permissions** per window/webview, rather than one global allowlist. Desktop and mobile. Cost: three rendering engines across platforms |
+| **CEF / Electron** | When identical rendering everywhere matters more than 100–150MB. Strongest content sandbox in practice, and the best debugging story of anything in this document |
+| **Browser wasm** — egui/Rust, Blazor, Emscripten, Odin's own `js_wasm32` | Maximum sandbox, zero install, URL distribution. Fast when it skips the DOM |
+| **OS sandbox + native toolkit** | When the threat model is "confine my app", not "isolate untrusted content", **and** you already ship through platform stores. Fastest option here, and the UI stays cross-platform — but the sandbox itself is three per-platform mechanisms, and it evaporates on side-loaded builds |
+| **Orca / a WASI host** | When the sandbox *is* the product, and pre-1.0 is acceptable |
+
+With no language constraint and nothing else known: **Tauri**, with anything performance-critical on
+canvas rather than DOM.
+
+Determine the threat model first, because it changes which row applies. If the requirement is confining
+your own application rather than isolating content you did not write, **a native toolkit inside
+Flatpak / App Sandbox / AppContainer** beats every row above on speed, keeps the UI cross-platform, and
+lets you keep Sciter — which is otherwise disqualified by having no sandbox at all.
+
+What it does not do is give you *one* sandbox. You take on a per-platform packaging and capability
+matrix, and the guarantee only holds for users who installed through the sanctioned channel. If
+"cross-platform" is a floor that covers the security story and not just the UI, that route is out, and
+the honest ranking is: Tauri, then Electron/CEF, then browser wasm — all three of which sandbox
+identically everywhere because they inherited someone else's engine to do it.
