@@ -80,9 +80,27 @@ libstdc++.so.6  libm.so.6  libgcc_s.so.1  libc.so.6
 | Network | `libcurl.so.4` |
 | Dialogs | `libgtk-4.so` |
 | Text | `libicui18n` |
+| Video | `libvlc`, `libvlc/libvlc.so` |
 
 So the engine runs on X11 **or** Wayland, with Vulkan **or** OpenGL **or** software, with PulseAudio
 **or** ALSA **or** JACK, and needs none of them installed to start.
+
+**`<video>` is the one feature that is silently missing rather than degraded.** `behavior: video` is
+implemented by `html::behavior::vlc_video_ctl` — the mangled name is right there in the dynamic symbol
+table, alongside `libvlc_media_player_*` thunks — and it needs libVLC found at runtime. The SDK's
+CHANGELOG says the same in one line: "`<video>` is (optionally) baked by libVLC. If you need `<video>`
+in your application place `libvlc.so|dll|dylib` in the same folder as `sciter.dll` or install vlc
+player (or `libvlc-dev` on Linux) on target machine."
+
+Without it the behavior does not attach at all. The element stays a `<video>` in the DOM, `style
+.behavior` still reads `"video"`, and everything downstream is quietly absent: no control type, no
+`element_asset`, no `VIDEO_BIND_RQ`, and `video.load` / `video.play` undefined in script. There is no
+error anywhere. This machine has no libvlc, so that is the measured state, not the inferred one.
+
+**`behavior: custom-video` is unaffected** — it is `html::behavior::custom_video_ctl` and falls through
+to `zero_video_ctl` for the rendering site, which touches no codec library. That is the behavior
+[`video.odin`](../sciter_app/video.odin) is built on, and why streaming host-generated frames works on
+a machine where `<video src="...">` cannot play anything.
 
 GTK4 is loaded for the parts that have to look native — dialogs (`Window.this.selectFile`), popovers and
 monitor enumeration; the mangled names in the binary are `func_proxy<void(_GtkWidget*, cairo_rectangle_int*)>`

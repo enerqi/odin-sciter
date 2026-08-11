@@ -320,6 +320,76 @@ than the input device, and find the one bit the engine sends back that says whet
 mouse synthesis was tried first and is strictly worse - it moves a real pointer, and it cannot tell you
 what the engine concluded.
 
+## 10. Reading a C++ vtable out of a stripped binary
+
+`sciter::video_destination` is the one interface with no C declaration: a class of pure virtuals in
+`sciter-x-video-api.h`, invisible to the binding generator, usable only by laying its virtual table out
+in Odin. The layout is an ABI assumption, and getting it wrong does not fail cleanly — a wrong slot
+index calls whatever else is at that offset.
+
+The naive plan was to get a live destination and dump the table. That is the wrong order: it needs a
+working `<video>` before there is anything to measure, and on this machine there is none (§ libVLC, in
+[`ENGINE.md`](./ENGINE.md)). The order that worked is **static first, then live**.
+
+`libsciter.so` has no symbol table — `nm` says "no symbols" — but it has 52,770 **dynamic** symbols,
+with full Itanium mangling. The whole class hierarchy is in there:
+
+```sh
+nm -D --defined-only lib/linux/x64/libsciter.so | c++filt | grep 'behavior.*video'
+# html::behavior::vlc_video_ctl::play()
+# html::behavior::custom_video_ctl::asset_get_passport() const
+# html::behavior::zero_video_ctl::start_streaming(int, int, int, sciter::video_source*)
+# ...
+```
+
+Including the vtable itself, with its size:
+
+```sh
+nm -D --defined-only -S lib/linux/x64/libsciter.so | grep fragmented_video_destination
+# 0000000001767080 0000000000000068 V _ZTVN4html8behavior28fragmented_video_destinationE
+```
+
+`0x68` is 13 words: two of Itanium header plus **eleven** functions — exactly the count the header
+declares. Reading the words themselves gives zeroes, because a vtable lives in `.data.rel.ro` and is
+filled in by the dynamic loader; the answer is in the relocations, not the bytes:
+
+```sh
+readelf -rW lib/linux/x64/libsciter.so | grep -A12 '^0000000001767080'
+# ... _ZN6sciter2om6iassetINS_17video_destinationEE19asset_get_interfaceEPKcPPv
+# ... __cxa_pure_virtual   (x9 - is_alive, start_streaming, render_frame, ...)
+```
+
+That is the slot order, named, before a single line of Odin exists — and `__cxa_pure_virtual` in nine
+of the eleven confirms it is the abstract interface rather than some implementation that reordered
+things.
+
+Only then is the live check worth doing, and it is one `dladdr` per slot against a real destination:
+
+| slot | resolves to |
+| --- | --- |
+| 4 | `zero_video_ctl::is_alive()` |
+| 5 | `zero_video_ctl::start_streaming(int, int, int, sciter::video_source*)` |
+| 10 | `zero_video_ctl::render_frame_part(unsigned char const*, unsigned, int, int, int, int)` |
+
+Every slot named what the header said it should be. Two lessons came out of the attempt that skipped
+this step:
+
+- **The interface pointer is not the asset pointer.** `SciterGetElementAsset` hands back the
+  `som_asset_t` of one base subobject; the `video_destination` base is 24 bytes earlier. Guessing that
+  offset lands the vtable pointer on a *different* class's table, where slot 4 turned out to be
+  `custom_video_ctl::~custom_video_ctl()` — calling `is_alive()` ran a destructor and dumped core.
+  `asset_get_interface` exists precisely because it is the only thing that knows the offset, and using
+  it removes the arithmetic from the problem entirely.
+- **`strings` under-reports.** Only `fragmented.destination.video.sciter.com` appears in the binary;
+  `destination.video.sciter.com` is the same literal, tail-merged by the linker, and shows up as a
+  second `lea` at `+0x34` and `+0x3f` of the same address. Both names work at runtime. A grep over
+  `strings` output would have concluded the plain interface did not exist.
+
+The generalisable part: **when the ABI is the risk, verify it out of the binary before running
+anything.** A stripped library still carries mangled dynamic symbols and relocations, and between them
+they name every slot. The live run is then a confirmation with a known-good answer to check against,
+rather than an experiment whose failure mode is a corrupted process.
+
 ---
 
 ## Summary of what generalises
@@ -338,3 +408,7 @@ what the engine concluded.
 - Check the upstream forge's freshness before trusting a mirror, and record what you pinned.
 - When an interaction cannot be staged in a test, stage the protocol underneath it in a disposable
   display, and measure the answer the engine sends back rather than what the screen looks like.
+- When the ABI is the risk, read it out of the binary before running anything. A stripped library still
+  has mangled dynamic symbols and relocations, and a vtable's size and slot order are both in there.
+- Never compute a C++ subobject offset by hand when the object will do it for you. `asset_get_interface`
+  is a `dynamic_cast`; guessing its answer calls a destructor.

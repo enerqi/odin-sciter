@@ -37,7 +37,7 @@ The Odin ecosystem has no package manager to satisfy, so the tag is for humans a
 A release here is a git tag and nothing else — there is no package manager to publish to, and Odin
 consumers vendor or submodule the repository or import it by path.
 
-1. `just check` — both packages, the guides' snippets, all twelve examples
+1. `just check` — both packages, the guides' snippets, all twenty-one examples
 2. `just test` — every `@(test)`, and `just test_sanitize eval` for the `Value` refcounting under ASan
 3. `just example api_map` — 189 slots, 0 mismatches, against the engine actually vendored
 4. run the windowed examples by hand on every platform that claims to be tested
@@ -104,7 +104,7 @@ wrong function.
 
 ```sh
 just check          # both packages, the guides' snippets, all examples
-just test           # the headless tests
+just example-tests  # every example's tests
 just test_sanitize eval    # Value refcounting under ASan
 ```
 

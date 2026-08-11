@@ -68,9 +68,9 @@ Record the null list in the header comment of `api_map.odin`, where the Linux on
 **3. `just example hello_window`.** A window with rendered HTML and CSS. The Linux XIM segfault
 (`XSetICFocus`, worked around with `XMODIFIERS=@im=none`) is X11-specific and should not appear.
 
-**4. `just check`.** Both packages, the doc snippets and all twelve examples build.
+**4. `just check`.** Both packages, the doc snippets and all twenty-one examples build.
 
-**5. `just test`.** All tests, with `-define:ODIN_TEST_THREADS=1` already in the recipe. The tests that
+**5. `just example-tests`.** All tests, with `-define:ODIN_TEST_THREADS=1` already in the recipe. The tests that
 need a display gate themselves on `DISPLAY`/`WAYLAND_DISPLAY`, **which are POSIX environment variables
 that do not exist on Windows** — so check whether those tests skip themselves (wrong, but harmless) or
 run (correct). Fix the gate to treat Windows as always-having-a-display if they skip.

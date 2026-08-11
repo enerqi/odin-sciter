@@ -425,6 +425,12 @@ Taking it from another element, and releasing when nothing was captured, both su
 
 ## SOM — `som.odin`
 
+**S**citer **O**bject **M**odel. The SDK never expands the acronym anywhere — it appears only as a bare
+tag in its CHANGELOG and in macro names — so this reading comes from the naming: the C++ namespace is
+`sciter::om`, the headers are `sciter-om.h` / `sciter-om-def.h`, and every C symbol is prefixed `som_`.
+Upstream's own word for the things in it is **assets**, which is why the API says `som_asset_t`,
+`SciterSetGlobalAsset` and `element_asset`.
+
 A native functor gives script a *function*; an **asset** gives it an object with properties and methods.
 
 ```odin
@@ -456,6 +462,77 @@ immediately (and is withdrawn on the same schedule); the passport's "any propert
 **never called** by this engine, so a class is a fixed list of members; SOM members are **not
 enumerable**, so `Object.keys` is empty; and assigning to a property with no setter **throws** in
 script rather than being dropped.
+
+### Reading somebody else's asset
+
+`element_asset` hands back an asset the *engine* owns. Everything it can do is in its passport, and
+these read that description and use it — on any `^sciter.Som_Asset_T`, whoever made it.
+
+| | |
+| --- | --- |
+| `asset_passport(asset) -> ^sciter.Som_Passport_T` | the description itself, or nil |
+| `asset_members(asset, allocator) -> (properties, methods: []string)` | discovering it rather than assuming it |
+| `asset_call(asset, method, args) -> (Value, Error)` | `.Not_Found` for an unlisted method |
+| `asset_get(asset, property)` / `asset_set(asset, property, ^Value)` | likewise |
+| `asset_interface(asset, name) -> rawptr` | the C++ side's `dynamic_cast` |
+
+```odin
+edit, _ := sciter_app.element_asset(input, "edit")
+props, methods := sciter_app.asset_members(edit, context.temp_allocator)
+// props   -> ["selectionStart", "selectionEnd", "selectionText", "isStandalone"]
+// methods -> ["selectAll", "selectRange", "removeText", "insertText", "appendText"]
+```
+
+**A passport is the native interface, and the script interface is a separate decision the behavior
+makes.** `edit`'s members are in both; `<video>`'s `renderingSite` is in the passport and *not* in
+script — calling it from script answers "not a function".
+
+`asset_interface` is the only thing that knows where a named interface lives inside a C++ asset. The
+pointer it returns is **not** the asset pointer: for `<video>` the `video_destination` base subobject
+is 24 bytes before the `som_asset_t`. Never compute that offset by hand.
+
+`value_to_asset(^Value) -> (^sciter.Som_Asset_T, Error)` and `value_from_asset` cross the last gap:
+a `.ASSET` Value carries an asset pointer, and that is how one comes back from a SOM method. The
+pointer is borrowed from the Value, so keep the Value to keep the asset.
+
+## Video — `video.odin`
+
+Streaming frames into a `<video>` element. This is the one part of the API **not in `ISciterAPI`**:
+`sciter::video_destination` is a C++ class of pure virtuals with no C declaration, so there is no slot
+to call and `video.odin` lays its virtual table out by hand. Full story in
+[`examples/video.odin`](../examples/video.odin).
+
+```odin
+dest, _ := sciter_app.video_destination(element)
+sciter_app.video_start_streaming(dest, 640, 480)          // .RGB32 by default
+sciter_app.video_render_frame(dest, frame)                // BGRA, top-down
+sciter_app.video_stop_streaming(dest)
+```
+
+| | |
+| --- | --- |
+| `video_destination(element) -> (^Video_Destination, Error)` | the element's rendering site |
+| `video_is_alive(dest)` | false once the element or document is gone |
+| `video_start_streaming(dest, w, h, space := .RGB32, source := nil)` | announces the geometry |
+| `video_stop_streaming(dest)` | the element keeps the last frame |
+| `video_render_frame(dest, frame)` | one whole frame, copied during the call |
+| `video_render_frame_with_stride(dest, frame, stride)` | for padded rows |
+| `video_render_frame_part(dest, frame, x, y, w, h)` | only the rectangle that changed |
+| `video_render_external_frame(dest, frame, stride, release, user_data)` | zero-copy; the engine reads later and calls `release` |
+| `video_add_ref` / `video_release` | for a destination that outlives the call it arrived in |
+
+Three measured facts, none of them in the SDK's documentation:
+
+- **`behavior: video` is backed by libVLC on Linux** and does not attach at all without it —
+  `element_asset` answers `.OPERATION_FAILED` and no `VIDEO_BIND_RQ` is ever sent. See
+  [`deployment.md`](./deployment.md).
+- **`behavior: custom-video` is the one for host-fed frames.** It needs no codec library, and publishes
+  a SOM asset named `video` whose single method `renderingSite` returns the destination.
+- **`.RGB32` is BGRA**, the same inversion `.RAW` image encoding has.
+
+The vtable layout is the Itanium C++ ABI's — Linux and macOS. Windows is expected to match (vptr at
+offset 0, slots in declaration order, `this` in the first argument's register) but is unverified, and
+`api_map` cannot check a C++ vtable. `examples/video.odin`'s tests are the check.
 
 ## Graphics — `graphics.odin`
 
@@ -499,11 +576,34 @@ To script: `value_from_graphics` / `value_from_image` / `value_from_path` / `val
 
 ```odin
 Host_Handler :: struct {
-	on_load_data: proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
-	on_posted:    proc(handler: ^Host_Handler, posted: Posted),
-	user_data:    rawptr,
-	ctx:          runtime.Context,
+	on_load_data:        proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
+	on_data_loaded:      proc(handler: ^Host_Handler, loaded: ^Data_Loaded),
+	on_attach_behavior:  proc(handler: ^Host_Handler, request: ^Behavior_Request) -> ^Event_Handler,
+	on_posted:           proc(handler: ^Host_Handler, posted: Posted),
+	on_invalidate_rect:  proc(handler: ^Host_Handler, window: Window, rect: sciter.Rect),
+	on_keyboard_request: proc(handler: ^Host_Handler, window: Window, keyboard_type: string),
+	on_set_cursor:       proc(handler: ^Host_Handler, window: Window, cursor_id: u32, cursor_url: string),
+	on_graphics_failure: proc(handler: ^Host_Handler, window: Window),
+	on_engine_destroyed: proc(handler: ^Host_Handler),
+	user_data:           rawptr,
+	ctx:                 runtime.Context,
 }
+```
+
+That is **all nine** `SCITER_CALLBACK_NOTIFICATION` codes. The last four read like windowless-mode
+plumbing from where the header puts them, and two of them are not:
+
+| | Measured on this engine, windowed |
+| --- | --- |
+| `on_invalidate_rect` | **fires constantly** — 32 times just getting a window on screen, with the real damaged rect. The engine has already drawn; this is for a host that wants to know |
+| `on_keyboard_request` | fires when a text field takes focus, carrying Android's `inputType` vocabulary |
+| `on_set_cursor` | never seen — the engine owns the window and sets the cursor itself |
+| `on_graphics_failure` | never seen |
+
+Both live ones need a window that is **on screen and rendering**, which is why they are demonstrated by
+running `examples/named_behavior` rather than asserted in its tests.
+
+```odin
 ```
 
 `set_host_handler(window, &h)` — **before** loading a document. A nil handler detaches (the trampoline
@@ -516,6 +616,59 @@ For an answer that cannot be given inside the callback: return `.DELAYED`, keep 
 and answer later with `data_ready_async(window, uri, data, request_id)`. Every delayed request must
 eventually be answered or it leaks. `data_ready(window, uri, data)` is the same push without a request
 id; both copy the data, unlike `serve`.
+
+`on_data_loaded` reports a resource the engine fetched *itself*, after the fact — `Data_Loaded{uri,
+type, data, status, raw}`, where `status` is 0 for an unknown error and otherwise an HTTP code. It
+cannot intervene; `on_load_data` runs first and is the one that can.
+
+### Named behaviors — the document asking for Odin by name
+
+`attach_handler` is the host reaching into the document. This is the reverse, and the only route where
+a **stylesheet** decides which elements get native code:
+
+```odin
+// div.gauge { behavior: my-gauge; }
+
+on_attach_behavior :: proc(h: ^sciter_app.Host_Handler, r: ^sciter_app.Behavior_Request) -> ^sciter_app.Event_Handler {
+	if r.name != "my-gauge" {
+		return nil                  // not ours; the element just gets no behavior
+	}
+	gauge := new(Gauge)
+	gauge.subscription = {.MOUSE}
+	gauge.on_event = on_gauge_event
+	return gauge                    // attached immediately, before this returns
+}
+```
+
+`Behavior_Request` is `{name: string, element: Element, window: Window, raw: ^Scn_Attach_Behavior}`;
+`name` is in the callback's temp allocator. What comes back is an ordinary `Event_Handler`, so every
+accessor in `events.odin` works on it and the same `subscription` rules apply.
+
+Six measured rules, each pinned by a test in [`examples/named_behavior.odin`](../examples/named_behavior.odin):
+
+| | |
+| --- | --- |
+| **`set_host_handler` must come first** | the requests arrive *inside* `load_html`, before it returns |
+| one request per name per element | `behavior: my-gauge my-logger` gives two, both on that element |
+| **intrinsic names never reach the host** | `behavior: button` produces no request — you cannot shadow a built-in |
+| later elements are asked about too | a document that grows stays wired up |
+| the return value is ignored | handing back a handler is what attaches it |
+| **`.DETACH` is the only teardown hook** | there is no "behavior destroyed" notification |
+
+That last one is the ownership rule. The handler is allocated per element by the factory, and the only
+place it can free itself is `Initialization_Events.DETACH`, which arrives when the element is removed
+*and* when the document is replaced. Note the group: `HANDLE_INITIALIZATION` is `0x0000` upstream, so
+it is the **empty** bit_set, not a bit of its own —
+
+```odin
+if event.group == {} && event.params != nil {
+	if sciter.Initialization_Events((^sciter.Initialization_Params)(event.params).cmd) == .DETACH {
+		free(widget)
+	}
+}
+```
+
+Miss it and a long-running application leaks one handler per behavior per document load.
 
 ### Posting work to the engine's thread
 

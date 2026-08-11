@@ -199,6 +199,30 @@ value_to_string :: proc(v: ^Value, allocator := context.allocator) -> (s: string
 	return string_from_utf16(chars, uint(n), allocator), nil
 }
 
+// The `som_asset_t` a `.ASSET` Value holds. `.INCOMPATIBLE_TYPE` for any other type of Value.
+//
+// The pointer is borrowed: the Value owns the reference the engine add_ref'd when it wrapped it, so it
+// stays alive exactly as long as the Value does. To keep it longer, keep the Value - or take a
+// reference of your own through `asset.isa.asset_add_ref`.
+value_to_asset :: proc(v: ^Value) -> (asset: ^sciter.Som_Asset_T, err: Error) {
+	type, _ := value_type(v)
+	if type != .ASSET {
+		return nil, Api_Error.Wrong_Type
+	}
+	i: i64
+	value_err(sciter.api().ValueInt64Data(v, &i)) or_return
+	return (^sciter.Som_Asset_T)(uintptr(i)), nil
+}
+
+// Wraps an asset as a Value, which is how one crosses into script or into a SOM method's arguments.
+//
+// The engine does *not* add_ref here - `value.hpp`'s `wrap_asset` is a bare `ValueInt64DataSet` - so
+// the asset has to outlive the Value.
+value_from_asset :: proc(asset: ^sciter.Som_Asset_T) -> (v: Value) {
+	sciter.api().ValueInt64DataSet(&v, i64(uintptr(asset)), .ASSET, 0)
+	return
+}
+
 // The bytes the Value holds. Borrowed from the engine and only valid until the Value changes or is
 // cleared, so copy them if they have to outlive it.
 value_to_bytes :: proc(v: ^Value) -> (b: []u8, err: Error) {

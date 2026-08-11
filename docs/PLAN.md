@@ -2,12 +2,13 @@
 
 Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and nineteen examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-one examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
-the DOM, events, behavior methods, synthesised input, background threads, drag-and-drop, graphics,
-custom resource loading
+the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
+background threads, drag-and-drop, graphics,
+video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 162 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
+`just example-tests` runs 183 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -458,7 +459,7 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all nineteen examples run, and the eleven guides are
+9. ~~**Examples and guides** — §9~~ **done**: all twenty-one examples run, and the eleven guides are
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
@@ -544,7 +545,12 @@ description of what the engine actually implements.
     field for real, the `.FOCUS` / `.SCROLL` / `.ATTRIBUTE_CHANGE` / `.DATA_ARRIVED` accessors, the
     animation frame and its inverted return value, the element expando, `combine_url`, and
     `http_request` delivering the same way
-19. ~~`task_list`~~ — done, with 11 tests: a whole small application, script-free - an Odin model that
+19. ~~`named_behavior`~~ — done, with 9 tests: `SC_ATTACH_BEHAVIOR`, so a stylesheet rather than a call
+    site decides which elements get Odin code, with the `.DETACH` ownership rule pinned.
+20. ~~`video`~~ — done, with 12 tests: frames generated in Odin and streamed into a `<video>` element
+    through `sciter::video_destination`, the one interface in the whole API that is a C++ vtable rather
+    than a table slot. See §13.
+21. ~~`task_list`~~ — done, with 11 tests: a whole small application, script-free - an Odin model that
     the DOM is a projection of, one `render`, keyboard commands through real key events, HTML escaping
     of user text, and state saved as JSON through a Value
 
@@ -618,4 +624,50 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
   on the same engine. `api_map` on every bump is step 6 of a nine-step procedure, and is the step the
   procedure exists for.
 - **Windowless / lite.** `bin/linux/x64/lite-sciter-sdl` and `sciter-x-lite.hpp` exist. Out of scope for
-  v1, but the layout invariance means supporting it later costs little.
+  v1, but the layout invariance means supporting it later costs little. Note that `on_invalidate_rect`
+  and `on_keyboard_request` - the two notifications that mode is built on - are wrapped and were
+  measured firing in an ordinary *windowed* embedding, so the hook side of it already works.
+- **A layer above the bindings.** Whether to add a retained-diff ("vdom") layer over the DOM, so that a
+  list can be updated rather than rebuilt with `set_html` the way `task_list` does. Written up as a
+  decision aid in [`VDOM.md`](./VDOM.md): the cost (~1,500-2,000 lines, all of the risk in keyed list
+  reconciliation), the fact that it needs **nothing new from the engine**, when it would not be worth
+  it, and a four-stage order in which the first two stages are independently useful. **Deferred** -
+  there is not enough experience with a real Sciter application yet to judge the trade, and the
+  recommended first move in that note is to write a harder example *without* a layer and see what
+  actually hurts.
+
+---
+
+## 13. The C++ layer below the tables — **done for video**
+
+Also not in the original plan. With `ISciterAPI`, the graphics table and the request table all wrapped,
+the only reachable functionality left in the engine is the part that is **not in any table**: the
+`sciter::om` interfaces, which are C++ classes of pure virtuals. `sciter-x-video-api.h` declares three -
+`video_source`, `video_destination`, `fragmented_video_destination` - and nothing else in the SDK's
+headers adds a fourth that the engine implements.
+
+`video_destination` is now wrapped (`sciter_app/video.odin`, `examples/video`). What that took, and what
+it says about doing the same again:
+
+- **The vtable is read out of the binary before anything runs.** `libsciter.so` is stripped of its
+  symbol table but keeps 52,770 mangled *dynamic* symbols, including
+  `_ZTVN4html8behavior28fragmented_video_destinationE` with its size (`0x68` = 13 words = two of
+  Itanium header plus eleven functions) and a relocation per slot naming the function that fills it.
+  That is the whole layout question answered statically. The procedure is written up as §10 of
+  [`RESEARCH-METHOD.md`](./RESEARCH-METHOD.md).
+- **`asset_get_interface` does the pointer adjustment, and nothing else may.** The `som_asset_t` the C
+  API hands over is one base subobject; the interface is another, 24 bytes earlier for `<video>`. The
+  wrong offset is not a wrong answer, it is a destructor call.
+- **The generic half is worth having on its own.** `asset_passport` / `asset_members` / `asset_call` /
+  `asset_get` / `asset_set` / `asset_interface` in `som.odin` read *any* engine asset, so the same
+  machinery reaches `<input>`'s `edit` behavior (`selectionStart`, `insertText`, …). Those members are
+  the native interface and are not the same set script sees.
+
+**`video_source` is the one left, and it is the hard direction.** It would let the element's own
+controls drive playback - seek, pause, volume - by having the engine call *into* Odin. That means
+building a C++ object Odin owns: a vtable of `proc "c"` in declaration order with an
+`iasset`-compatible header, handed to `start_streaming`. Feasible, unverifiable by `api_map`, and worth
+doing only when something actually wants seekable host-fed video.
+
+`behavior:video`'s own playback is out of scope for a different reason: it is libVLC, and the engine
+already drives it (see [`ENGINE.md`](./ENGINE.md)).

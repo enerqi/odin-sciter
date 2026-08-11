@@ -221,6 +221,22 @@ version check, after which every wrapper in `sciter_app` works unchanged. `unloa
 [`examples/extension.odin`](../examples/extension.odin) is a complete one in about 40 lines of actual
 code, verified end to end under the SDK's `scapp`.
 
+### And three ways for the document to reach Odin code
+
+Orthogonal to the above, and worth keeping straight because they answer different questions:
+
+| | Who decides | Reach |
+| --- | --- | --- |
+| `attach_handler` / `attach_window_handler` | the host, by selector | one element and its subtree |
+| **`behavior:` name** (`on_attach_behavior`) | the **stylesheet**, by CSS rule | every element the rule matches, now and later |
+| `set_global` / `set_global_asset` / native functors | the host, by name | anything script chooses to call |
+
+The middle one is the only place a document can wire itself to native code the host never selected. A
+UI shipped in an archive can say `div.gauge { behavior: my-gauge; }` and get an Odin widget, and adding
+a fourth gauge becomes a CSS selector rather than a call site. It cannot override behaviors the engine
+implements — an intrinsic name never reaches the host at all. See
+[`examples/named_behavior.odin`](../examples/named_behavior.odin).
+
 ## Licensing, in one paragraph
 
 Two licences cover different things. The SDK repository's **contents** — headers, samples,

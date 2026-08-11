@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and nineteen examples, 162 tests and eleven
+> engine, there is an Odin-shaped layer on top of them, and twenty-one examples, 183 tests and eleven
 > guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -132,6 +132,8 @@ Run one with `just example NAME`.
 | `task_list` | **A whole small application** — an Odin model, one render, keyboard commands, saved state, no script |
 | `worker_thread` | Getting work off the UI thread and its results back on, with `post_callback` |
 | `graphics` | Drawing with the engine's renderer: a custom-painted element, and an offscreen image |
+| `video` | Frames generated in Odin, streamed into a `<video>` — the one C++ vtable in the whole API |
+| `named_behavior` | `behavior: my-gauge` in CSS — the stylesheet, not a call site, choosing which elements get Odin |
 | `drag_and_drop` | Accepting a system drop through the `.EXCHANGE` event group |
 | `custom_loader` | Serving a document's CSS and images from memory via the `SC_LOAD_DATA` host callback |
 | `request_loader` | The same callback taken further: status codes, MIME types, and an answer that arrives a second late |
@@ -143,7 +145,8 @@ Run one with `just example NAME`.
 Tests live inside the examples, next to the code they cover:
 
 ```sh
-just test                  # every example's tests
+just example-tests         # every example's tests
+just example-test eval     # one example's tests
 just test1 eval test_value_array
 just test_sanitize eval    # the Value refcounting tests under ASan
 ```
@@ -357,4 +360,8 @@ checked by `just check` — documentation drifts silently otherwise.
   part that went wrong
 - [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
   desktop UI, what it gives up, and what to watch
+- [`docs/VDOM.md`](docs/VDOM.md) — a design note for a retained-diff layer over the DOM: what it would
+  cost, when it would pay, and when not to build it. **Nothing built; a decision aid, not a plan**
+- [`docs/FLEURY-UI.md`](docs/FLEURY-UI.md) — the immediate-mode-over-retained-cache architecture the
+  above would be the retained half of
 - [Sciter documentation](https://docs.sciter.com/docs/intro) and [tutorials](https://sciter.com/tutorials/)

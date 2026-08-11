@@ -983,3 +983,61 @@ eng2 :: proc(window: sciter_app.Window) {
 	v, _ := sciter_app.eval(window, "Window.this.graphicsBackend") // expect x11-opengl-skia on Linux
 	_ = v
 }
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, reading somebody else's asset
+
+asset_members_block :: proc(input: sciter_app.Element) {
+	edit, _ := sciter_app.element_asset(input, "edit")
+	props, methods := sciter_app.asset_members(edit, context.temp_allocator)
+	// props   -> ["selectionStart", "selectionEnd", "selectionText", "isStandalone"]
+	// methods -> ["selectAll", "selectRange", "removeText", "insertText", "appendText"]
+	_, _ = props, methods
+}
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, streaming video frames
+
+video_block :: proc(element: sciter_app.Element, frame: []byte) {
+	dest, _ := sciter_app.video_destination(element)
+	sciter_app.video_start_streaming(dest, 640, 480) // .RGB32 by default
+	sciter_app.video_render_frame(dest, frame) // BGRA, top-down
+	sciter_app.video_stop_streaming(dest)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, a named behavior factory
+
+Gauge_Snippet :: struct {
+	using handler: sciter_app.Event_Handler,
+}
+
+on_gauge_event_snippet :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	return false
+}
+
+// div.gauge { behavior: my-gauge; }
+
+on_attach_behavior_snippet :: proc(
+	h: ^sciter_app.Host_Handler,
+	r: ^sciter_app.Behavior_Request,
+) -> ^sciter_app.Event_Handler {
+	if r.name != "my-gauge" {
+		return nil // not ours; the element just gets no behavior
+	}
+	gauge := new(Gauge_Snippet)
+	gauge.subscription = {.MOUSE}
+	gauge.on_event = on_gauge_event_snippet
+	return gauge // attached immediately, before this returns
+}
+
+// ---------------------------------------------------------------------------------------------------
+// api.md, freeing a behavior handler on DETACH
+
+behavior_detach_block :: proc(event: sciter_app.Event, widget: rawptr) {
+	if event.group == {} && event.params != nil {
+		if sciter.Initialization_Events((^sciter.Initialization_Params)(event.params).cmd) == .DETACH {
+			free(widget)
+		}
+	}
+}

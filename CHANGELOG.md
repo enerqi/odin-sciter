@@ -48,11 +48,27 @@ tag `6.0.4.9-bis`.
   resolves a relative URL against a document, `http_request` fetches with a method and parameters and
   delivers the body as `.DATA_ARRIVED`, and `graphics_caps` reports what the renderer can do;
   `post_callback` is the one call safe from another thread, delivering two words to the engine's thread
-  as `Host_Handler.on_posted`, which is how a worker gets its results into the UI; and **SOM** -
+  as `Host_Handler.on_posted`, which is how a worker gets its results into the UI, and the rest of the
+  notification family is wrapped alongside it - all nine `SCITER_CALLBACK_NOTIFICATION` codes, including
+  `on_invalidate_rect` (which a windowed embedding receives constantly, not only a windowless one),
+  `on_keyboard_request`, `on_set_cursor`, `on_graphics_failure`, `on_data_loaded`,
+  `on_engine_destroyed`, and
+  **`on_attach_behavior`**, which answers a `behavior:` name the document asked for with an
+  `Event_Handler`, so a *stylesheet* rather than a call site decides which elements get native code;
+  and **SOM** -
   `som.odin` - exposes an Odin object to script, with properties and methods, through
-  `make_asset_class` / `make_asset` / `set_global_asset`; `value_parse` reads text as a value and `value_each` walks a
+  `make_asset_class` / `make_asset` / `set_global_asset`, while `asset_passport` / `asset_members` /
+  `asset_call` / `asset_get` / `asset_set` / `asset_interface` go the other way and read an asset the
+  *engine* owns - a behavior's own native interface, which is not the same set of members script sees -
+  with `value_to_asset` / `value_from_asset` carrying one in a Value; `value_parse` reads text as a
+  value and `value_each` walks a
   container in one call; and `atom` / `atom_name` cover the engine's interned names, which the SOM side
-  of the API is keyed on.
+  of the API is keyed on. **Video** - `video.odin` - is the one area that is not in `ISciterAPI` at all:
+  `sciter::video_destination` is a C++ class of pure virtuals with no C declaration, so its virtual
+  table is laid out by hand, verified against the engine's own `vtable for
+  html::behavior::fragmented_video_destination` symbol, and driven through `video_destination` /
+  `video_start_streaming` / `video_render_frame` / `video_render_frame_part` /
+  `video_render_external_frame` / `video_stop_streaming`.
 
 ### Loading
 
@@ -64,10 +80,11 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Nineteen, each a single self-contained file with its explanation in the header comment:
+Twenty-one, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
 `dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
-`worker_thread`, `drag_and_drop`, `graphics`, `custom_loader`,
+`worker_thread`, `drag_and_drop`, `graphics`, `video` (frames generated in Odin, streamed into a
+`<video>` element), `named_behavior` (widgets a stylesheet asks for by name), `custom_loader`,
 `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a native extension
 the engine loads).
 
@@ -77,7 +94,7 @@ Windows.
 
 ### Tests
 
-162 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+183 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -97,8 +114,15 @@ from a worker with their ordering and their delivery by `heartbeat` alone, synth
 keyboard input against a button, a checkbox and a text field - including the measured rule that a press
 without a button in the set is delivered and then ignored by the behavior - the animation frame's
 inverted return value, the element expando in both directions, `combine_url`'s resolutions, the task
-list application rendering its model and answering its keys, and the request API driven by a real
-document load, skip themselves without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
+list application rendering its model and answering its keys, the request API driven by a real
+document load, and the video destination - the behavior's published member list, the fact that the
+member is invisible to script, the asset Value it returns, the interface pointer being a *different*
+subobject from the asset pointer, and every streaming call answering true, which is what checks that
+the hand-laid vtable is in the right order, and the named behaviors - the request arriving inside
+`load_html`, one per name per element, intrinsic names never reaching the host, an unclaimed name not
+being an error, elements created later being asked about too, and `.DETACH` firing on both element
+removal and document replacement so nothing leaks - skip themselves without a display.
+Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
 the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
 ### Documentation
@@ -175,3 +199,24 @@ checked by `just check`.
   call succeeds and the scroll position does not change. `set_scroll_pos` has no such requirement.
   Without `to_top` the scroll is also applied on the engine's own schedule, so reading the position
   straight back can show the old one.
+- **`behavior: video` needs libVLC and fails silently without it.** `<video>`'s default behavior is
+  implemented on top of libVLC, dlopened by name. Missing, the behavior does not attach at all: the
+  element stays inert, `element_asset` answers `.OPERATION_FAILED`, `VIDEO_BIND_RQ` is never sent, and
+  script sees no `load` / `play` / `isPlaying` — with no error reported anywhere. `behavior:
+  custom-video`, which `video.odin` uses, needs no codec library.
+- **`renderingSite` is in the video behavior's passport and not in script.** `element_asset(el,
+  "video")` lists it; `document.$("video").renderingSite()` answers "not a function". Neither the
+  `custom-video` behavior nor the method appears in the SDK's documentation. A passport is the native
+  interface, and the script interface is a separate decision each behavior makes.
+- **A `som_asset_t*` is not the object's address.** For `<video>` the `video_destination` base
+  subobject is 24 bytes before the `som_asset_t` the API hands back, and the wrong offset puts a
+  destructor where `is_alive` should be. `asset_interface` is the only thing that knows; nothing should
+  compute one by hand.
+- **A `behavior:` name the engine implements never reaches the host.** `SC_ATTACH_BEHAVIOR` is sent only
+  for names the engine does not know, so `behavior: button` cannot be intercepted and a name of your own
+  cannot shadow a built-in. The set of names it implements is not enumerable.
+- **There is no "behavior detached" notification.** A handler returned from `on_attach_behavior` is
+  allocated per element and can only free itself from `Initialization_Events.DETACH`, which arrives on
+  element removal and on document replacement. Note that `HANDLE_INITIALIZATION` is `0x0000`, so that
+  group is the *empty* `Event_Groups` set rather than a bit of its own - easy to read past in the header,
+  and missing it leaks one handler per behavior per load.

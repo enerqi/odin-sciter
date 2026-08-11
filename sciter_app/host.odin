@@ -11,6 +11,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:strings"
 
 // What the host does about a request. These are the engine's own SC_LOAD_DATA_RETURN_CODES:
 //
@@ -156,23 +157,123 @@ callback_param :: proc(window: Window) -> rawptr {
 	return sciter.api().SciterGetCallbackParam(rawptr(window))
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Named behaviors
+//
+// The third way to attach Odin code to an element, and the only one the *document* asks for by name.
+// `attach_handler` and `attach_window_handler` are the host reaching into the document; this is the
+// document reaching out:
+//
+//	div.gauge { behavior: my-gauge; }
+//
+// The engine hits a `behavior:` name it does not implement, asks the host who that is, and the host
+// answers with an `Event_Handler`. It is the same mechanism the SDK's C++ `behavior_factory` uses, and
+// it is what lets a stylesheet decide which elements get a widget - so a new gauge is a CSS class, not
+// a call site.
+//
+// Measured against the vendored 6.0.4.9 engine:
+//
+//   - **The notification arrives inside `load_html`**, before it returns. `set_host_handler` has to be
+//     in place first, which is the same rule `on_load_data` already has.
+//   - **One request per name per element.** `behavior: my-gauge my-tooltip` produces two, both for the
+//     same element, and both handlers attach to it.
+//   - **An intrinsic name never reaches the host.** `behavior: button` produces no request at all and
+//     the element becomes a real button, so this cannot override a behavior the engine implements. The
+//     names it does implement are not enumerable; the answer is to pick names of your own.
+//   - **Elements created later are asked about too**, so a handler built this way covers a document
+//     that grows.
+//   - **The notification's return value is ignored.** Handing back a handler is what attaches it -
+//     answering 0 with the fields set attached it anyway. This wrapper still returns the documented
+//     value.
+//   - **Ownership comes back through `.DETACH`.** There is no "behavior destroyed" notification. The
+//     handler hears `Initialization_Events.DETACH` in the `{}` group when its element is removed or
+//     the document is replaced, and that is the only place it can free itself.
+
+// An element asking for a behavior by name.
+Behavior_Request :: struct {
+	// The name as it appears in `behavior: ???`. Allocated in the callback's `context.temp_allocator`,
+	// so clone it if it has to outlive the call.
+	name:    string,
+
+	// The element that asked. Valid for the call; to keep it, keep it the way any handler does - the
+	// handler is about to be attached to it, and `Event.element` reports it on every event after that.
+	element: Element,
+
+	// The window the document is in.
+	window:  Window,
+
+	// The engine's own struct, for the fields this wrapper does not surface.
+	raw:     ^sciter.Scn_Attach_Behavior,
+}
+
+// A resource the engine finished fetching by itself, reported after the fact.
+//
+// This is not a chance to intervene - that is `on_load_data`, which runs first and can answer the
+// request. This says what happened, which is where a failed image or a 404 stylesheet becomes visible.
+Data_Loaded :: struct {
+	uri:    string, // in `context.temp_allocator`
+	type:   sciter.Sciter_Resource_Type,
+	data:   []u8, // borrowed from the engine, valid for the call
+	status: u32, // 0 with no data is an unknown error; 100..505 is an HTTP status, 200 being OK
+	raw:    ^sciter.Scn_Data_Loaded,
+}
+
 // A host callback. Like `Event_Handler`, the engine stores its address, so it must not move and must
 // outlive the window it is attached to.
 Host_Handler :: struct {
 	// Called for every resource the document refers to. Return `.OK` to let the engine load it
 	// normally, or call `serve` to answer it yourself.
-	on_load_data: proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
+	on_load_data:        proc(handler: ^Host_Handler, request: ^Load_Request) -> Load_Result,
+
+	// Called after a resource the engine fetched itself has arrived - or failed to.
+	on_data_loaded:      proc(handler: ^Host_Handler, loaded: ^Data_Loaded),
+
+	// Called when the document asks for a `behavior:` name the engine does not implement. Return an
+	// `Event_Handler` to claim the name, or nil to pass - an unclaimed name is not an error, the
+	// element simply gets no behavior.
+	//
+	// The returned handler is attached to the element immediately: it is asked for its `subscription`
+	// and then sent `Initialization_Events.ATTACH`, both before this notification returns. It must
+	// outlive the attachment and must not move, exactly like one passed to `attach_handler` - so it is
+	// allocated here, one per element, and freed when it hears `.DETACH`.
+	on_attach_behavior:  proc(handler: ^Host_Handler, request: ^Behavior_Request) -> ^Event_Handler,
 
 	// Called on the engine's thread for each `post_callback`, in the order they were posted. See
 	// "Posting work to the engine's thread" above.
-	on_posted:    proc(handler: ^Host_Handler, posted: Posted),
+	on_posted:           proc(handler: ^Host_Handler, posted: Posted),
+
+	// The engine has repainted an area and is telling the host which one, in window coordinates.
+	//
+	// **This fires constantly in an ordinary embedded window** - 49 times in a short measured run that
+	// only focused a field, moved the mouse and clicked a button - so it is not the windowless-mode-only
+	// notification the header's placement suggests. The engine has already drawn; nothing has to be done
+	// about it. It is here for a host that wants to know, and it is the hook a windowless embedding
+	// would be built on. Keep the handler cheap or leave it nil.
+	on_invalidate_rect:  proc(handler: ^Host_Handler, window: Window, rect: sciter.Rect),
+
+	// The engine wants an on-screen keyboard - sent when a text field takes focus. `keyboard_type` is
+	// Android's `inputType` vocabulary, per the header. Measured firing once on `set_focus` of an
+	// `<input type=text>` here; on a desktop with a real keyboard there is nothing to do about it.
+	on_keyboard_request: proc(handler: ^Host_Handler, window: Window, keyboard_type: string),
+
+	// The engine wants a different mouse cursor. Either `cursor_id` (a `CURSOR_TYPE`) or `cursor_url`,
+	// never both. **Not sent by this engine in windowed mode** - measured zero times - because the
+	// engine owns the window and sets the cursor itself. It is here for completeness and for the
+	// windowless path.
+	on_set_cursor:       proc(handler: ^Host_Handler, window: Window, cursor_id: u32, cursor_url: string),
+
+	// The renderer failed and drew nothing - bad drivers, per the header. Also never seen here.
+	on_graphics_failure: proc(handler: ^Host_Handler, window: Window),
+
+	// The engine is going away. Final notification; nothing in the API is callable after it.
+	on_engine_destroyed: proc(handler: ^Host_Handler),
 
 	// Yours; passed back on every call.
-	user_data:    rawptr,
+	user_data:           rawptr,
 
 	// Captured by `set_host_handler` - the engine calls back as `proc "system"`, where Odin's implicit
 	// context does not exist.
-	ctx:          runtime.Context,
+	ctx:                 runtime.Context,
 }
 
 // Installs the host callback on a window.
@@ -218,6 +319,47 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 		}
 		return u32(handler.on_load_data(handler, &request))
 
+	case sciter.SC_DATA_LOADED:
+		if handler.on_data_loaded == nil {
+			return 0
+		}
+		dl := (^sciter.Scn_Data_Loaded)(pns)
+		loaded := Data_Loaded {
+			uri    = string_from_utf16_cstring(dl.uri, context.temp_allocator),
+			type   = sciter.Sciter_Resource_Type(dl.dataType),
+			status = u32(dl.status),
+			raw    = dl,
+		}
+		if dl.data != nil && dl.dataSize > 0 {
+			loaded.data = dl.data[:dl.dataSize]
+		}
+		handler.on_data_loaded(handler, &loaded)
+		return 0
+
+	case sciter.SC_ATTACH_BEHAVIOR:
+		if handler.on_attach_behavior == nil {
+			return 0
+		}
+		ab := (^sciter.Scn_Attach_Behavior)(pns)
+		request := Behavior_Request {
+			name    = behavior_name(ab.behaviorName),
+			element = Element(ab.element),
+			window  = Window(ab.hwnd),
+			raw     = ab,
+		}
+
+		element_handler := handler.on_attach_behavior(handler, &request)
+		if element_handler == nil {
+			return 0 // not ours; the element gets no behavior, which is not an error
+		}
+
+		// Same trampoline `attach_handler` uses, so a behavior handler is an ordinary `Event_Handler`
+		// and every typed accessor in `events.odin` works on it unchanged.
+		element_handler.ctx = context
+		ab.elementTag = element_handler
+		ab.elementProc = event_trampoline
+		return 1
+
 	case sciter.SC_POSTED_NOTIFICATION:
 		if handler.on_posted == nil {
 			return 0
@@ -225,7 +367,52 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 		pn := (^sciter.Scn_Posted_Notification)(pns)
 		handler.on_posted(handler, Posted{wparam = pn.wparam, lparam = pn.lparam, raw = pn})
 		return 0
+
+	case sciter.SC_INVALIDATE_RECT:
+		if handler.on_invalidate_rect != nil {
+			ir := (^sciter.Scn_Invalidate_Rect)(pns)
+			handler.on_invalidate_rect(handler, Window(ir.hwnd), ir.invalidRect)
+		}
+		return 0
+
+	case sciter.SC_KEYBOARD_REQUEST:
+		if handler.on_keyboard_request != nil {
+			kr := (^sciter.Scn_Keyboard_Request)(pns)
+			kind := kr.keyboardType == nil ? "" : strings.clone(string(kr.keyboardType), context.temp_allocator)
+			handler.on_keyboard_request(handler, Window(kr.hwnd), kind)
+		}
+		return 0
+
+	case sciter.SC_SET_CURSOR:
+		if handler.on_set_cursor != nil {
+			sc := (^sciter.Scn_Set_Cursor)(pns)
+			url := sc.cursorUrl == nil ? "" : strings.clone(string(sc.cursorUrl), context.temp_allocator)
+			handler.on_set_cursor(handler, Window(sc.hwnd), u32(sc.cursorId), url)
+		}
+		return 0
+
+	case sciter.SC_GRAPHICS_CRITICAL_FAILURE:
+		if handler.on_graphics_failure != nil {
+			handler.on_graphics_failure(handler, Window(pns.hwnd))
+		}
+		return 0
+
+	case sciter.SC_ENGINE_DESTROYED:
+		if handler.on_engine_destroyed != nil {
+			handler.on_engine_destroyed(handler)
+		}
+		return 0
 	}
 
 	return u32(Load_Result.OK)
+}
+
+// The `behavior:` name, copied out of the engine's `char*` into the temp allocator. The pointer
+// survived the call when measured, but nothing documents that it must, so the copy is not optional.
+@(private = "file")
+behavior_name :: proc(name: cstring) -> string {
+	if name == nil {
+		return ""
+	}
+	return strings.clone(string(name), context.temp_allocator)
 }

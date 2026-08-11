@@ -230,6 +230,148 @@ element_asset :: proc(element: Element, behavior: string) -> (asset: ^sciter.Som
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Reading somebody else's asset
+//
+// `element_asset` hands back an asset the *engine* owns, and everything it can do is described by its
+// passport. These four read that description and use it. They work on any `^sciter.Som_Asset_T`,
+// whoever made it - an intrinsic behavior's, another extension's, or one of this package's own.
+//
+// Worth knowing before reaching for them: what an intrinsic behavior publishes here is often *not*
+// what script sees. `<input type=text>`'s `edit` asset carries `selectionStart` and `insertText`,
+// which script does have; `<video>`'s `video` asset carries `renderingSite`, which script does not -
+// calling it from script answers "not a function". A passport is the native interface, and the script
+// interface is a separate decision the behavior makes.
+
+// The passport an asset describes itself with, or nil if it has none. Borrowed from the asset.
+asset_passport :: proc(asset: ^sciter.Som_Asset_T) -> ^sciter.Som_Passport_T {
+	if asset == nil || asset.isa == nil || asset.isa.asset_get_passport == nil {
+		return nil
+	}
+	return asset.isa.asset_get_passport(asset)
+}
+
+// The names a passport lists, for discovering an asset rather than assuming it. Both slices are
+// allocated in `allocator`; the names inside them come from `atom_name` and are allocated there too.
+asset_members :: proc(
+	asset: ^sciter.Som_Asset_T,
+	allocator := context.allocator,
+) -> (
+	properties: []string,
+	methods: []string,
+) {
+	p := asset_passport(asset)
+	if p == nil {
+		return nil, nil
+	}
+	if p.n_properties > 0 && p.properties != nil {
+		properties = make([]string, p.n_properties, allocator)
+		for def, i in ([^]sciter.Som_Property_Def_T)(p.properties)[:p.n_properties] {
+			properties[i], _ = atom_name(Atom(def.name), allocator)
+		}
+	}
+	if p.n_methods > 0 && p.methods != nil {
+		methods = make([]string, p.n_methods, allocator)
+		for def, i in ([^]sciter.Som_Method_Def_T)(p.methods)[:p.n_methods] {
+			methods[i], _ = atom_name(Atom(def.name), allocator)
+		}
+	}
+	return
+}
+
+// Calls a method the passport lists, by name. `.Not_Found` if the passport has no such method,
+// `.Call_Failed` if the method itself refused.
+//
+// The engine's own thunks are `proc "system"` taking the asset back as their first argument, so this
+// is a direct call rather than anything routed through script - which is what makes it work for
+// members script cannot see.
+asset_call :: proc(asset: ^sciter.Som_Asset_T, method: string, args: []Value = nil) -> (result: Value, err: Error) {
+	p := asset_passport(asset)
+	if p == nil || p.methods == nil {
+		return {}, .Not_Found
+	}
+	want := u64(atom(method))
+	for def in ([^]sciter.Som_Method_Def_T)(p.methods)[:p.n_methods] {
+		if def.name != want || def.func == nil {
+			continue
+		}
+		if !def.func(asset, u32(len(args)), raw_data(args), &result) {
+			value_clear(&result)
+			return {}, .Call_Failed
+		}
+		return result, nil
+	}
+	return {}, .Not_Found
+}
+
+// Reads a property the passport lists, by name. `.Not_Found` if there is no such property.
+//
+// Only accessor properties are read through their getter; a passport may also hold a constant, and
+// those are returned from the definition itself.
+asset_get :: proc(asset: ^sciter.Som_Asset_T, property: string) -> (result: Value, err: Error) {
+	p := asset_passport(asset)
+	if p == nil || p.properties == nil {
+		return {}, .Not_Found
+	}
+	want := u64(atom(property))
+	for def in ([^]sciter.Som_Property_Def_T)(p.properties)[:p.n_properties] {
+		if def.name != want {
+			continue
+		}
+		if def.u.accs.getter == nil {
+			return {}, .Not_Found
+		}
+		if !def.u.accs.getter(asset, &result) {
+			value_clear(&result)
+			return {}, .Call_Failed
+		}
+		return result, nil
+	}
+	return {}, .Not_Found
+}
+
+// Writes one. `.Not_Found` if there is no such property or it is read-only.
+asset_set :: proc(asset: ^sciter.Som_Asset_T, property: string, value: ^Value) -> Error {
+	p := asset_passport(asset)
+	if p == nil || p.properties == nil {
+		return .Not_Found
+	}
+	want := u64(atom(property))
+	for def in ([^]sciter.Som_Property_Def_T)(p.properties)[:p.n_properties] {
+		if def.name != want {
+			continue
+		}
+		if def.u.accs.setter == nil {
+			return .Not_Found
+		}
+		if !def.u.accs.setter(asset, value) {
+			return .Call_Failed
+		}
+		return nil
+	}
+	return .Not_Found
+}
+
+// The C++ side's `dynamic_cast`: asks an asset for a named interface and hands back the pointer to it,
+// or nil. The engine's own assets answer names like "destination.video.sciter.com"; assets this
+// package makes answer nothing (`asset_get_interface` below returns 0).
+//
+// **The returned pointer is not the asset pointer.** An engine asset is a C++ object whose
+// `som_asset_t` is a base subobject somewhere inside it, and the interface it hands back is a
+// *different* base subobject at a different offset - measured at -24 bytes for `<video>`'s. That is
+// exactly why this call exists rather than a cast: it is the only thing that knows the offset. Nothing
+// in this package should ever compute one by hand. See `video.odin` for what to do with the result.
+asset_interface :: proc(asset: ^sciter.Som_Asset_T, name: cstring) -> rawptr {
+	if asset == nil || asset.isa == nil || asset.isa.asset_get_interface == nil {
+		return nil
+	}
+	out: rawptr
+	if asset.isa.asset_get_interface(asset, name, &out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The C side
 //
 // Every callback below arrives as `proc "system"` with the asset pointer as its first argument, which

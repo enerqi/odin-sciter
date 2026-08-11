@@ -45,7 +45,28 @@ with no data is "engine, load it yourself"; `.OK` *with* data is "here it is". `
 pointer and returns the right code, which is why it exists rather than a bare `return .OK`.
 
 **Install the handler before the load.** The document's own load goes through the same callback, and so
-do the stylesheets it pulls in. A handler installed afterwards misses all of it.
+do the stylesheets it pulls in. A handler installed afterwards misses all of it. The same rule covers
+every other notification on the same handler — `on_attach_behavior` in particular arrives *inside*
+`load_html`.
+
+### The other notifications on the same handler
+
+`Host_Handler` is one struct for the whole `SCITER_CALLBACK_NOTIFICATION` family, not just loading:
+
+| | |
+| --- | --- |
+| `on_load_data` | a resource is wanted — the loader, above |
+| `on_data_loaded` | one the engine fetched itself has arrived, or failed. Reporting only |
+| `on_attach_behavior` | the document asked for a `behavior:` name by name. See [`api.md`](./api.md#named-behaviors--the-document-asking-for-odin-by-name) |
+| `on_posted` | `post_callback` coming back on the engine's thread |
+| `on_invalidate_rect` | an area was repainted. **Fires constantly in a windowed embedding** — not windowless-only |
+| `on_keyboard_request` | a text field took focus and the engine wants an on-screen keyboard |
+| `on_set_cursor` | a cursor change. Never seen in windowed mode — the engine owns its own window |
+| `on_graphics_failure` | the renderer drew nothing. Never seen here |
+| `on_engine_destroyed` | final; nothing in the API is callable after it |
+
+`on_attach_behavior` is the interesting one for anything beyond loading: it is how a stylesheet, rather
+than a call site, decides which elements get Odin code behind them.
 
 ### The request
 

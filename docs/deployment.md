@@ -44,6 +44,16 @@ A headless container needs a display and working EGL to open a window. The headl
 library loading, the version handshake, `Value` round-trips, archive open/read — do not, which is why
 the tests that need a window gate themselves on `DISPLAY` / `WAYLAND_DISPLAY`.
 
+**If the UI plays video, libVLC is a dependency you have to ship or require.** `behavior: video` —
+which `<video>` gets by default — is implemented on top of libVLC and is dlopened by name (`libvlc`,
+`libvlc/libvlc.so`). Missing, it does not degrade or complain: the behavior does not attach at all, and
+the element is inert with no error anywhere. Ship `libvlc.so` / `libvlc.dll` / `libvlc.dylib` beside
+the engine, or require the player (`libvlc-dev` on Linux) on the target machine. See
+[`ENGINE.md`](./ENGINE.md#what-it-links-and-what-it-only-looks-for).
+
+An application that generates its own frames does **not** need it: `behavior: custom-video` and
+[`video.odin`](../sciter_app/video.odin) go through a rendering site that touches no codec library.
+
 ## Where the engine is found at runtime
 
 `sciter.load()` searches in this order:
@@ -142,7 +152,7 @@ The upgrade procedure:
 1. drop in the new headers and binary
 2. `just bindgen` — regenerate `sciter.odin`
 3. **`just example api_map`** — 189 slots, 16 null, 0 mismatches. This is the check.
-4. `just check` and `just test`
+4. `just check` and `just example-tests`
 5. run the windowed examples
 
 Step 3 is not optional and it is not a formality. `ISciterAPI` is an ordered struct of function
@@ -161,6 +171,7 @@ headers do not match the binaries committed beside them.
 - [ ] the attribution line is in the About box
 - [ ] `just example api_map` passes against the engine build you are shipping
 - [ ] the UI loads from the archive, not from a path that only exists on your machine
+- [ ] if anything uses `<video>`, libVLC ships beside the engine or is a stated requirement
 - [ ] script features (`set_script_features`) are granted deliberately, not copied from an example
 - [ ] the inspector is off: no `.ENABLE_DEBUG` in the release window flags
 - [ ] debug output goes somewhere sane in release — a log file, or nowhere, not stderr on Windows
