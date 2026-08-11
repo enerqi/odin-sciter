@@ -653,6 +653,36 @@ element_by_uid :: proc(window: Window, uid: u32) -> (element: Element, err: Erro
 }
 
 // ---------------------------------------------------------------------------------------------------
+// URLs
+
+// Resolves `url` against the base of the document `element` is in - the engine's own resolution, the
+// same one that turns `<img src="logo.png">` into something it can fetch.
+//
+//	full, _ := sciter_app.combine_url(el, "images/logo.png", context.temp_allocator)
+//	// -> "file:///home/me/app/assets/images/logo.png"
+//
+// This is what a host callback needs when it has a relative reference and has to answer for it, and
+// what an application needs before handing a URL to anything outside the engine. Measured against a
+// document loaded with a base URL: a relative path resolves against it, `..` walks up, a leading `/`
+// becomes root-relative, and an already-absolute URL with a scheme is returned unchanged. An empty
+// string answers with the base itself.
+//
+// The result is allocated in `allocator`. A detached element is `.INVALID_HANDLE`, since the base
+// comes from the document.
+combine_url :: proc(element: Element, url: string, allocator := context.allocator) -> (full: string, err: Error) {
+	// The C API resolves in place, in a buffer the caller sizes, and **truncates silently** rather than
+	// reporting that it did not fit - a four-unit buffer came back OK holding "fil". So the buffer is
+	// sized here from the input plus generous room for a base, rather than left to the caller.
+	size := utf16_len(url) + 1024
+	buf := make([]u16, size, context.temp_allocator)
+	w := utf16_from_string(url, context.temp_allocator)
+	copy(buf, w)
+
+	dom_err(sciter.api().SciterCombineURL(sciter.Helement(element), raw_data(buf), u32(size))) or_return
+	return string_from_utf16_cstring(raw_data(buf), allocator), nil
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Elements as Values
 //
 // This is the crossing between the DOM and script's data model, and it goes both ways: an element put
@@ -703,6 +733,66 @@ eval_element :: proc(element: Element, script: string) -> (result: Value, err: E
 	w := utf16_from_string(script, context.temp_allocator)
 	dom_err(
 		sciter.api().SciterEvalElementScript(sciter.Helement(element), raw_data(w), u32(len(w) - 1), &result),
+	) or_return
+	return result, nil
+}
+
+// The element's script object, as a Value - what script reaches through `document.$(sel)` and hangs
+// its own properties on.
+//
+//	expando, err := sciter_app.expando(el)
+//	defer sciter_app.value_clear(&expando)
+//	n, _ := sciter_app.value_get(&expando, "rowIndex")     // read what script put there
+//	sciter_app.value_set(&expando, "rowIndex", &value)     // and write it back
+//
+// This is the general form of the crossing that `call_method` and `eval_element` do one call at a
+// time: with the object in hand, every `value_get` in `value.odin` applies, and reading is reliable
+// in both directions - a string or a number script put on the element comes back intact, and so does
+// one written from here.
+//
+// **Writing has one measured hole, and it is a sharp one: `value_set` of a *string* does not
+// survive.** The call reports success, and the property then reads back as garbage from Odin and from
+// script alike; a later `value_clear` of an unrelated Value has been seen to abort the process.
+// `value_isolate` before the set does not help. Numbers and booleans are fine - `i32`, `f64` and
+// `bool` all round-trip and are visible to script immediately. For a string, go through script, which
+// is one line and correct:
+//
+//	sciter_app.eval_element(el, `this.note = "hello"`)   // instead of value_set(&expando, "note", &s)
+//
+// This is the same family as the rule in `set_global`: a Value handed to an engine-owned object is not
+// always copied the way the header implies, and strings are where it shows.
+//
+// The C API's `forceCreation` flag is not surfaced: an element that has never been touched by script
+// answers with an object either way, so there is nothing for it to choose. A **detached** element is
+// `.INVALID_HANDLE` - the object belongs to the document.
+//
+// The result owns a reference; `value_clear` it.
+expando :: proc(element: Element) -> (value: Value, err: Error) {
+	dom_err(sciter.api().SciterGetExpando(sciter.Helement(element), &value, true)) or_return
+	return value, nil
+}
+
+// Calls a *function* from the element's scope - one the document defined, reached with the element as
+// the starting point rather than the window.
+//
+// The difference from `call_method` is which name is looked up: `call_method` wants a method **on the
+// element**, and `call_function` finds a function visible from it, `globalThis`'s included. Measured:
+// a plain `function` in the document answers here and is `.OPERATION_FAILED` through `call_method`.
+//
+// The result owns a reference; `value_clear` it. The arguments do not.
+call_function :: proc(element: Element, function: string, args: ..Value) -> (result: Value, err: Error) {
+	argv: ^sciter.Value
+	if len(args) > 0 {
+		argv = &args[0]
+	}
+	dom_err(
+		sciter.api().SciterCallScriptingFunction(
+			sciter.Helement(element),
+			to_cstring(function, context.temp_allocator),
+			argv,
+			u32(len(args)),
+			&result,
+		),
 	) or_return
 	return result, nil
 }

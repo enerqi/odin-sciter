@@ -63,6 +63,16 @@ gfx_err :: proc(r: sciter.Graphin_Result) -> Error {
 	return nil if r == .OK else r
 }
 
+// What the engine's renderer can do on this machine, as the raw capability word the C API reports -
+// there is no enum for its bits in the headers, so it is left as a number.
+//
+// The vendored Linux build answers `1`. It is worth reading before assuming a feature exists rather
+// than after a call has already failed, and worth printing in a bug report.
+graphics_caps :: proc() -> (caps: u32, ok: bool) {
+	ok = bool(sciter.api().SciterGraphicsCaps(&caps))
+	return
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Colours
 

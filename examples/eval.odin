@@ -316,6 +316,49 @@ test_value_wrong_type_is_an_error :: proc(t: ^testing.T) {
 
 	_, err := sciter_app.value_to_string(&n, context.temp_allocator)
 	testing.expect_value(t, err, sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE))
+
+	// And it fails for *every* non-string type rather than for some of them, which is what makes the
+	// error worth checking instead of the result: the engine never hands back a partial string here,
+	// so a caller that ignores `err` gets "" and not something misleading. Measured across the lot.
+	undefined: sciter_app.Value // the zero Value is undefined
+	f := sciter_app.value_from(3.5)
+	b := sciter_app.value_from(true)
+	array := sciter_app.value_make_array(3)
+	bytes := sciter_app.value_from([]u8{1, 2, 3})
+	defer {
+		sciter_app.value_clear(&f)
+		sciter_app.value_clear(&b)
+		sciter_app.value_clear(&array)
+		sciter_app.value_clear(&bytes)
+	}
+
+	map_value: sciter_app.Value
+	one := sciter_app.value_from(i32(1))
+	sciter_app.value_set(&map_value, "a", &one)
+	sciter_app.value_clear(&one)
+	defer sciter_app.value_clear(&map_value)
+
+	for entry in ([?]struct {
+			name:  string,
+			value: ^sciter_app.Value,
+		}{{"undefined", &undefined}, {"float", &f}, {"bool", &b}, {"array", &array}, {"map", &map_value}, {"bytes", &bytes}}) {
+		s, e := sciter_app.value_to_string(entry.value, context.temp_allocator)
+		testing.expectf(
+			t,
+			e == sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE),
+			"%s: expected INCOMPATIBLE_TYPE, got %v",
+			entry.name,
+			e,
+		)
+		testing.expectf(t, s == "", "%s: a failed extraction returns the empty string", entry.name)
+	}
+
+	// A string, of course, works - including an empty one, which is not confused with a failure.
+	empty := sciter_app.value_from("")
+	defer sciter_app.value_clear(&empty)
+	s, serr := sciter_app.value_to_string(&empty, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, s, "")
 }
 
 @(test)

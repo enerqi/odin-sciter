@@ -38,6 +38,15 @@ tag `6.0.4.9-bis`.
   click where `send_event` only injects the event code, `control_type` says which behavior an element
   actually carries, and a `.METHOD_CALL` handler can implement a method for native code to call;
   `element_at` hit-tests a point and `ppi` / `min_width` / `min_height` report the window's metrics;
+  **synthesised input** - `send_mouse`, `send_key` and `send_text` push events through the element
+  chain the way the window system's own input does, so the intrinsic behaviors run and a button really
+  is pressed, a text field really is typed into; `request_animation_frame` is the engine's frame clock,
+  with the `.TIMER` inversion where the handler's return value decides whether it fires again; the
+  event groups that had no typed accessor now have one - `.FOCUS`, `.SCROLL`, `.ATTRIBUTE_CHANGE`,
+  `.GESTURE` and `.DATA_ARRIVED`, with `request_element_data` to cause the last of them; `expando` and
+  `call_function` reach an element's script object and the functions visible from it; `combine_url`
+  resolves a relative URL against a document, `http_request` fetches with a method and parameters and
+  delivers the body as `.DATA_ARRIVED`, and `graphics_caps` reports what the renderer can do;
   `post_callback` is the one call safe from another thread, delivering two words to the engine's thread
   as `Host_Handler.on_posted`, which is how a worker gets its results into the UI; and **SOM** -
   `som.odin` - exposes an Odin object to script, with properties and methods, through
@@ -55,9 +64,10 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Seventeen, each a single self-contained file with its explanation in the header comment:
+Nineteen, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
-`dom_walk`, `events`, `behavior`, `worker_thread`, `drag_and_drop`, `graphics`, `custom_loader`,
+`dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
+`worker_thread`, `drag_and_drop`, `graphics`, `custom_loader`,
 `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a native extension
 the engine loads).
 
@@ -67,7 +77,7 @@ Windows.
 
 ### Tests
 
-137 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+162 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -83,8 +93,12 @@ script and back in both directions, the behavior methods - `do_click` toggling a
 `send_event` leaves it alone, a method of the caller's own round-tripping through a `.METHOD_CALL`
 handler, and the measured fact that no intrinsic behavior implements `GET_VALUE` / `SET_VALUE` /
 `IS_EMPTY` on this engine - hit testing and the window metrics, posted callbacks from this thread and
-from a worker with their ordering and their delivery by `heartbeat` alone, and the request API driven
-by a real document load, skip themselves without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
+from a worker with their ordering and their delivery by `heartbeat` alone, synthesised mouse and
+keyboard input against a button, a checkbox and a text field - including the measured rule that a press
+without a button in the set is delivered and then ignored by the behavior - the animation frame's
+inverted return value, the element expando in both directions, `combine_url`'s resolutions, the task
+list application rendering its model and answering its keys, and the request API driven by a real
+document load, skip themselves without a display. Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
 the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
 ### Documentation

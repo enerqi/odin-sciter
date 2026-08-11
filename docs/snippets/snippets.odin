@@ -674,6 +674,50 @@ api6 :: proc() {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// dom.md / api.md, the element's script object
+
+dom_expando :: proc(el: sciter_app.Element) {
+	expando, _ := sciter_app.expando(el)
+	defer sciter_app.value_clear(&expando)
+
+	rank, _ := sciter_app.value_get(&expando, "rowIndex") // read what script put there
+	_ = rank
+}
+
+dom_expando_string :: proc(el: sciter_app.Element) {
+	sciter_app.eval_element(el, `this.note = "hello"`) // not value_set(&expando, "note", &s)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// dom.md, URLs
+
+dom_combine_url :: proc(el: sciter_app.Element) {
+	full, _ := sciter_app.combine_url(el, "images/logo.png", context.temp_allocator)
+	// -> "file:///home/me/app/assets/images/logo.png"
+	_ = full
+}
+
+// ---------------------------------------------------------------------------------------------------
+// events.md, animation frames
+
+TICK :: sciter.Behavior_Events(u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 1)
+
+events_raf :: proc(el: sciter_app.Element) {
+	sciter_app.request_animation_frame(el, TICK) // TICK >= .FIRST_APPLICATION_EVENT_CODE
+}
+
+// ---------------------------------------------------------------------------------------------------
+// events.md, synthesising input
+
+events_send_input :: proc(button: sciter_app.Element, field: sciter_app.Element, at: [2]i32) {
+	sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.Main})
+	sciter_app.send_mouse(button, .MOUSE_UP, at, {.Main}) // BUTTON_CLICK follows
+
+	sciter_app.set_focus(field)
+	sciter_app.send_text(field, "hello") // .DOWN/.CHAR/.UP per rune
+}
+
+// ---------------------------------------------------------------------------------------------------
 // dom.md, hit testing and window metrics
 
 dom_hit :: proc(window: sciter_app.Window, x, y: i32) {

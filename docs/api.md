@@ -190,8 +190,24 @@ do not clear it.
 | `element_uid` / `element_by_uid` | `element_by_uid` is broken on 6.x — see [`dom.md`](./dom.md#identity) |
 | `eval_element(el, script)` | script with `this` bound to the element |
 | `call_method(el, method, args: ..Value)` | a method on the element's script object, including behavior methods |
+| `call_function(el, name, args: ..Value)` | a *function* visible from the element, `globalThis`'s included — what `call_method` cannot find |
+| `expando(el) -> (Value, Error)` | the element's script object, to `value_get` / `value_set` — **read the string caveat below** |
+| `combine_url(el, url, allocator)` | resolves a relative URL against the element's document base |
 
 `state(x)` and `set_state(x, …)` are overload groups resolving to the element or window version.
+
+**`expando` reads reliably in both directions and writes only scalars.** Measured: `value_set` of an
+`i32`, `f64` or `bool` round-trips and is visible to script immediately, and anything script put on the
+element reads back intact. `value_set` of a **string** reports success and then reads back as garbage
+from both sides — `value_isolate` first does not help, and a later unrelated `value_clear` has aborted
+the process. Put a string there through script instead, which is one line:
+
+```odin
+sciter_app.eval_element(el, `this.note = "hello"`)   // not value_set(&expando, "note", &s)
+```
+
+This is the same family as the rule in `set_global`: a Value handed to an engine-owned object is not
+always copied the way the header implies, and strings are where it shows.
 
 ## Behavior methods — `behavior.odin`
 
@@ -210,6 +226,9 @@ DOM nor script reaches it.
 `handled` is separate from `err` because the engine answers a method nothing implements with
 `OK_NOT_HANDLED`, which is a success: `handled = false`, `err = nil`. A detached element is
 `.PASSIVE_HANDLE` and that *is* an error.
+
+`do_click` is the shortcut for one case; `send_mouse` / `send_key` under "Synthesising input" below are
+the general mechanism, and the only route to hover, drag, the wheel and the keyboard.
 
 **`do_click` is not `send_event(el, .BUTTON_CLICK)`.** `send_event` injects the event code into the
 element chain and nothing else happens — measured on a checkbox, `:checked` is untouched. `do_click`
@@ -326,14 +345,37 @@ engine's `SUBSCRIPTIONS_REQUEST`, which the wrapper replies to for you — a han
 nothing receives nothing.
 
 Decoding: `event_code(cmd)`, `event_phase(cmd)` → `Event_Phase{.Bubbling, .Sinking, .Handled}`, and
-the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, `exchange_event`, each
-returning `ok = false` if the event is not of that group and each exposing `.raw` for what is not
-surfaced.
+the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, `exchange_event`,
+`draw_event`, `method_call`, `focus_event`, `scroll_event`, `gesture_event`,
+`attribute_change_event(event, allocator)` and `data_arrived_event(event, allocator)` — each returning
+`ok = false` if the event is not of that group and each exposing `.raw` for what is not surfaced. The
+last two take an allocator because the engine hands their strings over as UTF-16.
+
+Three of the groups are **delivered only to handlers attached to the element itself** — measured, a
+window handler never sees them: `.METHOD_CALL`, `.SCROLL` and `.ATTRIBUTE_CHANGE`, plus the animation
+frame below. `attach_handler` is the only attachment that receives one.
+
+`.SIZE` has no accessor because it has no parameters: `event.element`, the element whose box changed,
+is the whole payload. It is the element's own resize, not the window's — maximizing and restoring the
+window produced none; restyling a `<div>`'s width produced one.
+
+`Scroll_Event.code` is a bare `u32` on purpose: the header's `SCROLL_EVENTS` stops at `.ANIMATION_END`
+(12) and this engine emits **14** for an ordinary `set_scroll_pos`, so a typed field would print a
+value that does not exist. `Gesture_Event.code` likewise — `GESTURE_CMD` is commented out upstream in
+this SDK.
 
 Drag and drop is the `.EXCHANGE` group and nothing else — `exchange_event` gives
 `{code, phase, target, source, pos, view, mode, data, raw}`. Consume both `.WILL_ACCEPT_DROP` and
 `.DRAG` or no `.DROP` arrives; on Linux the payload comes through empty and there is no drag source at
 all. See [`events.md`](./events.md#drag-and-drop).
+
+Animation frames: `request_animation_frame(el, code, reason)` is script's `requestAnimationFrame` from
+native code — the engine's frame clock, where `set_timer` is a millisecond clock that ticks whether or
+not anything is drawn. `code` arrives as an ordinary `.BEHAVIOR_EVENT`, so use one at or above
+`.FIRST_APPLICATION_EVENT_CODE` (the C API's 0 is `.BUTTON_CLICK`). **The handler's return value
+decides whether it happens again** — the `.TIMER` inversion: true re-arms it for the next frame, false
+stops it. Measured, and the engine brackets each request with its own `.ANIMATION` events, `reason = 1`
+before and `reason = 0` after, which *do* bubble to a window handler.
 
 Timers: `set_timer(el, interval: time.Duration, id: uintptr = 0)` and `stop_timer(el, id)`. The event
 arrives in the `.TIMER` group as `Timer_Event{id, raw}`. **The return value is inverted for this
@@ -343,6 +385,31 @@ on the element it was set on. See [`events.md`](./events.md#timers).
 Synthesising: `send_event(el, code, source, reason) -> (handled, Error)` and `post_event(...)`. These
 bypass the intrinsic behavior, and a nil `source` delivers nothing at all — see
 [`events.md`](./events.md#synthesising-events).
+
+Synthesising input: `send_mouse(el, code, pos, buttons, modifiers)` and `send_key(el, code, key_code,
+modifiers)` are `SciterTraverseUIEvent` — they sink-and-bubble the event the way the window system's
+own input does, so the **intrinsic behaviors run**: the button really is pressed and clicked, the
+`<input>` really is typed into. `send_text(el, text)` is the `.DOWN`/`.CHAR`/`.UP` loop over a string.
+Three requirements, each measured: `el` must not be nil (there is no hit testing inside — `element_at`
+turns a point into the element to name); `buttons` must carry the button or the behavior ignores the
+press entirely (the event is still delivered, and `processed` comes back false); and `pos` is in the
+window's client area, the space `location(el, .Border, .View)` and `element_at` use — the engine
+recomputes the element-relative `pos` each handler sees. See `examples/input.odin`.
+
+Loading for an element: `request_element_data(el, url, data_type, initiator)` fetches a URL through the
+engine's own pipeline — host callback, archives and custom schemes included — and delivers the bytes to
+`el` as `.DATA_ARRIVED`. `http_request(el, url, method, params, data_type)` is the same delivery with a
+method and parameters: measured against a real server, a `.Get` encodes them into the query string
+(`?page=2&q=two%20words`, escaping done for you) and a `.Post` sends them as the body. The C API's
+synchronous variants are not surfaced — `GET_SYNC` returns `.OPERATION_FAILED` immediately, issues the
+request anyway, and delivers asynchronously like the rest. **The engine denies socket access by
+default**, so an HTTP request goes quiet until `set_script_features({.SOCKET_IO})`.
+
+Failures are reported through the event rather than the call, and **`status` is not one scale** —
+measured: an HTTP response puts its own code there (200, 404 with the server's error page as `data`), a
+`file://` load that worked answers 0 rather than 200, a missing file answers an errno (2), and a
+connection that could not be made answers 0 with no data. `len(data) == 0` is the reliable failure
+test; `status` says why.
 
 Named events: `fire_event(Fired_Event{…}, post := false) -> (handled, Error)` carries a **name** and a
 **payload** where `send_event` carries only a code, which is what makes it the channel to script —
@@ -391,6 +458,9 @@ enumerable**, so `Object.keys` is empty; and assigning to a property with no set
 script rather than being dropped.
 
 ## Graphics — `graphics.odin`
+
+`graphics_caps() -> (u32, bool)` reports what the renderer can do as the raw capability word — there is
+no enum for its bits upstream. The vendored Linux build answers `1`.
 
 The engine's own 2D renderer, in a second function table. Full guide:
 [`graphics.md`](./graphics.md).
@@ -543,6 +613,10 @@ api.SciterCreateWindow({.MAIN, .ENABLE_DEBUG}, &frame, nil, nil, nil)
 
 Things you will reach for the raw table for today: `SciterHttpRequest`, and `gGetNativeDC` in the
 graphics table.
+
+Two DOM slots are **dead on this engine** and are deliberately not wrapped: `SciterGetObject` and
+`SciterGetElementNamespace` both answer `.OPERATION_FAILED` for every element tried, leftovers from the
+removed script VM in the same way `SciterGetViewExpando` is. `expando` is the call that works.
 
 From `package sciter` itself: `load`, `adopt`, `api`, `loaded`, `unload`, `LIBRARY_NAME`,
 `SCITER_API_VERSION`, `Scdom_Result`, and the ~1800 lines of generated types.

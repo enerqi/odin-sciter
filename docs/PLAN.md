@@ -2,11 +2,12 @@
 
 Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and seventeen examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and nineteen examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
-the DOM, events, behavior methods, background threads, drag-and-drop, graphics, custom resource loading
+the DOM, events, behavior methods, synthesised input, background threads, drag-and-drop, graphics,
+custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 137 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
+`just example-tests` runs 162 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -306,7 +307,7 @@ odin-sciter/
     node.odin                     # text and comment nodes, the half of the tree dom.odin skips
     layout.odin                   # boxes, intrinsic sizes, window metrics, scrolling
     behavior.odin                 # behavior methods: control_type, do_click, METHOD_CALL both ways
-    events.odin                   # Event_Handler, typed event params, timers, synthesised events
+    events.odin                   # Event_Handler, typed event params, timers, frames, synthesised input
     graphics.odin                 # the graphics API: paths, text, images, layers
     som.odin                      # SOM assets - an Odin object script can read, write and call
     host.odin                     # SC_LOAD_DATA host callback, and post_callback across threads
@@ -328,6 +329,8 @@ odin-sciter/
     dom_walk.odin                 # selectors, traversal, text/attributes, nodes, SOM (+54 tests)
     events.odin                   # ELEMENT_EVENT_PROC, subscriptions, phases, timers (+21 tests)
     behavior.odin                 # do_click vs send_event, control_type, hit testing (+9 tests)
+    input.odin                    # real mouse and key input, animation frames, expando (+14 tests)
+    task_list.odin                # a whole small application: model, render, keys, saving (+11 tests)
     worker_thread.odin            # post_callback: a background thread driving the UI (+5 tests)
     graphics.odin                 # painting from a .DRAW handler (+12 tests)
     drag_and_drop.odin            # the EXCHANGE group (+3 tests)
@@ -455,7 +458,7 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all seventeen examples run, and the eleven guides are
+9. ~~**Examples and guides** — §9~~ **done**: all nineteen examples run, and the eleven guides are
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
@@ -537,6 +540,13 @@ description of what the engine actually implements.
     the caller's own through a `.METHOD_CALL` handler, hit testing and the window metrics
 17. ~~`worker_thread`~~ — done, with 5 tests: `post_callback` from this thread and from a worker, the
     ordering, delivery by `heartbeat` alone, and the window that drops what it has no handler for
+18. ~~`input`~~ — done, with 14 tests: `SciterTraverseUIEvent` driving a button, a checkbox and a text
+    field for real, the `.FOCUS` / `.SCROLL` / `.ATTRIBUTE_CHANGE` / `.DATA_ARRIVED` accessors, the
+    animation frame and its inverted return value, the element expando, `combine_url`, and
+    `http_request` delivering the same way
+19. ~~`task_list`~~ — done, with 11 tests: a whole small application, script-free - an Odin model that
+    the DOM is a projection of, one `render`, keyboard commands through real key events, HTML escaping
+    of user text, and state saved as JSON through a Value
 
 Testing is example-driven — there is no engine source to unit-test against. Follow odin-dds and put
 `@(test)` procs inside `examples/*.odin`. Headless-testable: library loading, the version handshake,

@@ -305,6 +305,287 @@ timer_event :: proc(event: Event) -> (te: Timer_Event, ok: bool) {
 	return Timer_Event{id = p.timerId, raw = p}, true
 }
 
+// The focus moving. Six codes, and the pair that matter are `.LOST` and `.GOT` on the element itself;
+// `.OUT` and `.IN` are the container's view of the same move, and `.REQUEST` / `.ADVANCE_REQUEST` are
+// asked on the way up the chain before it happens.
+//
+// `target` is the *other* element in the move: for `.LOST` it is the element about to receive the
+// focus, for `.GOT` the one that had it, and it can be nil at either end of the document.
+//
+// Setting `raw.cancel` during `.REQUEST` or `.LOST` refuses the move, which is how a form keeps the
+// focus in a field that has not been filled in properly. It is a field of the caller's struct, so it
+// only counts while the handler is on the stack.
+Focus_Event :: struct {
+	code:   sciter.Focus_Events,
+	phase:  Event_Phase,
+	target: Element,
+	cause:  u32, // how the focus was moved; a FOCUS_CMD_TYPE for `.ADVANCE_REQUEST`
+	raw:    ^sciter.Focus_Params,
+}
+
+focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
+	if event.group != {.FOCUS} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Focus_Params)(event.params)
+	return Focus_Event {
+			code = sciter.Focus_Events(event_code(p.cmd)),
+			phase = event_phase(p.cmd),
+			target = Element(p.target),
+			cause = p.cause,
+			raw = p,
+		},
+		true
+}
+
+// Something scrolled. **Delivered only to handlers on the element that scrolled** - measured: a
+// handler attached with `attach_window_handler` never sees one, so this is an `attach_handler` event.
+//
+// `code` is deliberately a bare `u32` rather than `sciter.Scroll_Events`. The header's enum stops at
+// `.ANIMATION_END` (12) and this engine emits **14** for an ordinary `set_scroll_pos`, so a typed
+// field would print a value that does not exist. Compare against `u32(sciter.Scroll_Events.POS)` and
+// friends where the code is one of the documented ones.
+//
+// `source` says where the scroll came from, and it chooses what `reason` means: a key code for
+// `.KEYBOARD`, a SCROLLBAR_PART for `.SCROLLBAR`, nothing for the rest.
+Scroll_Event :: struct {
+	code:     u32,
+	phase:    Event_Phase,
+	target:   Element,
+	pos:      i32, // the new offset, for a position-carrying code
+	vertical: bool, // false means the horizontal scrollbar
+	source:   sciter.Scroll_Source,
+	reason:   u32,
+	raw:      ^sciter.Scroll_Params,
+}
+
+scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
+	if event.group != {.SCROLL} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Scroll_Params)(event.params)
+	return Scroll_Event {
+			code = event_code(p.cmd),
+			phase = event_phase(p.cmd),
+			target = Element(p.target),
+			pos = p.pos,
+			vertical = bool(p.vertical),
+			source = sciter.Scroll_Source(p.source),
+			reason = p.reason,
+			raw = p,
+		},
+		true
+}
+
+// An attribute was written or removed - the engine's ATTRIBUTE_CHANGE group, and the way to watch a
+// document for a change your own code did not make.
+//
+// **Delivered only to handlers on the element itself**, like `.SCROLL`. Measured: it fires for
+// `set_attribute` from Odin and for `setAttribute` from script alike, and a removal arrives with
+// `value` empty rather than as a separate code.
+//
+// `name` is borrowed from the engine and valid for the call. `value` is decoded into `allocator`,
+// because the engine hands it over as UTF-16.
+Attribute_Change :: struct {
+	element: Element,
+	name:    string,
+	value:   string,
+	raw:     ^sciter.Attribute_Change_Params,
+}
+
+attribute_change_event :: proc(event: Event, allocator := context.allocator) -> (ac: Attribute_Change, ok: bool) {
+	if event.group != {.ATTRIBUTE_CHANGE} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Attribute_Change_Params)(event.params)
+	return Attribute_Change {
+			element = Element(p.he),
+			name = string(p.name),
+			value = string_from_utf16_cstring(p.value, allocator),
+			raw = p,
+		},
+		true
+}
+
+// A touch gesture. The engine keeps the group and the parameter struct, but the `GESTURE_CMD` enum is
+// **commented out** in sciter-x-behavior.h on this SDK, so `code` is a bare number here: there is no
+// list of values upstream to name it against.
+Gesture_Event :: struct {
+	code:   u32,
+	phase:  Event_Phase,
+	target: Element,
+	pos:    [2]i32, // relative to the target element
+	raw:    ^sciter.Gesture_Params,
+}
+
+gesture_event :: proc(event: Event) -> (ge: Gesture_Event, ok: bool) {
+	if event.group != {.GESTURE} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Gesture_Params)(event.params)
+	return Gesture_Event {
+			code = event_code(p.cmd),
+			phase = event_phase(p.cmd),
+			target = Element(p.target),
+			pos = {p.pos.x, p.pos.y},
+			raw = p,
+		},
+		true
+}
+
+// `.SIZE` has no accessor because it has no parameters: the engine passes nothing at all, and
+// `event.element` - the element whose box changed - is the entire payload. Measured, it is delivered
+// to handlers on that element only, and it is the element's own resize rather than the window's:
+// maximizing and restoring the window produced none, restyling a `<div>`'s width produced one.
+
+// ---------------------------------------------------------------------------------------------------
+// Asking the engine to fetch something
+//
+// The engine's loader, aimed at one element: it fetches a URL through the same pipeline a document's
+// own resources go through - the host callback included - and hands the bytes to that element as a
+// `.DATA_ARRIVED` event.
+//
+// This is the way to load data *for* an element without doing the I/O yourself, and it is where
+// `this://app/` archive URLs and any custom scheme the host implements keep working.
+
+// Asks for `url`, to be delivered to `element` as `.DATA_ARRIVED`.
+//
+// `data_type` is a `sciter.Sciter_Resource_Type` handed back untouched in the event, so it is a label
+// for the requester rather than something the engine interprets. `initiator` is likewise carried
+// through as `Data_Arrived.initiator`, for telling several requests apart.
+//
+// The call returns as soon as the request is queued; the answer arrives on a later turn of the pump.
+// **A failure is reported through the event too**, not here: a URL that does not exist still returns
+// `nil` and arrives with `len(data) == 0`.
+//
+// `http_request` below is the same delivery with a method and parameters, for when the URL is not
+// enough.
+request_element_data :: proc(
+	element: Element,
+	url: string,
+	data_type := sciter.Sciter_Resource_Type.RAW,
+	initiator: Element = nil,
+) -> Error {
+	w := utf16_from_string(url, context.temp_allocator)
+	return dom_err(
+		sciter.api().SciterRequestElementData(
+			sciter.Helement(element),
+			raw_data(w),
+			u32(data_type),
+			sciter.Helement(initiator),
+		),
+	)
+}
+
+// How `http_request` asks. The C API's synchronous variants are deliberately not surfaced: measured,
+// `GET_SYNC` returns `.OPERATION_FAILED` immediately, issues the request anyway, and then delivers the
+// answer asynchronously like the others - so there is nothing synchronous about it to offer.
+Http_Method :: enum {
+	Get,
+	Post,
+}
+
+// Fetches a URL over HTTP with a method, parameters and the engine's own networking, and delivers the
+// body to `element` as `.DATA_ARRIVED` - the same event `request_element_data` produces.
+//
+//	sciter_app.http_request(list, "https://api.example.com/rows", .Get, {{"page", "2"}})
+//
+// **Parameters go where the method puts them**, measured against a real server: a `.Get` encodes them
+// into the query string - `?page=2&q=two%20words`, escaping done for you - and a `.Post` sends them as
+// the body. Passing none is fine.
+//
+// The `status` in the event is the HTTP one, so 200 is success and 404 arrives with the server's error
+// page as `data` rather than as a failure here. A connection that could not be made arrives with
+// `status = 0` and no data. See `Data_Arrived` for the whole story about that field.
+//
+// **The engine denies socket access by default**, so this returns success and nothing ever arrives
+// until `set_script_features({.SOCKET_IO})` has been called - before the window, like every other
+// engine option. That is the first thing to check when a request goes quiet.
+//
+// A `file://` URL works here too, which makes this a superset of `request_element_data`; that call is
+// the one to reach for when there is no method or parameters to give.
+http_request :: proc(
+	element: Element,
+	url: string,
+	method := Http_Method.Get,
+	params: []Name_Value = nil,
+	data_type := sciter.Sciter_Resource_Type.RAW,
+) -> Error {
+	w := utf16_from_string(url, context.temp_allocator)
+
+	// The engine wants an array of {name, value} UTF-16 pointers; both strings have to stay alive for
+	// the call, which the temp allocator covers.
+	encoded: []sciter.Request_Param
+	if len(params) > 0 {
+		encoded = make([]sciter.Request_Param, len(params), context.temp_allocator)
+		for pair, i in params {
+			encoded[i] = {
+				name  = raw_data(utf16_from_string(pair.name, context.temp_allocator)),
+				value = raw_data(utf16_from_string(pair.value, context.temp_allocator)),
+			}
+		}
+	}
+
+	request_type := sciter.Request_Type.GET_ASYNC if method == .Get else sciter.Request_Type.POST_ASYNC
+	return dom_err(
+		sciter.api().SciterHttpRequest(
+			sciter.Helement(element),
+			raw_data(w),
+			u32(data_type),
+			u32(request_type),
+			raw_data(encoded),
+			u32(len(encoded)),
+		),
+	)
+}
+
+// Bytes that `request_element_data` or `http_request` asked for. Delivered to handlers on the
+// **receiving element**, the one the request named.
+//
+// `data` and `uri` both point into the engine's memory and are valid for the call only - copy anything
+// that has to outlive the handler.
+//
+// **`status` is not one scale, so do not test it for success.** Measured, all four cases:
+//
+//   - an `http://` response puts its own code there - 200 for a fetch that worked, 404 with the
+//     server's error page as `data`, 501, and so on
+//   - a `file://` load that worked answers **0**, not 200
+//   - a `file://` load that failed answers an errno - 2 for a missing file
+//   - a connection that could not be made answers 0, with no data
+//
+// So 0 means both "a local file, fine" and "the network went nowhere", which is why the header's
+// comment that 0 is an unknown error is only a third right. **`len(data) == 0` is the reliable failure
+// test**; `status` is worth reading afterwards to say *why*, and is the HTTP code when there was one.
+Data_Arrived :: struct {
+	initiator: Element, // whatever was passed to `request_element_data`
+	data:      []u8,
+	type:      sciter.Sciter_Resource_Type,
+	status:    u32,
+	uri:       string, // decoded into the accessor's allocator
+	raw:       ^sciter.Data_Arrived_Params,
+}
+
+data_arrived_event :: proc(event: Event, allocator := context.allocator) -> (da: Data_Arrived, ok: bool) {
+	if event.group != {.DATA_ARRIVED} || event.params == nil {
+		return {}, false
+	}
+	p := (^sciter.Data_Arrived_Params)(event.params)
+
+	data: []u8
+	if p.data != nil && p.dataSize > 0 {
+		data = p.data[:p.dataSize]
+	}
+	return Data_Arrived {
+			initiator = Element(p.initiator),
+			data = data,
+			type = sciter.Sciter_Resource_Type(p.dataType),
+			status = p.status,
+			uri = string_from_utf16_cstring(p.uri, allocator),
+			raw = p,
+		},
+		true
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Mouse capture
 //
@@ -378,6 +659,47 @@ stop_timer :: proc(element: Element, id: uintptr = 0) -> Error {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Animation frames
+//
+// The engine's own frame clock, which `set_timer` is not: a timer counts milliseconds and fires
+// whether or not anything is being drawn, while this fires once, on the next frame the engine paints.
+// It is script's `requestAnimationFrame` reached from native code, and it is what an animation driven
+// from Odin should be paced by.
+
+// Asks the engine to deliver `code` to `element` on the next frame.
+//
+// **The handler's return value decides whether it happens again**, which is the same inversion the
+// `.TIMER` group has and the opposite of the advice everywhere else in this file: returning true
+// re-arms it for the next frame, returning false stops it. Measured - one request answered `false`
+// produced exactly one event however long the pump ran afterwards, and answered `true` produced one
+// per frame.
+//
+//	on_event :: proc(h: ^sciter_app.Event_Handler, ev: sciter_app.Event) -> bool {
+//		if be, ok := sciter_app.behavior_event(ev); ok && be.code == TICK {
+//			advance(h)
+//			return h.still_animating    // true keeps the frames coming; false is the last one
+//		}
+//		return false
+//	}
+//
+// So a handler that ends in a blanket `return false` gets one frame and stops, and one that returns
+// true unconditionally animates for the life of the element.
+//
+// `code` arrives as an ordinary `.BEHAVIOR_EVENT` carrying `reason`, so use one of your own at or
+// above `.FIRST_APPLICATION_EVENT_CODE`: the default here is `.BUTTON_CLICK`'s numeric value 0 in the
+// C API, which would be indistinguishable from a real click. The event goes to handlers on `element`
+// itself.
+//
+// Three measured details. The event is delivered **only to handlers on `element`** - a window handler
+// never sees it, so this needs `attach_handler`. The engine brackets it with its own `.ANIMATION`
+// events - `reason = 1` before and `reason = 0` after, and those two *do* bubble to a window handler -
+// so a handler watching for `.ANIMATION` sees a pair around every request. And a nil element is
+// `.INVALID_HANDLE`.
+request_animation_frame :: proc(element: Element, code: sciter.Behavior_Events, reason: uintptr = 0) -> Error {
+	return dom_err(sciter.api().SciterRequestAnimationFrameEvent(sciter.Helement(element), u32(code), reason))
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Synthesising events
 
 // Sends a behaviour event synchronously down to `element` and back up, and reports whether a handler
@@ -432,6 +754,111 @@ post_event :: proc(
 	reason: uintptr = 0,
 ) -> Error {
 	return dom_err(sciter.api().SciterPostEvent(sciter.Helement(element), u32(code), sciter.Helement(source), reason))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Synthesising input
+//
+// `send_event` announces that something happened; these make it happen. They are the engine's
+// `SciterTraverseUIEvent`, which sinks-and-bubbles a mouse or key event through the element chain the
+// way the window system's own input does - so the intrinsic behaviors run, and a `<button>` really is
+// pressed and clicked, an `<input>` really is typed into.
+//
+//	sciter_app.send_mouse(button, .MOUSE_DOWN, centre, {.MAIN_MOUSE_BUTTON})
+//	sciter_app.send_mouse(button, .MOUSE_UP, centre, {.MAIN_MOUSE_BUTTON})   // BUTTON_CLICK follows
+//
+// This is what a test that wants to drive its own UI needs, and what an accessibility or automation
+// layer is built on. `do_click` in `behavior.odin` is the shortcut for the one common case; this is
+// the general mechanism, and the only route to hover, drag, the wheel and the keyboard.
+//
+// Three things are required, each of which fails silently-ish if missed:
+//
+//   - **`element` must not be nil.** The C API takes the target inside the parameter block and there is
+//     no hit testing here: a nil one is `.INVALID_HANDLE`. `element_at` is how to turn a point into the
+//     element to name.
+//   - **`buttons` must say which button is down** for a press to count. Measured: `.MOUSE_DOWN` with an
+//     empty set is delivered to handlers, reports `processed = false`, and the button behavior ignores
+//     it - no `:active`, no `.BUTTON_CLICK`. With `{.MAIN_MOUSE_BUTTON}` the behavior runs.
+//   - **the position is in the window's client area**, the space `location(el, .Border, .View)` and
+//     `element_at` use. The engine recomputes the element-relative `pos` each handler sees from it.
+
+// Delivers a mouse event to `element` and reports whether anything acted on it.
+//
+// `pos` is in the window's client area. `buttons` is which buttons are held *during* the event, so a
+// press and its release both carry the button - it is not "which button changed".
+send_mouse :: proc(
+	element: Element,
+	code: sciter.Mouse_Events,
+	pos: [2]i32,
+	buttons: bit_set[Mouse_Button;u32] = {},
+	modifiers: sciter.Keyboard_States = {},
+) -> (
+	processed: bool,
+	err: Error,
+) {
+	params := sciter.Mouse_Params {
+		cmd = u32(code),
+		target = sciter.Helement(element),
+		pos = {x = pos.x, y = pos.y},
+		pos_view = {x = pos.x, y = pos.y},
+		button_state = transmute(u32)buttons,
+		alt_state = u32(modifiers),
+	}
+	was: b32
+	// The group is passed as the *mask*, not the enum's ordinal - `Event_Group.MOUSE` is 0 and would be
+	// `.INVALID_PARAMETER`. Only the mouse and key masks are accepted; anything else is refused.
+	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.MOUSE}, &params, &was)) or_return
+	return bool(was), nil
+}
+
+// Which mouse buttons are down. `sciter.Mouse_Buttons` is an enum of single values rather than a
+// bit_set, and the field is a mask, so this is the set form of it.
+Mouse_Button :: enum u32 {
+	Main   = 0, // left
+	Prop   = 1, // right
+	Middle = 2,
+}
+
+// Delivers a key event to `element`. `key_code` is a virtual key for `.DOWN` and `.UP`, and a
+// character for `.CHAR`.
+//
+// A real keystroke is three of these - `.DOWN`, `.CHAR`, `.UP` - and the editing behaviors act on the
+// `.CHAR`. `send_text` is the loop over them.
+send_key :: proc(
+	element: Element,
+	code: sciter.Key_Events,
+	key_code: u32,
+	modifiers: sciter.Keyboard_States = {},
+) -> (
+	processed: bool,
+	err: Error,
+) {
+	params := sciter.Key_Params {
+		cmd       = u32(code),
+		target    = sciter.Helement(element),
+		key_code  = key_code,
+		alt_state = u32(modifiers),
+	}
+	was: b32
+	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.KEY}, &params, &was)) or_return
+	return bool(was), nil
+}
+
+// Types `text` into `element`, one character at a time, as `.DOWN` / `.CHAR` / `.UP` triples.
+//
+// The element has to be one that accepts typing and has the focus - `set_focus` first - and what
+// arrives is real input: the edit behavior raises `.VALUE_CHANGING` and `.VALUE_CHANGED`, and
+// `element_value` reads back what was typed. Measured on a text `<input>`.
+//
+// Each rune is sent as one key code, which is right for text and not for anything needing a modifier -
+// use `send_key` for those.
+send_text :: proc(element: Element, text: string) -> Error {
+	for r in text {
+		send_key(element, .DOWN, u32(r)) or_return
+		send_key(element, .CHAR, u32(r)) or_return
+		send_key(element, .UP, u32(r)) or_return
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------------------------------

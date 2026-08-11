@@ -118,7 +118,7 @@ content and route native access through an explicit bridge.
 
 | | Host / binding | License | From Odin | Note |
 | --- | --- | --- | --- | --- |
-| [Tauri](https://github.com/tauri-apps/tauri) / wry | Rust | MIT / Apache-2.0 | Rust — shim required | The mature one. Allowlisted `invoke` bridge, real mobile story |
+| [Tauri](https://github.com/tauri-apps/tauri) / wry | Rust | MIT / Apache-2.0 | Rust — shim required | The mature one. DOM-based; native access through the `invoke` bridge, gated in v2 by capabilities and permissions rather than one allowlist. Real mobile story |
 | [webview/webview](https://github.com/webview/webview) | Single C header | MIT | **Directly bindable** — one C header | No framework around it, which is the point |
 | [WebUI](https://github.com/webui-dev/webui) | C library | MIT | **Already bound**: `webui-dev/odin-webui` | Different bet again: drives the user's *installed browser*, bundles no webview at all. Smallest possible shipped artifact, at the cost of depending on whatever browser is present. See [below](#webui-in-detail) |
 | [Photino](https://www.tryphotino.io/) | .NET | MIT | Not practical | <1MB own binary but needs the .NET runtime present |
@@ -666,7 +666,7 @@ Which makes it a latency question, and the boundaries in this document differ by
 | --- | --- | --- |
 | In-process call — Sciter's `sciter::om`, native ImGui/Clay | sub-microsecond | Thousands of times over |
 | Localhost socket — **WebUI**, Neutralino | tens of microseconds to ~1ms | Yes, comfortably |
-| Process-sandbox IPC — CEF, Electron, Tauri's `invoke` | ~microseconds to ~1ms | Yes |
+| Process-sandbox IPC — CEF, Electron, Tauri's `invoke` (JSON-serialized, so payload size dominates) | ~microseconds to ~1ms | Yes |
 | Network round trip — Datastar and any real hypermedia app | ~10–200ms | No, not once |
 
 (Orders of magnitude, from the architectures rather than measured here — unlike the engine figures
@@ -934,14 +934,60 @@ remains the portable floor.
 
 | | When it wins |
 | --- | --- |
-| **Tauri** | Best overall. Ships no engine (sub-600KB core), and v2 has a real security model — a **capabilities** system that grants or denies named **permissions** per window/webview, rather than one global allowlist. Desktop and mobile. Cost: three rendering engines across platforms |
+| **Tauri** | Best overall. Ships no engine (sub-600KB core), and v2 has a real security model — a **capabilities** system that grants or denies named **permissions** per window/webview, rather than one global allowlist. Desktop and mobile. Costs: three rendering engines across platforms, and it is **DOM-based** — see the note below |
 | **CEF / Electron** | When identical rendering everywhere matters more than 100–150MB. Strongest content sandbox in practice, and the best debugging story of anything in this document |
 | **Browser wasm** — egui/Rust, Blazor, Emscripten, Odin's own `js_wasm32` | Maximum sandbox, zero install, URL distribution. Fast when it skips the DOM |
 | **OS sandbox + native toolkit** | When the threat model is "confine my app", not "isolate untrusted content", **and** you already ship through platform stores. Fastest option here, and the UI stays cross-platform — but the sandbox itself is three per-platform mechanisms, and it evaporates on side-loaded builds |
 | **Orca / a WASI host** | When the sandbox *is* the product, and pre-1.0 is acceptable |
 
-With no language constraint and nothing else known: **Tauri**, with anything performance-critical on
-canvas rather than DOM.
+With no language constraint and nothing else known: **Tauri** — but read the next note before assuming
+it inherits the performance argument above.
+
+#### What Tauri's bridge does and does not buy
+
+Tauri is **DOM-first**, and nothing about it steers you toward the canvas pattern. It loads your HTML
+page into the OS webview; the entire proposition is the web stack on the desktop. Every cost in
+[What actually costs speed](#what-actually-costs-speed) — style recalculation, layout, forced
+synchronous layout — applies in full. Canvas works inside a Tauri window because it is a webview and
+`<canvas>` exists there, but that is you opting out of the thing you chose Tauri for, not a road it
+paves.
+
+Its `invoke` bridge is genuinely useful and precisely bounded. Per Tauri's own v2 documentation, the two
+IPC primitives are **Events** (fire-and-forget, one-way) and **Commands** (an FFI-like abstraction), and:
+
+> "Because this mechanism uses a **JSON-RPC like protocol** under the hood to serialize requests and
+> responses, all arguments and return data must be serializable to JSON."
+
+So it is exactly the boundary described in
+[Why the serialization boundary costs what it does](#why-the-serialization-boundary-costs-what-it-does),
+with JSON on the wire. That fixes its shape:
+
+- **Good** for coarse-grained work with a small message relative to the compute — parse this file, run
+  this query, hash this, decode this image and write it to a path.
+- **Bad** for per-frame calls and large results. Encode, copy, decode on every crossing, and cost tracks
+  bytes moved rather than meaning changed. No zero-copy binary through plain commands; that wants a
+  custom protocol or the asset protocol.
+
+And the limit that matters most: **the bridge offloads compute, not rendering.** Style and layout happen
+in the webview regardless. Moving work to Rust does not make a 50,000-row table lay out faster — only
+virtualization does, and that is a DOM technique. Tauri can take computation off the web stack; it
+cannot take rendering off it.
+
+Which gives a cleaner boundary than "use canvas":
+
+- **The web stack is genuinely worth something to you** — component ecosystem, CSS, accessibility for
+  free, iteration speed, hiring → Tauri, accept the DOM costs, mitigate with the ordinary web techniques
+  (virtualization, `contain` / `content-visibility`, not reading geometry mid-write), and push coarse
+  compute across `invoke`. This is the common case and the right answer for it.
+- **Your hot path is genuinely a canvas surface** — design tool, DAW, map, node editor → the webview
+  degenerates into a window with a GPU context and a JS interpreter, and nearly everything you picked a
+  web stack for stops applying. A native toolkit becomes competitive again on the merits.
+
+One asymmetry worth carrying from the Figma example: its canvas bet also buys **zero-install
+distribution through a URL**, which is a large part of what justifies rebuilding a renderer and a text
+engine. A desktop-only Tauri app pays that same cost for a much smaller benefit. And per the WebGPU
+status noted above, a canvas hot path diverges per platform inside Tauri too — compounding the
+inconsistency Tauri already carries rather than escaping it.
 
 Determine the threat model first, because it changes which row applies. If the requirement is confining
 your own application rather than isolating content you did not write, **a native toolkit inside

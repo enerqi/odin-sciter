@@ -527,6 +527,55 @@ least once** — `set_scroll_pos` has no such requirement — and without `to_to
 the engine's own schedule, so reading the position straight back can still show the old one. With
 `to_top` it has landed by the time the call returns.
 
+## The element's script object
+
+`call_method` and `eval_element` cross into script one call at a time. `expando` hands over the whole
+object — what script reaches through `document.$(sel)` and hangs its own properties on:
+
+```odin
+expando, _ := sciter_app.expando(el)
+defer sciter_app.value_clear(&expando)
+
+rank, _ := sciter_app.value_get(&expando, "rowIndex")   // read what script put there
+```
+
+Reading is reliable in both directions: a string or a number script wrote comes back intact, and so
+does one written from here. **Writing has one hole and it is sharp.** Measured: `value_set` of an
+`i32`, `f64` or `bool` round-trips and script sees it immediately; `value_set` of a **string** reports
+success and then reads back as garbage from both sides, `value_isolate` first does not help, and a
+later unrelated `value_clear` has aborted the process. Put a string there through script:
+
+```odin
+sciter_app.eval_element(el, `this.note = "hello"`)      // not value_set(&expando, "note", &s)
+```
+
+Same family as the rule in `set_global`: a Value handed to an engine-owned object is not always copied
+the way the header implies, and strings are where it shows. A detached element has no document and so
+no object — `.INVALID_HANDLE`.
+
+`call_function(el, name, args…)` is the other half of `call_method`: it looks up a *function* visible
+from the element, `globalThis`'s included, where `call_method` wants a method on the element itself. A
+plain `function` in the document answers to the first and is `.OPERATION_FAILED` through the second.
+
+Two neighbouring slots are dead on this engine and are not wrapped: `SciterGetObject` and
+`SciterGetElementNamespace` answer `.OPERATION_FAILED` for every element, leftovers from the removed
+script VM.
+
+## URLs
+
+```odin
+full, _ := sciter_app.combine_url(el, "images/logo.png", context.temp_allocator)
+// -> "file:///home/me/app/assets/images/logo.png"
+```
+
+The engine's own resolution against the document `el` is in — the same one that turns
+`<img src="logo.png">` into something it can fetch. What a host callback needs when it is handed a
+relative reference and has to answer for it. Measured: a relative path resolves against the base, `..`
+walks up, a leading `/` becomes root-relative, an already-absolute URL is returned unchanged, and an
+empty string answers with the base itself. The C API resolves in place in a caller-sized buffer and
+**truncates silently** rather than reporting that it did not fit, which is why the wrapper sizes the
+buffer rather than leaving it to you.
+
 ## Doing it from the other side
 
 Not everything belongs in Odin. Reading a form's values element by element from the host is a lot of

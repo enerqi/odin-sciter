@@ -117,6 +117,28 @@ if de, ok := sciter_app.draw_event(event); ok {
 	// returning true from on_event REPLACES that layer
 }
 
+if fe, ok := sciter_app.focus_event(event); ok {
+	// fe.code   - .GOT, .LOST, .IN, .OUT, .REQUEST, .ADVANCE_REQUEST
+	// fe.target - the *other* element in the move; can be nil at either end of the document
+	// fe.raw.cancel = true during .REQUEST or .LOST refuses the move
+}
+
+if se, ok := sciter_app.scroll_event(event); ok {
+	// se.code     - a bare u32: the header's enum stops at 12 and this engine emits 14
+	// se.pos      - the new offset; se.vertical says which bar
+	// se.source   - .KEYBOARD / .SCROLLBAR / .ANIMATOR / .WHEEL, and it chooses what se.reason means
+}
+
+if ac, ok := sciter_app.attribute_change_event(event, context.temp_allocator); ok {
+	// ac.name / ac.value - a removal arrives with value ""
+}
+
+if da, ok := sciter_app.data_arrived_event(event, context.temp_allocator); ok {
+	// da.data   - bytes from request_element_data / http_request; engine memory, this call only
+	// da.status - the HTTP code when there was one; 0 for a local file that worked *and* for a
+	//             connection that failed, so len(da.data) is the success test
+}
+
 if mc, ok := sciter_app.method_call(event); ok {
 	// mc.id     - the method id; yours if >= FIRST_APPLICATION_METHOD_ID (256)
 	// mc.params - the caller's parameter block, written in place
@@ -135,9 +157,18 @@ if xe, ok := sciter_app.exchange_event(event); ok {
 `.raw` is on every one of them deliberately: the wrapper surfaces the fields that are used constantly
 and does not pretend to cover the rest, so nothing is out of reach.
 
-For groups without an accessor yet — `.FOCUS`, `.SCROLL`, `.SIZE`, `.ATTRIBUTE_CHANGE` — cast
-`event.params` to the matching struct from `package sciter` yourself. The struct name follows the
-header (`Focus_Params`, `Scroll_Params`, …). `.TIMER` has `timer_event`, below.
+`.SIZE` has no accessor because it has no parameters: `event.element` — the element whose box changed —
+is the whole payload. Measured, it is that element's own resize rather than the window's: maximizing
+and restoring the window produced none, restyling a `<div>`'s width produced one.
+
+**Three groups never reach a window handler.** `.METHOD_CALL`, `.SCROLL` and `.ATTRIBUTE_CHANGE` are
+delivered only to handlers attached to the element itself, so `attach_handler` is the only attachment
+that receives one — measured with both attached at once. The animation frame below behaves the same
+way.
+
+For any group still without an accessor, cast `event.params` to the matching struct from
+`package sciter` yourself. The struct name follows the header (`Style_Change_Params`, …). `.TIMER` has
+`timer_event`, below.
 
 ## The return value
 
@@ -190,6 +221,25 @@ what stops a timer, so `set_timer` raises a positive sub-millisecond interval to
 instead of rounding it down to a silent stop — `stop_timer` is the way to spell stopping.
 
 `.TIMER` has to be in `subscription` like any other group.
+
+## Animation frames
+
+The engine's frame clock, which the timers above are not: a timer counts milliseconds and fires whether
+or not anything is being drawn; this fires on the next frame the engine paints. It is script's
+`requestAnimationFrame` reached from native code.
+
+```odin
+sciter_app.request_animation_frame(el, TICK)     // TICK >= .FIRST_APPLICATION_EVENT_CODE
+```
+
+`code` arrives as an ordinary `.BEHAVIOR_EVENT` carrying `reason`, and — like `.TIMER`, and unlike
+everything else in this file — **the handler's return value decides whether it happens again**: true
+re-arms it for the next frame, false is the last one. Measured: answered false, one request produced
+exactly one event however long the pump ran; answered true, one per frame.
+
+It reaches handlers on that element only, so it needs `attach_handler`. The engine brackets each
+request with its own `.ANIMATION` events, `reason = 1` before and `reason = 0` after, and those two
+*do* bubble to a window handler.
 
 ## Which events exist
 
@@ -358,6 +408,33 @@ handled, err := sciter_app.do_click(checkbox)   // :checked flips, VALUE_CHANGED
 `do_click` is in [`behavior.odin`](../sciter_app/behavior.odin); `examples/behavior.odin` puts the two
 side by side. The state change is synchronous, the events it raises are queued, so a handler has not
 seen them until the pump turns.
+
+## Synthesising input
+
+`do_click` drives one widget. `send_mouse` and `send_key` are the general mechanism — the engine's
+`SciterTraverseUIEvent`, which sinks and bubbles the event the way the window system's own input does,
+so the intrinsic behaviors run:
+
+```odin
+sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.Main})
+sciter_app.send_mouse(button, .MOUSE_UP, at, {.Main})     // BUTTON_CLICK follows
+
+sciter_app.set_focus(field)
+sciter_app.send_text(field, "hello")                      // .DOWN/.CHAR/.UP per rune
+```
+
+This is what a test driving its own UI needs, what an automation or accessibility layer is built on,
+and the only route to hover, drag, the wheel and the keyboard. Three requirements, each measured:
+
+- **the element must be named.** There is no hit testing inside the call — a nil one is
+  `.INVALID_HANDLE`. `element_at(window, pos)` is how a coordinate becomes the element to aim at.
+- **`buttons` must carry the button.** A `.MOUSE_DOWN` with an empty set is delivered to handlers,
+  reports `processed = false`, and the button behavior ignores it — no `:active`, no `.BUTTON_CLICK`.
+  It is which buttons are held *during* the event, so a press and its release both carry one.
+- **the position is in the window's client area**, the space `location(el, .Border, .View)` and
+  `element_at` use. The engine recomputes the element-relative `pos` each handler sees from it.
+
+`examples/input.odin` drives a button, a checkbox and a text field this way, and asserts it.
 
 Use it for **application event codes of your own** — `Behavior_Events` values at or above
 `FIRST_APPLICATION_EVENT_CODE` — which have no behavior behind them and are exactly what this is for.
