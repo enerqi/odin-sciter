@@ -330,6 +330,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`architecture.md`](docs/architecture.md) | the vtable, dynamic-only loading, threading, and how the bindings are generated |
 | [`ENGINE.md`](docs/ENGINE.md) | what the engine is built from — Skia, QuickJS, its own X11/Wayland layer — and what it loads at runtime |
 | [`html-css-js.md`](docs/html-css-js.md) | what Sciter's HTML/CSS/JS is and is not — flow layout, behaviors, the runtime |
+| [`reactor.md`](docs/reactor.md) | Reactor — JSX, `patch()` reconciliation, components, lifecycle and Signals, with the traps measured against the engine |
 | [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md) | `eval`, `call`, native functors, and the `Value` lifetime rules |
 | [`dom.md`](docs/dom.md) | element handles, selectors, traversal, text and attributes, state, geometry |
 | [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, timers, synthesised events |
@@ -350,4 +351,6 @@ checked by `just check` — documentation drifts silently otherwise.
 - [`docs/PLAN.md`](docs/PLAN.md) — findings, design decisions, and what is planned next
 - [`docs/RESEARCH-METHOD.md`](docs/RESEARCH-METHOD.md) — how all of it was established, including the
   part that went wrong
+- [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
+  desktop UI, what it gives up, and what to watch
 - [Sciter documentation](https://docs.sciter.com/docs/intro) and [tutorials](https://sciter.com/tutorials/)

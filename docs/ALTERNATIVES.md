@@ -148,7 +148,7 @@ a hypothetical port of a C++ toolkit:
 | --- | --- | --- |
 | `vendor:microui` | Ships with the compiler (verified in the local Odin tree) | Immediate-mode, tiny, no markup. The zero-friction option |
 | `vendor:raylib` (+ raygui) | Ships with the compiler | Game-oriented, includes basic widgets |
-| [Clay](https://github.com/nicbarker/clay) | Single-header C, **official Odin bindings** in `bindings/odin/` (verified present), zlib | Flexbox-like retained layout, renderer-agnostic, has an HTML renderer. **Cooling**: 8 commits in the trailing 90 days, all of them before 2026-05-20, so nothing for nearly three months. Usable and dependency-free regardless — it is a single header you vendor |
+| [Clay](https://github.com/nicbarker/clay) | Single-header C, **official Odin bindings** in `bindings/odin/` (verified present), zlib | Flexbox-like retained layout, renderer-agnostic, has an HTML renderer. **Cooling**: 8 commits in the trailing 90 days, all of them before 2026-05-20, so nothing for nearly three months. Usable and dependency-free regardless — it is a single header you vendor. [Full comparison below](#clay-in-detail) |
 | `vendor:nanovg`, `vendor:fontstash` | Ship with the compiler | Vector drawing and text, if you are building the UI layer yourself |
 
 None of these give you HTML/CSS authoring, and that is exactly the trade: Sciter costs a 25MB
@@ -409,6 +409,111 @@ production-proven — but it is a heavyweight build with no single-`.so` embeddi
 | Dear ImGui / egui / microui | No first-class mobile target; embedded ad hoc via custom backends |
 | Flutter | Mobile is the original target, most mature of all — at the cost of its own Dart runtime, not "small" |
 | Orca | Windows + macOS only, no mobile |
+
+## Clay, in detail
+
+Clay earns a section rather than a table row because it is the only alternative here that is *already
+bound for Odin by its own authors*, and because the comparison with Sciter is more interesting than
+"HTML or not". Everything below was read out of `bindings/odin/clay-odin/clay.odin` at
+`nicbarker/clay@main` — 601 lines, one file — rather than from the project's marketing.
+
+### What it is
+
+A **layout engine**, not a UI toolkit. You declare a tree each frame; it returns a list of drawing
+instructions; you draw them. There is no renderer, no font rasteriser, no widget set and no event loop
+inside Clay.
+
+This block is Clay's API, not this project's, so unlike every other Odin block in these guides it is not
+mirrored in [`docs/snippets/`](./snippets/) — there is nothing here for `just check` to compile it
+against.
+
+```odin
+Clay.BeginLayout()
+// `UI` is a proc group: pass an ElementId for a stable one, or call it bare for an auto id. It
+// returns the proc that takes the declaration, which is what makes the `if` + block nesting work.
+if Clay.UI(Clay.ID("sidebar"))({
+    layout = { sizing = { width = Clay.SizingFixed(200), height = Clay.SizingGrow({}) },
+               padding = Clay.PaddingAll(16), childGap = 8,
+               layoutDirection = .TopToBottom },
+    backgroundColor = PANEL,
+}) {
+    Clay.TextStatic("Files", { fontId = 0, fontSize = 18, textColor = FG })
+}
+commands := Clay.EndLayout(delta_time)     // -> ClayArray(RenderCommand)
+```
+
+`RenderCommandType` is the whole output vocabulary: `Rectangle`, `Border`, `Text`, `Image`,
+`ScissorStart`/`ScissorEnd`, `OverlayColorStart`/`OverlayColorEnd`, `Custom`. Ten cases, and `Custom` is
+an escape hatch carrying your own pointer. That is genuinely all a backend has to handle.
+
+Memory is a single arena you size up front (`MinMemorySize`, `CreateArenaWithCapacityAndMemory`), with
+a settable `SetMaxElementCount`. No allocator, no per-frame garbage. Errors arrive through an
+`ErrorHandler` callback with a typed `ErrorType` — `ArenaCapacityExceeded`, `ElementsCapacityExceeded`,
+`DuplicateId`, `PercentageOver1`, `UnbalancedOpenClose` — instead of crashing.
+
+### What it actually gives you
+
+| Area | Clay |
+| --- | --- |
+| Sizing | `Fit`, `Grow`, `Fixed`, `Percent`, each with min/max constraints |
+| Box model | padding (4 sides), `childGap`, borders with per-side widths, corner radii |
+| Direction & alignment | `LeftToRight` / `TopToBottom`, child alignment on both axes |
+| Floating elements | 9×9 attach points (element corner → parent corner), offset, expand, `zIndex`, attach to parent / element-by-id / root, optional clip to attached parent |
+| Clipping & scrolling | per-axis clip, `childOffset` for scroll, `UpdateScrollContainers` with drag-scroll and momentum, `GetScrollContainerData` |
+| Text | colour, font id, size, letter spacing, line height, wrap mode (`Words`/`Newlines`/`None`), alignment |
+| Images, aspect ratio | image element carrying your texture pointer; `aspectRatio` config |
+| Input | `SetPointerState`, `Hovered()`, `PointerOver(id)`, `OnHover` callback, `GetPointerOverIds`, pointer capture vs passthrough |
+| Animation | transition configs with properties, enter/exit triggers, sibling ordering, an `EaseOut` helper |
+| Debugging | `SetDebugModeEnabled` — a built-in layout inspector, which is more than most immediate-mode libraries ship |
+| Performance | `SetCullingEnabled`, a measure-text cache with a resettable word budget |
+
+### What you supply
+
+This is the part that decides it:
+
+- **Text measurement.** `SetMeasureTextFunction` is mandatory — Clay will raise
+  `TextMeasurementFunctionNotProvided` otherwise. You own font loading, metrics and shaping.
+- **All rendering.** Every rectangle, glyph run, border and scissor rect.
+- **Every widget.** There is no button, text input, dropdown, tree, table, scrollbar chrome, focus ring
+  or caret. `Hovered()` and `OnHover` are the raw material you build those from.
+- **Text editing, IME, selection, clipboard, accessibility, i18n.** None of it exists.
+
+### Against Sciter
+
+| | Sciter | Clay |
+| --- | --- | --- |
+| What it is | Whole UI engine — parse, style, lay out, paint, script, input | Layout only |
+| Shipped size | 25MB `libsciter.so` | Single-header C; prebuilt static libs in the Odin bindings, tens of KB |
+| From Odin | Bindings in this repo, over `ISciterAPI` | `bindings/odin/clay-odin/`, authored upstream, prebuilt `linux/clay.a`, `windows/clay.lib`, `macos`, `macos-arm64`, **`wasm/clay.o`** |
+| UI language | HTML + CSS + JS, hot-reloadable, designer-editable | Odin code. Recompile to change the UI |
+| Model | Retained DOM, event-driven | Immediate mode — rebuild the tree every frame |
+| Layout | CSS cascade, `flow:`, flex units, `@media`, style sets | One flexbox-ish model, no cascade, no selectors, no stylesheet |
+| Text stack | Full: shaping, bidi, `@font-face`, rich text, selection, editing | You provide a measure callback and draw the glyphs |
+| Widgets | `<input>` family, `<select type=tree>`, menus, dialogs, scrollbars — all native behaviors | None |
+| Scripting | QuickJS, ES2020, [Reactor](./reactor.md), Signals | None — the host language is the only language |
+| Graphics | Skia, canvas superset, SVG, filters, transitions | Ten render commands you rasterise |
+| Debug tooling | DevTools-style inspector over a socket | Built-in layout debug view |
+| Rendering backend | Bundled | Yours — or one of Clay's examples (raylib, SDL, WebGL, terminal) |
+| Vendor risk | Closed binary, one maintainer, unforkable | zlib, source vendorable, forkable |
+| Liveness (90d) | 17 commits, weekly releases | 8 commits, none since 2026-05-20 |
+| Accessibility | Partial, engine-provided | Nothing, and no path to it |
+
+### The honest read
+
+Clay is not an alternative to Sciter; it is an alternative to *the layout box* inside Sciter. Choosing it
+means writing the renderer, the text stack and every widget yourself, in exchange for deleting a 25MB
+proprietary dependency and its single-maintainer risk. For a tool UI with a dozen controls and a
+graphics backend already in the project — a game editor, a debug overlay, something already drawing with
+raylib or SDL from Odin's `vendor` — that trade is very good, and the wasm target is a real bonus.
+
+For an application UI with forms, text entry, menus and tables, the widget gap is not a weekend of work;
+it is the reason toolkits exist. Sciter hands you `<select type=tree>` and a CSS file. Clay hands you
+`Hovered()`.
+
+Worth stating plainly since Clay's 17.8k stars invite it: **this is not a "which should I use" decision**
+with a single answer, because the two do not overlap much. What Clay does do is set a useful floor —
+if the answer to "what would we lose by dropping Sciter" is "layout, and we'd write the rest", Clay is
+proof that the layout part is a solved, small, vendorable problem.
 
 ## Hypermedia: Datastar
 

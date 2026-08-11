@@ -168,8 +168,9 @@ optional chaining, `BigInt`. It is a genuinely current language, not an ES5 dial
 are aimed at the "language behind a UI" role:
 
 - **JSX with a native parser.** No build step, no Babel. `<div class="x">{value}</div>` is a literal.
-- **Reactor** (`docs/md/reactor/` in the SDK) — reactive components, covering both the React and the
-  WebComponent styles with one mechanism, plus **Signals**.
+- **Reactor** — JSX plus a native `element.patch()` reconciler, which together give you React's model
+  with no build step. Function and class components, lifecycle methods, and **Signals**. Not a
+  framework: the SDK calls it "just a built-in set of features". See [`reactor.md`](./reactor.md).
 - **Built-in persistent Storage** — a NoSQL object database, no dependency.
 - **`__FILE__`, `__DIR__`, `__FUNC__`, `__LINE__`** as predefined constants.
 - **UI data types and units** — a length literal is a first-class value.

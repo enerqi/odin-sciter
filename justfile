@@ -42,6 +42,11 @@ packfolder_platform := if os() == "windows" { "windows" } else if os() == "macos
 # Where scapp lives inside an SDK checkout, per platform.
 scapp_platform := if os() == "windows" { "windows/x64" } else if os() == "macos" { "macosx" } else { "linux/x64" }
 
+# Where the inspector lives inside an SDK checkout. It does NOT follow `scapp_platform`: on macOS the
+# inspector ships as an .app bundle, so the real executable sits under Contents/MacOS rather than next
+# to scapp.
+inspector_rel := if os() == "windows" { "windows/x64/inspector.exe" } else if os() == "macos" { "macosx/inspector.app/Contents/MacOS/inspector" } else { "linux/x64/inspector" }
+
 # Suffix on the SDK's own tools. They are `packfolder`/`scapp` everywhere except Windows, where they
 # are `packfolder.exe`/`scapp.exe` - which is what `just pack` and `just extension-run` open.
 exe_ext := if os() == "windows" { ".exe" } else { "" }
@@ -599,3 +604,35 @@ example-tests:
 # build and run an example, e.g. `just example hello_window`
 example name="hello_window" *args: mktarget_dirs
 	odin run examples/{{name}}.odin -file -debug -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
+
+# Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
+# a separate application that attaches over a socket, so it is run *alongside* your app, not by it:
+#
+#     just example inspector          # terminal one - the app, with .ENABLE_DEBUG
+#     SCITER_SDK=~/dev/sciter-js-sdk just inspector   # terminal two - attaches to it
+#
+# The app side needs both halves or the window stays invisible to this tool, and neither can be turned
+# on after the window exists: `set_debug_mode()` before the window, and `.ENABLE_DEBUG` in its flags.
+# See examples/inspector.odin and docs/html-css-js.md.
+#
+# The inspector is an SDK tool and is not vendored here (see external/sciter/VENDORED.md), so point
+# SCITER_SDK at a checkout.
+# ---
+# run the SDK's inspector, to attach to a window built with .ENABLE_DEBUG
+inspector:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	sdk="${SCITER_SDK:-}"
+	if [ -z "$sdk" ]; then
+	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
+	    echo "the inspector is not vendored here; see external/sciter/VENDORED.md." >&2
+	    exit 1
+	fi
+	insp="$sdk/bin/{{ inspector_rel }}"
+	if [ ! -x "$insp" ]; then
+	    echo "no inspector at $insp" >&2
+	    exit 1
+	fi
+	echo "running $insp"
+	echo "(the app must already be running, built with set_debug_mode() and .ENABLE_DEBUG)"
+	exec "$insp"
