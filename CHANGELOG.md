@@ -75,7 +75,11 @@ tag `6.0.4.9-bis`.
   `windowless_key` / `windowless_focus` / `destroy_windowless` are one `SXM_*` message each over
   `SciterProcX`, and everything else in the package works on a view unchanged because its `window` field
   is an ordinary `Window`. The surface can be the host's own memory at the host's own stride, so a view
-  renders straight into a rectangle of a larger image with no copy.
+  renders straight into a rectangle of a larger image with no copy. **The `.OPENGL` backend** renders on
+  the GPU instead: `backend` and `device` on `Windowless_Options` hand the engine a `glGetProcAddress`,
+  and it draws with its own Skia GPU pipeline into the framebuffer bound to the host's context - a
+  texture, if that is what the host bound - so a UI reaches a game engine or a tool with nothing copied
+  and nothing uploaded.
 
 ### Loading
 
@@ -87,7 +91,7 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Twenty-four, each a single self-contained file with its explanation in the header comment:
+Twenty-five, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
 `dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
 `workbench` (a harder one - ten thousand rows virtualised, editable and live, with type-ahead search
@@ -98,7 +102,8 @@ and asserted once, and the eight places the renderer is wrong), `video` (frames 
 streamed into a `<video>` element), `named_behavior` (widgets a stylesheet asks for by name),
 `custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`,
 `windowless` (no window at all - the engine renders into a buffer the host owns, for a pane inside
-somebody else's renderer), and `extension` (Odin as a
+somebody else's renderer), `windowless_gl` (the same on the GPU: Sciter's own Skia pipeline drawing
+straight into the host's OpenGL texture, with an offscreen EGL context), and `extension` (Odin as a
 native extension the engine loads).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
@@ -107,7 +112,7 @@ Windows.
 
 ### Tests
 
-332 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+337 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -255,6 +260,15 @@ checked by `just check`.
   first (`load_html` of an empty page) crashes too. Five teardowns were measured, on windows that had
   been shown and on windows that never were; the table is on `close` in `window.odin`, and
   `examples/workbench.odin` closes its details window that way and pins the order with a test.
+- **The windowless `.OPENGL` backend needs a *desktop* GL context.** On a GLES 3.2 context `SXM_PAINT`
+  answers true and draws nothing, because Skia compiles `#version 150` desktop shaders the driver
+  refuses; desktop GL 4.6 works in core and compatibility profiles alike. `SL_TARGET_OPENGLES` as a
+  backend is refused outright - `SXM_PAINT` answers false on either kind of context.
+- **A GPU backend with a nil `device` segfaults the engine** on the first paint, so `create_windowless`
+  refuses it. It wants a `glGetProcAddress`-shaped function; the engine's own `SciterEGLGetProcAddress`
+  behaves identically to the host's.
+- **A GPU-backed view's target is fixed when it is created**, not read at paint time, and the paint
+  leaves the engine's own framebuffer bound rather than restoring the host's.
 - **A windowless view still needs a display.** With `DISPLAY` and `WAYLAND_DISPLAY` both unset on Linux,
   `SXM_CREATE` segfaults - before a document, a surface or a paint. "Windowless" means the engine makes
   no window of its own, not that it runs without a windowing system.

@@ -2,14 +2,14 @@
 
 Status as of 2026-08-12: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-four examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-five examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
 the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
 background threads, drag-and-drop, graphics (both a custom-painted element and a gallery covering the
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 332 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+`just example-tests` runs 337 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
 the wrapper is 310 of its 347 exported procedures called from a test; the rest are proc-group members
 reached through their group. `close` is now among the covered ones: there is exactly one order in which
 a secondary window can be closed without crashing the engine - hide, pump, close - and

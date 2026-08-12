@@ -76,10 +76,11 @@ PIXEL_ORDER :: Pixel_Order.BGRA when ODIN_OS == .Windows else Pixel_Order.RGBA
 // A view with no window. `window` is the key every other call in this package takes.
 Windowless_View :: struct {
 	window:      Window,
+	backend:     sciter.Sl_Target,
 	width:       i32,
 	height:      i32,
-	stride:      int, // bytes per row
-	pixels:      []u8, // width*height*4 in PIXEL_ORDER, unless the caller supplied its own
+	stride:      int, // bytes per row; 0 for a GPU backend
+	pixels:      []u8, // `.BITMAP` only: width*height*4 in PIXEL_ORDER, or the caller's own buffer
 	owns_pixels: bool,
 	allocator:   runtime.Allocator,
 
@@ -90,14 +91,68 @@ Windowless_View :: struct {
 Windowless_Options :: struct {
 	width, height: i32,
 
-	// The surface. Leave nil to have one allocated - `width*height*4` - which is what most callers
-	// want; pass one to render straight into a texture upload buffer, a game engine's staging memory,
-	// or a sub-rectangle of a larger image.
+	// Where the engine draws. `.BITMAP` (the zero value) renders on the CPU into `pixels` below.
+	//
+	// **`.OPENGL` renders on the GPU into the framebuffer bound to the current context**, which is the
+	// version a game engine or an immediate-mode tool wants - no readback, no copy. Three measured
+	// rules come with it, all of them in `create_windowless`: the context must be *desktop* OpenGL,
+	// `device` is mandatory, and the framebuffer binding is captured here rather than read at paint
+	// time.
+	//
+	// `.OPENGLES` is refused by this engine build on Linux - `SXM_PAINT` answers false and draws
+	// nothing, on a GLES context and on a desktop one alike. The DirectX targets are Windows-only and
+	// untried here.
+	backend:       sciter.Sl_Target,
+
+	// For a GPU backend: the address of a `glGetProcAddress`-shaped function, so the engine loads GL
+	// through the same implementation the host uses. **Not optional** - a nil `device` with a GL
+	// backend segfaults inside the engine, so `create_windowless` refuses it. The engine's own
+	// `SciterEGLGetProcAddress` works here too, and was measured to behave identically.
+	device:        rawptr,
+
+	// `.BITMAP` only. Leave nil to have a surface allocated - `width*height*4` - which is what most
+	// callers want; pass one to render straight into a texture upload buffer, a game engine's staging
+	// memory, or a sub-rectangle of a larger image.
 	pixels:        []u8,
 	stride:        int, // 0 means width*4
 }
 
+// True for the backends that draw on the GPU, where the host owns the target and there is no surface
+// in the `SXM_SIZE` message.
+@(private)
+is_gpu_backend :: proc(backend: sciter.Sl_Target) -> bool {
+	return backend != .BITMAP
+}
+
 // Creates a view and gives it its surface: `SXM_CREATE` then `SXM_SIZE`.
+//
+// ## The GPU backends
+//
+// `.OPENGL` draws with the engine's own Skia GPU pipeline instead of rasterising into your memory.
+// Three rules, all measured on 6.0.4.9 / Linux / Mesa, none of them in the headers:
+//
+//   - **The context must be desktop OpenGL, not GLES.** On a GLES 3.2 context `SXM_PAINT` answers true
+//     and draws nothing, because Skia compiles `#version 150` desktop shaders and the driver rejects
+//     them ("GLSL 1.50 is not supported"). On a desktop GL 4.6 context - core *or* compatibility
+//     profile, both measured - the document appears. `.OPENGLES` as a backend is refused outright:
+//     `SXM_PAINT` answers false, on either kind of context.
+//   - **`device` is mandatory.** It is a `glGetProcAddress`-shaped function pointer, as the SDK's own
+//     `lite-sciter` demo passes `glfwGetProcAddress`. A nil one segfaults inside the engine on the
+//     first paint, so this refuses it with `.Window_Failed` rather than letting that happen.
+//   - **The framebuffer binding is captured here, at create time.** Measured both ways round: a view
+//     created while an FBO was bound paints into that FBO even when the default framebuffer is bound
+//     at paint time, and a view created against the default framebuffer keeps painting there with an
+//     FBO bound. So: make the context current *and* bind the target framebuffer before this call.
+//     That is how a host gets Sciter into its own texture.
+//   - **The paint leaves the engine's framebuffer bound.** It does not restore what the host had
+//     bound, so anything the host draws next lands in Sciter's target unless it rebinds. See
+//     `paint_windowless`.
+//
+// The image comes out the GL way up - row 0 is the *bottom* of the document - so it can be sampled as
+// a texture directly, and needs a flip only if it is being written into a top-down image format.
+//
+// There is no surface for a GPU backend: `pixels`, `stride` and `windowless_pixel` are `.BITMAP`-only,
+// and reading the result back is the host's business (`glReadPixels`, or just draw the texture).
 //
 // **There is no wrapper for `SXM_RESOLUTION` anywhere in this package, and that is deliberate.** The
 // call reports success and then kills the process on the next message that drains the posted queue -
@@ -120,14 +175,21 @@ create_windowless :: proc(
 		return {}, .Window_Failed
 	}
 
+	// Measured: a GPU backend with no proc-address function segfaults inside the engine on the first
+	// paint, several calls away from the mistake. Refusing here turns that into an error return.
+	if is_gpu_backend(opts.backend) && opts.device == nil {
+		return {}, .Window_Failed
+	}
+
 	view.allocator = allocator
+	view.backend = opts.backend
 	view.key = new(u8, allocator)
 	view.window = Window(view.key)
 
 	create := sciter.Sciter_X_Msg_Create {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.CREATE)},
-		backend = .BITMAP, // the GPU targets want a device pointer; BITMAP is the one that needs nothing
-		device = nil,
+		backend = opts.backend,
+		device = opts.device,
 	}
 	if !bool(sciter.api().SciterProcX(rawptr(view.window), &create.header)) {
 		free(view.key, allocator)
@@ -147,12 +209,29 @@ create_windowless :: proc(
 // ownership. It must hold `stride * (height - 1) + width * 4` bytes - the last row needs `width*4`, not
 // a whole stride, so that a slice ending at the last pixel of a larger image is accepted. Measured:
 // resizing a live view and painting again works, and the document reflows to the new size.
+//
+// **A GPU backend has no surface**: `pixels` and `stride` are ignored, the message carries a zeroed
+// `SL_SURFACE`, and it is the host's business to resize whatever it is drawing into. The document still
+// reflows to the size given here.
 resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []u8 = nil, stride := 0) -> Error {
 	if !sciter.loaded() {
 		return .Not_Loaded
 	}
 	if width <= 0 || height <= 0 {
 		return .Window_Failed
+	}
+
+	if is_gpu_backend(view.backend) {
+		message := sciter.Sciter_X_Msg_Size {
+			header = {msg = u32(sciter.Sciter_X_Msg_Code.SIZE)},
+			width = u32(width),
+			height = u32(height),
+		}
+		if !bool(sciter.api().SciterProcX(rawptr(view.window), &message.header)) {
+			return .Window_Failed
+		}
+		view.width, view.height = width, height
+		return nil
 	}
 
 	row := stride if stride > 0 else int(width) * 4
@@ -198,6 +277,11 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 //
 // `rect` defaults to the whole surface. `element` paints one layer instead of the tree, with `fore`
 // telling the engine whether that layer is in front.
+//
+// **On a GPU backend this changes GL state and does not put it back.** Measured: the engine's own
+// framebuffer is still bound when the call returns, so a host that draws its own scene afterwards has
+// to rebind its target first. Nothing else about the state was surveyed - treat the context as the
+// engine left it and set what you need.
 paint_windowless :: proc(
 	view: ^Windowless_View,
 	rect: Maybe(sciter.Rect) = nil,
@@ -354,8 +438,11 @@ destroy_windowless :: proc(view: ^Windowless_View) {
 
 // The pixel at (x, y) as r, g, b, a, whatever order the surface is in. Small, but every host that reads
 // one back gets the channel order wrong once, and `PIXEL_ORDER` is easy to forget.
+//
+// `.BITMAP` only, and zeroes for anything else: a GPU backend's pixels are in the framebuffer the host
+// bound, and reading them is the host's own `glReadPixels`.
 windowless_pixel :: proc(view: ^Windowless_View, x, y: i32) -> (r, g, b, a: u8) {
-	if x < 0 || y < 0 || x >= view.width || y >= view.height {
+	if view.pixels == nil || x < 0 || y < 0 || x >= view.width || y >= view.height {
 		return 0, 0, 0, 0
 	}
 	i := int(y) * view.stride + int(x) * 4

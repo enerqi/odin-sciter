@@ -109,6 +109,33 @@ Against 6.0.4.9 on Linux x64, with no window anywhere in the process:
 - **`Host_Handler.on_invalidate_rect`**, which is how the view says a repaint is due. It works on a
   fabricated key like every other host notification.
 
+## The GPU backend
+
+`SXM_CREATE` takes an `SL_TARGET`, and `SL_TARGET_OPENGL` is the one that matters: instead of
+rasterising into your memory, the engine draws with its own Skia GPU pipeline **into the framebuffer
+bound to your GL context**. Bind a framebuffer with a texture attached and the UI is in your texture,
+with nothing copied and nothing uploaded — which is what an embedding into a game engine or an
+immediate-mode tool actually needs.
+
+[`examples/windowless_gl.odin`](../examples/windowless_gl.odin) is the worked version, with an offscreen
+EGL context so it needs no window and no GLFW. Five rules, each measured on Mesa / Linux, each with a
+test:
+
+| | |
+| --- | --- |
+| **The context must be desktop OpenGL** | On GLES 3.2, `SXM_PAINT` answers `TRUE` and draws nothing: Skia compiles `#version 150` desktop shaders and the driver rejects them (`GLSL 1.50 is not supported`). Desktop GL 4.6 works in **core and compatibility** profiles alike. |
+| **`SL_TARGET_OPENGLES` is refused** | `SXM_PAINT` answers `FALSE` and draws nothing, on a GLES context and on a desktop one. The GLES path is not implemented in this build. |
+| **`device` is mandatory** | A `glGetProcAddress`-shaped function, as the SDK's own `lite-sciter` demo passes `glfwGetProcAddress`. Nil segfaults the engine on the first paint. The engine's own `SciterEGLGetProcAddress` — one of the two slots nothing else here reaches — behaves identically. |
+| **The target is captured at create time** | A view created with an FBO bound paints into that FBO even when the default framebuffer is bound at paint time, and vice versa. Bind before you create. |
+| **The paint does not restore GL state** | The engine's framebuffer is still bound when `SXM_PAINT` returns, so the host must rebind its own target before drawing anything else. |
+
+There is no surface in `SXM_SIZE` for a GPU backend — the message carries a zeroed `SL_SURFACE` — and
+the image comes out the GL way up, row 0 at the bottom, so it samples as a texture directly and needs a
+flip only for a top-down image format.
+
+The DirectX targets take an `ID3D11Device*` or an `IDirect3DDevice9*` and are Windows-only; nothing here
+has tried them.
+
 ## What is broken
 
 Engine defects in this build, not binding problems.

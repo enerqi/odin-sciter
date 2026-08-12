@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twenty-four examples, 332 tests and eleven
+> engine, there is an Odin-shaped layer on top of them, and twenty-five examples, 337 tests and eleven
 > guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -143,6 +143,7 @@ Run one with `just example NAME`.
 | `single_binary` | `archive` plus the engine itself embedded — one self-contained 25 MB executable |
 | `inspector` | Attaching the SDK's DevTools-style inspector to a running window |
 | `windowless` | **No window at all** — the engine renders into a buffer you own, for a pane inside someone else's renderer. See [`EMBEDDING.md`](docs/EMBEDDING.md) |
+| `windowless_gl` | The same on the **GPU** — Sciter's Skia pipeline drawing straight into your OpenGL texture (Linux/EGL) |
 | `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
 
 Tests live inside the examples, next to the code they cover:

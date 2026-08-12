@@ -753,7 +753,7 @@ per call, over `SciterProcX`.
 
 | | |
 | --- | --- |
-| `create_windowless(opts: Windowless_Options, allocator) -> (Windowless_View, Error)` | `SXM_CREATE` + `SXM_SIZE`. `opts.pixels` nil allocates the surface; supply one to render into your own memory at your own `stride` |
+| `create_windowless(opts: Windowless_Options, allocator) -> (Windowless_View, Error)` | `SXM_CREATE` + `SXM_SIZE`. `opts.pixels` nil allocates the surface; supply one to render into your own memory at your own `stride`. `opts.backend = .OPENGL` with a `glGetProcAddress` in `opts.device` renders on the GPU instead |
 | `resize_windowless(view, width, height, pixels := nil, stride := 0) -> Error` | a new size and surface; the document reflows |
 | `paint_windowless(view, rect := nil, element := nil, fore := true) -> Error` | draws. Nothing else writes pixels and nothing schedules this |
 | `windowless_heartbeat(view, time_ms)` | the engine's clock: drains posted work, settles a load |
@@ -771,7 +771,13 @@ Five measured rules, all with a test in [`examples/windowless.odin`](../examples
 **it still needs a display** (no `DISPLAY` segfaults `SXM_CREATE`); **do not call `init`**; **one
 destroy ends windowless mode for the process** — swap documents instead; **script timers run on the
 wall clock**, so a host rendering faster than real time sees none; and **the intrinsic behaviors ignore
-the mouse**, though ordinary elements receive it. There is no
+the mouse**, though ordinary elements receive it.
+
+The **`.OPENGL` backend** ([`examples/windowless_gl.odin`](../examples/windowless_gl.odin)) draws into
+the framebuffer bound to the host's GL context — a texture, if that is what is bound. Its own rules:
+the context must be **desktop** GL rather than GLES (a GLES one paints nothing and reports success),
+`device` is mandatory, the target is captured when the view is created, and the paint leaves the
+engine's framebuffer bound. `.OPENGLES` is refused by this build. There is no
 wrapper for `SXM_RESOLUTION` because it crashes. [`EMBEDDING.md`](./EMBEDDING.md) is the long version.
 
 ## Embedding the engine — `embed.odin`
