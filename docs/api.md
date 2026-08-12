@@ -90,7 +90,7 @@ exception are all completely silent.
 | `set_media_type(window, media_type) -> Error` | `"screen"` (default), `"print"`, … — **only the first call on a window takes** |
 | `set_media_vars(window, vars: ^Value) -> Error` | media *flags*: `{dark: true}` makes `@media dark` match. Merges; switches every time. |
 | `update_window(window)` | repaint what is dirty now, rather than at the next turn of the pump |
-| `show` / `hide` / `close` / `activate` | window state; a window is created hidden |
+| `show` / `hide` / `close` / `activate` | window state; a window is created hidden. **A secondary window is closed by `hide`, a turn of the pump, then `close`** — any other order segfaults the engine |
 | `window_state` / `set_window_state` | the full `Sciter_Window_State` |
 | `eval(window, script) -> (Value, Error)` | script in the global scope |
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |
@@ -745,6 +745,34 @@ pulled in by `<link>` in the head reports `html`, not the `<link>`. See
 `archive_item(archive, path) -> ([]u8, bool)`, and
 `serve_archive(request, archive, prefix := ARCHIVE_URL_PREFIX) -> (Load_Result, handled: bool)`.
 `ARCHIVE_URL_PREFIX` is `"this://app/"`, a host convention rather than an engine feature.
+
+## Windowless views — `windowless.odin`
+
+No window and no pump: the engine renders the document into a buffer the host owns. One `SXM_*` message
+per call, over `SciterProcX`.
+
+| | |
+| --- | --- |
+| `create_windowless(opts: Windowless_Options, allocator) -> (Windowless_View, Error)` | `SXM_CREATE` + `SXM_SIZE`. `opts.pixels` nil allocates the surface; supply one to render into your own memory at your own `stride` |
+| `resize_windowless(view, width, height, pixels := nil, stride := 0) -> Error` | a new size and surface; the document reflows |
+| `paint_windowless(view, rect := nil, element := nil, fore := true) -> Error` | draws. Nothing else writes pixels and nothing schedules this |
+| `windowless_heartbeat(view, time_ms)` | the engine's clock: drains posted work, settles a load |
+| `windowless_mouse(view, event, pos, button, modifiers) -> bool` | delivered to the document; the return is always false |
+| `windowless_key(view, event, code, modifiers) -> bool` | delivered; pair with `set_focus` on the element |
+| `windowless_focus(view, got := true) -> bool` | `SXM_FOCUS` |
+| `destroy_windowless(view)` | `SXM_DESTROY` — **once per process**, see below |
+| `windowless_pixel(view, x, y) -> (r, g, b, a)` | reads one pixel in `PIXEL_ORDER` (RGBA, BGRA on Windows) |
+
+`view.window` is an ordinary `Window`, so `load_html`, `root`, `select_first`, `eval`,
+`set_host_handler` and the rest of this package work on a view unchanged. `on_invalidate_rect` is the
+signal that a repaint is due.
+
+Five measured rules, all with a test in [`examples/windowless.odin`](../examples/windowless.odin):
+**it still needs a display** (no `DISPLAY` segfaults `SXM_CREATE`); **do not call `init`**; **one
+destroy ends windowless mode for the process** — swap documents instead; **script timers run on the
+wall clock**, so a host rendering faster than real time sees none; and **the intrinsic behaviors ignore
+the mouse**, though ordinary elements receive it. There is no
+wrapper for `SXM_RESOLUTION` because it crashes. [`EMBEDDING.md`](./EMBEDDING.md) is the long version.
 
 ## Embedding the engine — `embed.odin`
 

@@ -232,9 +232,30 @@ sanitize name="hello_window" kind="address" *args: mktarget_dirs
 	odin run examples/{{name}}.odin -file -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}.exe") }} {{args}}
 
 # same sanitizer options as `sanitize`; see its notes for platform support and the linker note.
+#
+# LD_PRELOAD OF libstdc++, AND WHY IT IS NOT OPTIONAL HERE. Without it this recipe cannot finish against
+# Sciter at all: the engine throws C++ exceptions in ordinary operation - loading a document with a
+# `<script>`, `value_parse` on text that will not parse - and ASan dies on the first one with
+#
+#     AddressSanitizer: CHECK failed: asan_interceptors.cpp:463
+#     "((__interception::real___cxa_throw)) != (0)" (0x0, 0x0)
+#
+# That is not a fault in the code under test. ASan intercepts `__cxa_throw` and finds the real one with
+# `dlsym(RTLD_NEXT, ...)`; an Odin binary links no C++ runtime, and libsciter.so carries its own
+# statically, so there is no next `__cxa_throw` to find and the interceptor holds a null. Preloading the
+# system libstdc++ gives it one. Measured: 27/27 eval tests clean with the preload, hard failure on the
+# first throw without it.
 # ---
 # run the tests under a sanitizer (address | memory | thread)
 test_sanitize name="eval" kind="address" *args: mktarget_dirs
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [ "$(uname -s)" = "Linux" ]; then
+	    lib=$(ldconfig -p 2>/dev/null | awk '/libstdc\+\+\.so\.6/ {print $NF; exit}' || true)
+	    if [ -n "${lib:-}" ] && [ -f "$lib" ]; then
+	        export LD_PRELOAD="$lib"
+	    fi
+	fi
 	odin test examples/{{name}}.odin -file -debug -sanitize:{{kind}} -define:ODIN_TEST_THREADS=1 -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}-test.exe") }} {{args}}
 
 # Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `run_debug`/`run` build.

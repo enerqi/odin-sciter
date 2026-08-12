@@ -574,9 +574,7 @@ test_comments_are_nodes_that_survive_a_round_trip_but_never_appear_in_the_text :
 // Both work on the node's own text, and an element has none - so a `node_set_text` that appears to be
 // ignored is usually aimed one node too high.
 @(test)
-test_setting_text_on_a_text_node_spares_its_siblings_and_on_an_element_node_does_nothing :: proc(
-	t: ^testing.T,
-) {
+test_setting_text_on_a_text_node_spares_its_siblings_and_on_an_element_node_does_nothing :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
@@ -683,7 +681,11 @@ test_a_node_can_be_inserted_once_and_never_again :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 
 	testing.expect_value(t, sciter_app.node_insert(first, .APPEND, made), nil)
-	testing.expect_value(t, sciter_app.node_insert(second, .APPEND, made), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
+	testing.expect_value(
+		t,
+		sciter_app.node_insert(second, .APPEND, made),
+		sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE),
+	)
 
 	// It went to the first one and stayed there.
 	a, _ := sciter_app.text(tight, context.temp_allocator)
@@ -1597,9 +1599,13 @@ test_set_style_overrides_and_reverts :: proc(t: ^testing.T) {
 
 	// Inline beats the stylesheet, and comes back as it was written rather than resolved - the
 	// resolution above was the stylesheet's, not the reader's.
-	inline, err := sciter_app.style(first, "color", context.temp_allocator)
+	//
+	// (Named `inline_value` rather than `inline`: `inline` is a keyword, and while the compiler accepts
+	// it as an identifier here, `odinfmt` does not - it failed to parse this file, so `just format`
+	// exited non-zero on a repository that was otherwise clean.)
+	inline_value, err := sciter_app.style(first, "color", context.temp_allocator)
 	testing.expect_value(t, err, nil)
-	testing.expect_value(t, inline, "blue")
+	testing.expect_value(t, inline_value, "blue")
 
 	// The style store and the `style` *attribute* are two different places. Writing one does not
 	// show up in the other, which is the trap this test exists to pin.
@@ -2140,11 +2146,7 @@ test_master_css_replaces_and_appends :: proc(t: ^testing.T) {
 	testing.expect_value(t, styled_color(window, "letter-spacing"), "")
 	testing.expect_value(t, styled_color(window, "text-indent"), "")
 
-	testing.expect_value(
-		t,
-		sciter_app.set_master_css(""),
-		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
-	)
+	testing.expect_value(t, sciter_app.set_master_css(""), sciter_app.Error(sciter_app.Api_Error.Load_Failed))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2235,17 +2237,7 @@ test_show_popup_at_and_placement :: proc(t: ^testing.T) {
 	testing.expect(t, above.y < below.y, "`.Top` must place it higher than `.Bottom`")
 	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
 
-	for placement in ([]sciter_app.Popup_Placement {
-			.Bottom_Left,
-			.Bottom,
-			.Bottom_Right,
-			.Left,
-			.Center,
-			.Right,
-			.Top_Left,
-			.Top,
-			.Top_Right,
-		}) {
+	for placement in ([]sciter_app.Popup_Placement{.Bottom_Left, .Bottom, .Bottom_Right, .Left, .Center, .Right, .Top_Left, .Top, .Top_Right}) {
 		testing.expect_value(t, sciter_app.show_popup(menu, anchor, placement), nil)
 		testing.expect_value(t, sciter_app.hide_popup(menu), nil)
 	}
@@ -2335,16 +2327,8 @@ test_capture_accepts_document_elements_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, derr, nil)
 	defer sciter_app.unuse_element(detached)
 
-	testing.expect_value(
-		t,
-		sciter_app.set_capture(detached),
-		sciter_app.Error(sciter.Scdom_Result.INVALID_HWND),
-	)
-	testing.expect_value(
-		t,
-		sciter_app.release_capture(detached),
-		sciter_app.Error(sciter.Scdom_Result.INVALID_HWND),
-	)
+	testing.expect_value(t, sciter_app.set_capture(detached), sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+	testing.expect_value(t, sciter_app.release_capture(detached), sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2615,7 +2599,7 @@ SOM_DOC :: `<html><body><button id="b">b</button><input id="e" type="text"/></bo
 
 @(private = "file")
 Backend :: struct {
-	count:  i32,
+	count:   i32,
 	reloads: int,
 }
 
@@ -2911,11 +2895,7 @@ test_empty_css_is_refused_but_nonsense_css_is_accepted_and_still_replaces :: pro
 	if !ok {return}
 	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
 
-	testing.expect_value(
-		t,
-		sciter_app.set_css(window, ""),
-		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
-	)
+	testing.expect_value(t, sciter_app.set_css(window, ""), sciter_app.Error(sciter_app.Api_Error.Load_Failed))
 	testing.expect_value(t, styled_color(window), "#00FF00") // unchanged
 
 	testing.expect_value(t, sciter_app.set_css(window, "this is not css {{{"), nil)
@@ -2945,13 +2925,21 @@ test_a_window_that_was_never_shown_reports_itself_closed :: proc(t: ^testing.T) 
 // across the arrangements measured.
 //
 // Keep your own flag if the application needs to know whether it is minimised.
+//
+// **`.FULL_SCREEN` is deliberately not in the list below, and must never be put back.** It is not a
+// window state on X11, it is a display mode change: asking a 300x200 window for it took a 1920x1200
+// laptop panel down to 320x180, and the panel stayed there after the process exited - so running this
+// file's tests wrecked the display of whoever ran them, twice, before the call was taken out. Nothing
+// in this package puts the mode back; `xrandr --output <name> --mode <preferred>` does. The behaviour
+// is recorded on `set_window_state` in `window.odin`, which is the right place for it: a comment costs
+// nothing, and this test costs a display.
 @(test)
 test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
 	window, _, ok := styled_window(t)
 	if !ok {return}
 	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
 
-	for state in ([]sciter.Sciter_Window_State{.MINIMIZED, .MAXIMIZED, .FULL_SCREEN, .HIDDEN, .SHOWN}) {
+	for state in ([]sciter.Sciter_Window_State{.MINIMIZED, .MAXIMIZED, .HIDDEN, .SHOWN}) {
 		sciter_app.set_window_state(window, state)
 		sciter_app.heartbeat()
 
@@ -2988,3 +2976,7 @@ test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
 //
 // Measured on the way to that: `close` does nothing until the pump runs. Immediately after the call the
 // handle still answers and `root` still succeeds.
+//
+// **There is one order that survives, found later**: `hide`, then a turn of the pump, then `close`.
+// `examples/workbench.odin` has that test - it is the only place a secondary window is closed on
+// purpose - and the full table of what was tried is on `close` in `window.odin`.

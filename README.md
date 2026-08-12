@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twenty-three examples, 309 tests and eleven
+> engine, there is an Odin-shaped layer on top of them, and twenty-four examples, 332 tests and eleven
 > guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -130,7 +130,7 @@ Run one with `just example NAME`.
 | `behavior` | Driving the built-in widgets — a real click, hit testing, and a behavior method of your own |
 | `input` | Real mouse and keyboard input from Odin, animation frames, and an element's script object |
 | `task_list` | **A whole small application** — an Odin model, one render, keyboard commands, saved state, no script |
-| `workbench` | **A harder one** — 10,000 rows virtualised, editable, live-updating, with an Odin-painted widget per row. The evidence behind [`VDOM.md`](docs/VDOM.md) |
+| `workbench` | **A harder one** — 10,000 rows virtualised, editable, live-updating, with an Odin-painted widget per row, type-ahead search on a worker thread, drag-to-reorder with undo/redo, and a second window with its own host handler. The evidence behind [`VDOM.md`](docs/VDOM.md) |
 | `worker_thread` | Getting work off the UI thread and its results back on, with `post_callback` |
 | `graphics` | Drawing with the engine's renderer: a custom-painted element, and an offscreen image |
 | `graphics_gallery` | Every shape, gradient, transform, clip, path and text call, drawn once and asserted once — and the five places the renderer is wrong |
@@ -142,6 +142,7 @@ Run one with `just example NAME`.
 | `archive` | The whole UI in one compressed blob inside the executable, via `packfolder` and `#load` |
 | `single_binary` | `archive` plus the engine itself embedded — one self-contained 25 MB executable |
 | `inspector` | Attaching the SDK's DevTools-style inspector to a running window |
+| `windowless` | **No window at all** — the engine renders into a buffer you own, for a pane inside someone else's renderer. See [`EMBEDDING.md`](docs/EMBEDDING.md) |
 | `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
 
 Tests live inside the examples, next to the code they cover:
@@ -308,6 +309,12 @@ examples instead. Each takes an example name:
 - `just sanitize NAME` — run one example under ASan
 - `just test` / `just test1 EXAMPLE TEST` / `just test_sanitize EXAMPLE` — the tests
 
+`just test_sanitize` preloads the system `libstdc++` on Linux, and that is not optional either: the
+engine throws C++ exceptions in ordinary operation — loading a document with a `<script>`, parsing text
+that will not parse — and ASan's `__cxa_throw` interceptor has no real one to forward to in a binary
+that links no C++ runtime, so it aborts on the first throw with a `CHECK failed … real___cxa_throw`
+that says nothing about your code. The recipe's comment has the detail.
+
 Every test recipe passes `-define:ODIN_TEST_THREADS=1`, and that is not optional: Sciter is
 single-threaded — every `ISciterAPI` call has to come from the thread that ran `SCITER_APP_INIT` —
 while Odin's test runner is parallel by default. Without it the engine's heap gets corrupted instead of
@@ -347,6 +354,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
+| [`EMBEDDING.md`](docs/EMBEDDING.md) | the windowless mode — rendering into a buffer or texture you own, so Sciter can be a pane inside someone else's frame loop |
 | [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
 | [`WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) | what is already done for the Windows port, and the list to work through on the machine |
 
@@ -362,6 +370,8 @@ checked by `just check` — documentation drifts silently otherwise.
   part that went wrong
 - [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
   desktop UI, what it gives up, and what to watch
+- [`docs/SDK-PARITY.md`](docs/SDK-PARITY.md) — how these examples, tests and guides line up against
+  everything the SDK ships, and which of its 64 script samples have no host API to bind at all
 - [`docs/VDOM.md`](docs/VDOM.md) — a design note for a retained-diff layer over the DOM: what it would
   cost, when it would pay, and when not to build it. **Nothing built; a decision aid, not a plan**
 - [`docs/FLEURY-UI.md`](docs/FLEURY-UI.md) — the immediate-mode-over-retained-cache architecture the

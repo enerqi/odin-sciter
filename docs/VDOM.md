@@ -194,6 +194,38 @@ Two things cost more time than the whole focus problem:
   document being loaded, which `named_behavior` measures as attaching inside `load_html`. Code that
   renders and then immediately reaches for a row's widget finds nothing. There is a test for it.
 
+### What the numbers say
+
+Added afterwards, when the workbench grew type-ahead search on a worker thread. Both numbers are printed
+by `test_the_search_worker_delivers_its_answer_through_post_callback`, so they can be re-measured on any
+machine rather than believed:
+
+| | Cost |
+| --- | --- |
+| Scanning **10,000 rows** for a substring match, on a worker thread | **~1.1–1.3 ms** |
+| `set_html` of the **31 rows** that scan put on screen | **~2.0–3.4 ms** |
+
+**Rendering thirty-one rows costs more than filtering ten thousand.** Three runs on the same machine,
+same process, one after the other. That is the whole cost argument for this note in two lines: the
+expensive half of a keystroke is not the model work, it is handing markup to the engine and having it
+parse, style and lay out — which is precisely what a diff layer removes and what virtualisation only
+bounds.
+
+It does not overturn the recommendation, because 3 ms at 12 Hz is not a problem anyone can see. It does
+say where the remaining cost is, and that a second application which re-renders a *larger* window than
+31 rows — a table that fills a 4K screen, say — would meet it much sooner than the row count suggests.
+
+Two smaller findings from the same work:
+
+- **The worker is not what makes type-ahead correct — the generation number is.** A scan that lands
+  after the next keystroke is a correct index for a query nobody is asking. Nine lines
+  (`search_apply`) drop it. Any asynchronous list needs this, with or without a diff layer, and a diff
+  layer would not have supplied it.
+- **A `behavior:` widget reads its data when it attaches, so "update the widget" means "replace the
+  element".** The details window's large sparkline is rewritten wholesale on every tick for that
+  reason. A diff layer that patched attributes in place would *not* have updated it — it would have
+  had to know to recreate the element, which is the same knowledge the hand-written path already has.
+
 ### What this changes
 
 The recommendation stands, but the trigger moves.

@@ -89,6 +89,26 @@ gallery   { flow: grid(1* 1* 1*); }   /* three equal columns */
 Porting instinct: `display:flex; flex-direction:row` becomes `flow:horizontal`, and `flex:1` becomes
 `size:*` or `width:*`.
 
+### A percentage height on an absolutely positioned element collapses to 1px
+
+Measured on 6.0.4.9, and it cost a false engine-defect report before it was found:
+
+```css
+#overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+```
+
+lays out **401 × 1**, not 401 × 261. The width resolves; the height does not. The same rule with
+`height: 156px` also collapses; only an element in normal flow with a pixel height gets the box the CSS
+asks for.
+
+It matters more than a wrong-looking box, because an element one pixel tall is not under the pointer:
+the full-size transparent overlay that a browser page would use to catch clicks receives nothing, and
+every event lands on `<body>` instead. That is exactly what happened in
+[`spike/windowless/main.odin`](../spike/windowless/main.odin), and it was written up as "the engine
+never delivers mouse events in windowless mode" until the box was measured — see
+[`EMBEDDING.md`](./EMBEDDING.md). **When an element does not receive events, ask `location(el, .Border,
+.View)` what shape the engine thinks it is** before concluding anything about the event system.
+
 ### Sciter-only CSS worth knowing
 
 - **`behavior: button;`** — attaches a *native* controller to an element. This is how `<button>`,

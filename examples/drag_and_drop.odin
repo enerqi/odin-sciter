@@ -28,6 +28,10 @@
 //
 // `.MOUSE_DRAG_REQUEST` in the `.MOUSE` group is delivered normally, so the "the user has begun
 // dragging this element" notification does arrive; it is only starting the system drag that does not.
+//
+// **So an in-application drag - reordering a list, moving a card between columns - cannot be built on
+// this group here.** It is press, move with the button down, release, in the `.MOUSE` group.
+// `examples/workbench.odin` reorders its rows that way, and says why in "Reordering by dragging".
 package main
 
 import sciter ".."

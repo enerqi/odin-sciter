@@ -18,14 +18,26 @@
 // Result against 6.0.4.9 on Linux x64 - see docs/EMBEDDING.md:
 //   works  - SXM_CREATE with a fabricated HWINDOW, SXM_SIZE into our own buffer, SciterLoadHtml,
 //            heartbits, SXM_PAINT, CSS, QuickJS at load, the DOM API, hit-testing, SciterEval, repaint
-//   broken - SXM_RESOLUTION (crashes on the next idle), SXM_MOUSE (never handled)
+//   broken - SXM_RESOLUTION (crashes on the next idle)
+//
+// **This spike is superseded, and one of its conclusions was wrong.** The mode is wrapped in
+// `sciter_app/windowless.odin` now, with `examples/windowless.odin` as the worked version.
+//
+// The wrong conclusion was "SXM_MOUSE is never handled". The mouse works; the *page below* does not.
+// `#hit` is `position:absolute` with `height:100%`, and Sciter lays that out **one pixel tall**, so
+// every click here lands on <body> rather than on the overlay that was meant to catch it. The engine
+// was blamed for a stylesheet bug. Kept as it was, because the mistake is instructive: when an element
+// does not receive events, ask `location(el, .Border, .View)` what shape the engine thinks it is.
+//
+// Two other things this spike never tried, both measured later: one SXM_DESTROY makes the next
+// SXM_CREATE segfault, and script timers never fire in a windowless view.
 
 package windowless
 
 import sciter "../.."
+import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "base:runtime"
 import "core:unicode/utf16"
 
 W :: 320
@@ -112,9 +124,9 @@ main :: proc() {
 	hwnd := rawptr(uintptr(0xBEEF))
 
 	create := sciter.Sciter_X_Msg_Create {
-		header  = {msg = u32(sciter.Sciter_X_Msg_Code.CREATE)},
+		header = {msg = u32(sciter.Sciter_X_Msg_Code.CREATE)},
 		backend = .BITMAP,
-		device  = nil, // GPU targets want a device here; BITMAP does not
+		device = nil, // GPU targets want a device here; BITMAP does not
 	}
 	step(bool(api.SciterProcX(hwnd, &create.header)), "SXM_CREATE (invented HWINDOW)")
 
@@ -159,7 +171,7 @@ main :: proc() {
 	step(bool(api.SciterProcX(hwnd, &size.header)), "SXM_SIZE (our buffer)")
 
 	res := sciter.Sciter_X_Msg_Resolution {
-		header        = {msg = u32(sciter.Sciter_X_Msg_Code.RESOLUTION)},
+		header = {msg = u32(sciter.Sciter_X_Msg_Code.RESOLUTION)},
 		pixelsPerInch = 96,
 	}
 	// OFF BY DEFAULT because it crashes this build. SXM_RESOLUTION posts a media-changed item; the next
@@ -183,7 +195,7 @@ main :: proc() {
 	beat :: proc(api: ^sciter.Isciter_Api, hwnd: rawptr, t: u32) {
 		hb := sciter.Sciter_X_Msg_Heartbit {
 			header = {msg = u32(sciter.Sciter_X_Msg_Code.HEARTBIT)},
-			time   = t,
+			time = t,
 		}
 		api.SciterProcX(hwnd, &hb.header)
 	}
@@ -244,7 +256,7 @@ main :: proc() {
 
 	focus := sciter.Sciter_X_Msg_Focus {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.FOCUS)},
-		got    = true,
+		got = true,
 	}
 	fmt.printfln("  SXM_FOCUS handled        = %v", bool(api.SciterProcX(hwnd, &focus.header)))
 

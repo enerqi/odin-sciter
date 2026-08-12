@@ -2,17 +2,18 @@
 
 Status as of 2026-08-12: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-three examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-four examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
 the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
 background threads, drag-and-drop, graphics (both a custom-painted element and a gallery covering the
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 309 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
-the wrapper is 309 of its 347 exported procedures called from a test; the rest are proc-group members
-reached through their group, plus `close`, which cannot be exercised without crashing the engine (see
-`window.odin`). What remains
+`just example-tests` runs 332 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+the wrapper is 310 of its 347 exported procedures called from a test; the rest are proc-group members
+reached through their group. `close` is now among the covered ones: there is exactly one order in which
+a secondary window can be closed without crashing the engine - hide, pump, close - and
+`examples/workbench.odin` pins it. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -627,10 +628,19 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
   tag releases after the engine they vendor — `v6.0.4.9`, with a `-N` suffix for bindings-only releases
   on the same engine. `api_map` on every bump is step 6 of a nine-step procedure, and is the step the
   procedure exists for.
-- **Windowless / lite.** `bin/linux/x64/lite-sciter-sdl` and `sciter-x-lite.hpp` exist. Out of scope for
-  v1, but the layout invariance means supporting it later costs little. Note that `on_invalidate_rect`
-  and `on_keyboard_request` - the two notifications that mode is built on - are wrapped and were
-  measured firing in an ordinary *windowed* embedding, so the hook side of it already works.
+- ~~**Windowless / lite.**~~ **done**, and it did cost little as predicted: `sciter_app/windowless.odin`
+  wraps every `SXM_*` message over `SciterProcX`, and [`examples/windowless.odin`](../examples/windowless.odin)
+  is a worked embedding with eleven tests - including a view rendering straight into a rectangle of a
+  larger image the host owns. `on_invalidate_rect` turned out to work on a windowless view exactly as it
+  does on a windowed one, so the hook side really was already there.
+
+  Four things were measured that the headers do not say, and one earlier finding was **retracted**: the
+  windowless mouse works. `EMBEDDING.md` had said it did not, because the page it was tested with caught
+  clicks on an absolutely positioned overlay with a percentage height, and Sciter lays that out one
+  pixel tall - so every event landed on `<body>`. The engine had been blamed for a stylesheet bug. What
+  is genuinely missing is narrower: the intrinsic behaviors ignore the mouse (drive them through the
+  element), script timers run on the wall clock rather than on the heartbeat's timestamp, one
+  `SXM_DESTROY` ends windowless mode for the process, and the mode still needs a display.
 - **A layer above the bindings.** Whether to add a retained-diff ("vdom") layer over the DOM, so that a
   list can be updated rather than rebuilt with `set_html` the way `task_list` does. Written up as a
   decision aid in [`VDOM.md`](./VDOM.md): the cost (~1,500-2,000 lines, all of the risk in keyed list

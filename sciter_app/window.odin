@@ -255,9 +255,25 @@ hide :: proc(window: Window) {
 // `GetWindowSizeX11` on a window whose X11 window is gone. It has been left on the paint list. A
 // window that never had a document closes cleanly, and so does one that is never pumped again.
 //
-// There is no workaround here beyond not doing it: unload the document first (`load_html` of an empty
-// page) if a secondary window has to go away, or keep it and hide it. This is why `dom_walk`'s close
-// test asserts what it can before pumping and stops there.
+// **`hide`, then at least one turn of the pump, then `close`, is the order that works.** Hiding takes
+// the window off the paint list, and it is the pump that does the taking - hiding and closing in the
+// same turn crashes exactly like closing outright. Five teardowns were measured on 6.0.4.9 under X11,
+// on windows that had been shown and on windows that never were:
+//
+//	close, with a document loaded             segfault on the next pump
+//	load_html("<html></html>") then close     segfault on the next pump
+//	hide then close, same turn                segfault on the next pump
+//	hide, heartbeat, close                    survives; the handle is then dead
+//	never closed                              survives
+//
+// The second line is the one to notice: unloading the document first was the advice here until it was
+// measured, and it does not work. In an application the practical answer is to **hide a secondary
+// window and keep it** - reopening is a `show` - and to do the hide/pump/close only on the way out.
+// `examples/workbench.odin` does both, and pins the order with a test; `dom_walk`'s close test asserts
+// what it can before pumping and stops there.
+//
+// After a successful close the handle is dead in the two ways `window_state` describes below: `root`
+// answers `.INVALID_HWND`, and the state is `0xFFFFFFFE`.
 //
 // Nothing about the close is signalled, either: immediately afterwards the handle still answers - even
 // `root` succeeds - because the close has not happened yet. It happens on the pump.

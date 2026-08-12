@@ -68,7 +68,14 @@ tag `6.0.4.9-bis`.
   table is laid out by hand, verified against the engine's own `vtable for
   html::behavior::fragmented_video_destination` symbol, and driven through `video_destination` /
   `video_start_streaming` / `video_render_frame` / `video_render_frame_part` /
-  `video_render_external_frame` / `video_stop_streaming`.
+  `video_render_external_frame` / `video_stop_streaming`. **Windowless views** - `windowless.odin` - are
+  the engine's other mode: no window, no pump, and the document drawn into a buffer the host allocated,
+  which is what makes Sciter a pane inside somebody else's renderer. `create_windowless` /
+  `resize_windowless` / `paint_windowless` / `windowless_heartbeat` / `windowless_mouse` /
+  `windowless_key` / `windowless_focus` / `destroy_windowless` are one `SXM_*` message each over
+  `SciterProcX`, and everything else in the package works on a view unchanged because its `window` field
+  is an ordinary `Window`. The surface can be the host's own memory at the host's own stride, so a view
+  renders straight into a rectangle of a larger image with no copy.
 
 ### Loading
 
@@ -80,15 +87,18 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Twenty-three, each a single self-contained file with its explanation in the header comment:
+Twenty-four, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
 `dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
-`workbench` (a harder one - ten thousand rows virtualised, editable and live, and the experiment behind
-`docs/VDOM.md`),
+`workbench` (a harder one - ten thousand rows virtualised, editable and live, with type-ahead search
+running on a worker thread, rows reordered by dragging, undo/redo over the model, and a second window
+that has its own host handler, and the experiment behind `docs/VDOM.md`),
 `worker_thread`, `drag_and_drop`, `graphics`, `graphics_gallery` (every call in the 2D API drawn once
 and asserted once, and the eight places the renderer is wrong), `video` (frames generated in Odin,
 streamed into a `<video>` element), `named_behavior` (widgets a stylesheet asks for by name),
-`custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a
+`custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`,
+`windowless` (no window at all - the engine renders into a buffer the host owns, for a pane inside
+somebody else's renderer), and `extension` (Odin as a
 native extension the engine loads).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
@@ -97,7 +107,7 @@ Windows.
 
 ### Tests
 
-309 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+332 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -117,7 +127,13 @@ from a worker with their ordering and their delivery by `heartbeat` alone, synth
 keyboard input against a button, a checkbox and a text field - including the measured rule that a press
 without a button in the set is delivered and then ignored by the behavior - the animation frame's
 inverted return value, the element expando in both directions, `combine_url`'s resolutions, the task
-list application rendering its model and answering its keys, the request API driven by a real
+list application rendering its model and answering its keys, the workbench's virtualised list - the
+window arithmetic at both ends of the model, an edit surviving a re-render only because the model holds
+it, a search worker's index arriving through `post_callback` and a stale one being dropped, a drag driven
+by synthesised mouse events reordering the model while a press that never moved does not, undo and redo
+over the three actions the model has, a second
+window answering its own behaviors and its own posted messages, and the one order in which that window
+can be closed - the request API driven by a real
 document load, and the video destination - the behavior's published member list, the fact that the
 member is invisible to script, the asset Value it returns, the interface pointer being a *different*
 subobject from the asset pointer, and every streaming call answering true, which is what checks that
@@ -233,7 +249,36 @@ checked by `just check`.
 - **Closing a secondary window that has a document crashes the engine on the next pump.** The segfault
   is inside its own `check_paint`, down in `GetWindowSizeX11` on a window it destroyed but left on the
   paint list - and the window stays on that list, so every later pump in the process dies too. A window
-  that never had a document closes cleanly. `close` is therefore the one wrapper with no test.
+  that never had a document closes cleanly. **There is exactly one order that also works: `hide`, then
+  at least one turn of the pump, then `close`** - the pump is what takes the window off the paint list,
+  so hiding and closing in the same turn crashes like closing outright, and unloading the document
+  first (`load_html` of an empty page) crashes too. Five teardowns were measured, on windows that had
+  been shown and on windows that never were; the table is on `close` in `window.odin`, and
+  `examples/workbench.odin` closes its details window that way and pins the order with a test.
+- **A windowless view still needs a display.** With `DISPLAY` and `WAYLAND_DISPLAY` both unset on Linux,
+  `SXM_CREATE` segfaults - before a document, a surface or a paint. "Windowless" means the engine makes
+  no window of its own, not that it runs without a windowing system.
+- **One `SXM_DESTROY` ends windowless mode for the process.** After any destroy the next `SXM_CREATE`
+  segfaults inside the create call, with the same key or a fresh one. Views created before any destroy
+  coexist; a second destroy of the same view is a harmless false. Swap a view's document with
+  `load_html` rather than destroying and recreating it.
+- **`SXM_HEARTBIT`'s timestamp is ignored; windowless script timers run on the wall clock.**
+  `setTimeout`, `setInterval` and `requestAnimationFrame` fire as real time passes, whatever `time_ms`
+  says - passing 0 every time behaves identically - and do not fire at all without a heartbeat to drain
+  them. A host rendering frames faster than real time therefore sees no timers and must drive animation
+  itself.
+- **`SXM_RESOLUTION` crashes one message later**, in `html::iwindow::setup_window_frame` on a view that
+  has no native window frame. There is deliberately no wrapper for it; a windowless view runs at the
+  engine's default DPI.
+- **The intrinsic behaviors ignore windowless mouse input.** Ordinary elements receive `mousedown`,
+  `mouseup`, the synthesised `click` and `:hover`, but a click will not focus an `<input>`, press a
+  `<button>` or toggle a checkbox. Drive those through the element - `set_focus`, `do_click`,
+  `send_mouse`. (An earlier note here said windowless mouse input did not work at all; that was
+  measured against a page whose click target was `position:absolute` with a percentage height, which
+  Sciter lays out one pixel tall, so every event landed on `<body>`. Retracted in `EMBEDDING.md`.)
+- **A percentage height on an absolutely positioned element lays out as 1px.** The width resolves, the
+  height does not, and an element one pixel tall receives no events - which is how the finding above
+  came to be wrong. See `docs/html-css-js.md`.
 - **`.FULL_SCREEN` changes the monitor's display mode and nothing puts it back.** A 300x200 window taken
   full screen on X11 dropped a 1920x1200 panel to 320x180, and it stayed there after the process exited.
 - **`SciterDataReady` works from inside a load callback and nowhere else.** Called after the callback

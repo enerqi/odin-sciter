@@ -280,42 +280,66 @@ survive.
 
 ### Stretch extensions, in the order they are worth doing
 
-1. **Drag to reorder rows** — the `.EXCHANGE` group in an app. Note the measured rule that a drop target
-   must consume `.DRAG` *and* `.WILL_ACCEPT_DROP`, and that Linux delivers the events but not the
-   payload.
-2. **Type-ahead search off the UI thread** — worker filters 10k rows, posts back, list updates. Makes
-   the re-render cost visible and measurable.
-3. **Undo/redo over the model** — no Sciter API involved, but it is the thing that proves "the model is
-   the truth" pays off, which is `task_list`'s thesis.
-4. **An inspector-friendly mode** — `.ENABLE_DEBUG` plus `set_debug_mode`, so a reader can attach the
-   SDK inspector to a real app and poke at it.
-5. **A second window** — a details window opened from a row, which is the natural home for Batch D's
-   window-state tests and for `post_callback` between them.
+1. ~~**Drag to reorder rows**~~ **done, but not the way this item assumed.** `.EXCHANGE` cannot do it:
+   the engine has **no drag source on Linux** — `performDrag` returns null and no exchange event
+   follows — so that group can only *receive* a drag from another application, payload empty.
+   An in-application reorder is therefore the `.MOUSE` group: press, move with the button down,
+   release, with the three drag states in the model because the rows are destroyed and rebuilt
+   mid-drag. Two tests drive it with `send_mouse`, including the press-without-movement case.
+2. ~~**Type-ahead search off the UI thread**~~ **done** — worker filters 10k rows, posts back, list
+   updates. The measurement it was for: the scan costs ~1.2 ms and the `set_html` of the 31 rows it puts
+   on screen costs ~2-3 ms, so **the render is the expensive half** - written up in the "What the
+   numbers say" section of [`VDOM.md`](./VDOM.md). The part worth more than the thread is the
+   generation number: an answer that lands after the next keystroke is correct and wrong at the same
+   time, and `search_apply` drops it.
+3. ~~**Undo/redo over the model**~~ **done** — three actions (rename, move, pin), one stack, no Sciter
+   call anywhere in the section, which is the proof the thesis was asking for. Four headless tests,
+   including that a new action throws the redo stack away and that a no-op rename is not an action.
+4. ~~**An inspector-friendly mode**~~ **done** — `WORKBENCH_INSPECT=1` turns on `set_debug_mode` and
+   adds `.ENABLE_DEBUG` to the window flags. Off by default because it opens a socket.
+5. ~~**A second window**~~ **done** — a details window opened by double-clicking a row, with its own
+   host handler: it answers its own `behavior:` requests and receives its own posted messages, and the
+   feed thread posts to both windows. It also settled `close`, which Batch D had to leave alone:
+   **`hide`, pump, `close`** is the one teardown that survives, and unloading the document first - the
+   workaround `window.odin` used to recommend - does not. The table of what was measured is on `close`
+   in `window.odin`.
 
 ---
 
 ## 3. Acceptance
 
-Done when all of these hold:
+Done when all of these hold. **All of them do, as of 2026-08-12** — the boxes are ticked with what was
+run rather than with an opinion.
 
-- [ ] the scan in §1 reports **zero** never-called procedures, or every remaining one has a comment in
-      its wrapper saying why it cannot be reached here (touch hardware, platform-only, needs a network)
-- [ ] `just check` passes — both packages, `docs/snippets`, every example
-- [ ] `just example-tests` is green in one run on a quiet machine
-- [ ] `odin check -target:windows_amd64` and `-target:darwin_amd64` pass for `sciter_app`, the snippets
-      and every new example
-- [ ] every new example runs: `XMODIFIERS=@im=none timeout 15 ./target/debug/NAME.exe`, exit 124
-- [ ] `just test_sanitize eval` is clean after Batch E
-- [ ] every new test's name reads as a sentence, and every new example has the header comment described
+- [x] the scan in §1 reports **zero** never-called procedures, or every remaining one has a comment in
+      its wrapper saying why it cannot be reached here (touch hardware, platform-only, needs a network).
+      *Every name the scan still lists is a proc-group member reached through its group; 310 of 347
+      exported procedures are called from a test.*
+- [x] `just check` passes — both packages, `docs/snippets`, every example
+- [x] `just example-tests` is green in one run on a quiet machine — *321 tests, 18 files*
+- [x] `odin check -target:windows_amd64` and `-target:darwin_amd64` pass for `sciter_app`, the snippets
+      and every new example. *The one failure on both is `single_binary`, which is a deliberate
+      `#panic`: it embeds the engine and only the Linux binary is vendored.*
+- [x] every new example runs: `XMODIFIERS=@im=none timeout 15 ./target/debug/NAME.exe`, exit 124
+- [x] `just test_sanitize eval` is clean after Batch E — 27/27, and `workbench` is clean under ASan too,
+      which is what covers the search thread. **It needed a fix to the recipe rather than to the code**:
+      ASan dies on the engine's first C++ throw unless the system `libstdc++` is preloaded, because an
+      Odin binary links no C++ runtime for its `__cxa_throw` interceptor to forward to. The recipe does
+      it now, and says why.
+- [x] every new test's name reads as a sentence, and every new example has the header comment described
       in §0
-- [ ] anything measured that contradicts the headers is in the example header, the wrapper doc comment,
-      and `CHANGELOG.md`'s known-issues list
-- [ ] counts updated: `CHANGELOG.md` (examples, tests), `README.md` (the badge line and the example
+- [x] anything measured that contradicts the headers is in the example header, the wrapper doc comment,
+      and `CHANGELOG.md`'s known-issues list — *the secondary-window close order, which corrected advice
+      `window.odin` had been giving*
+- [x] counts updated: `CHANGELOG.md` (examples, tests), `README.md` (the badge line and the example
       table), `docs/PLAN.md` (§9 list and the status paragraph), `docs/api.md` if any signature moved
-- [ ] `docs/VDOM.md` has a "what actually hurt" section written from the workbench experience
-- [ ] `just format` run, then `git checkout -- examples/custom_loader.odin examples/extension.odin`, and
-      `git status --short` shows only intended files
-- [ ] **nothing committed** — report the dirty tree
+- [x] `docs/VDOM.md` has a "what actually hurt" section written from the workbench experience, and a
+      "what the numbers say" section from the search work
+- [x] `just format` run, then `git checkout -- examples/custom_loader.odin examples/extension.odin`, and
+      `git status --short` shows only intended files. *`just format` now exits 0: a local named `inline`
+      in `dom_walk` made `odinfmt` fail to parse the file, which failed the recipe and stopped it before
+      it reached `spike/`.*
+- [x] **nothing committed** — report the dirty tree
 
 ## 4. Suggested order
 
