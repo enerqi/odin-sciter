@@ -22,6 +22,7 @@ import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:testing"
 
 DOC :: `<html>
@@ -43,6 +44,8 @@ DOC :: `<html>
   <p><select id="pick"><option value="1">one</option><option value="2">two</option></select></p>
   <div id="meter">a plain div with a behavior method of its own</div>
   <div id="out">(Odin fills this in)</div>
+  <!-- for the asset tests below: the *other* door into a behavior, see docs/BEHAVIORS.md -->
+  <terminal id="term" style="size:*"></terminal>
 </body>
 </html>`
 
@@ -668,4 +671,135 @@ test_window_metrics :: proc(t: ^testing.T) {
 	body, _ := sciter_app.select_first(root, "body")
 	_, content_max, _ := sciter_app.intrinsic_widths(body)
 	testing.expect(t, content_max > sciter_app.min_width(window), "the content is wider than the root's minimum")
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The *other* door: the behavior's SOM asset
+//
+// `SciterCallBehaviorMethod` above has a fixed set of method ids, and only `DO_CLICK` is implemented by
+// any intrinsic behavior. The per-behavior surface - `edit`'s selection, `terminal`'s screen,
+// `select`'s popup - lives in the asset each behavior publishes. `docs/BEHAVIORS.md` is the measured
+// map of all of them; these tests hold the parts of it that would be expensive to get wrong.
+
+@(test)
+test_an_intrinsic_behavior_publishes_an_asset :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	// The interface name is the *behavior* name, not the tag name.
+	name, _ := sciter_app.select_first(root, "#name")
+	asset, err := sciter_app.element_asset(name, "edit")
+	testing.expect_value(t, err, nil)
+	testing.expect(t, asset != nil, "an <input type=text> carries an `edit` asset")
+
+	props, methods := sciter_app.asset_members(asset, context.temp_allocator)
+	testing.expect(t, slice.contains(props, "selectionStart"), "edit publishes selectionStart")
+	testing.expect(t, slice.contains(methods, "insertText"), "edit publishes insertText")
+
+	// And a name the element does not carry is a refusal, not a nil asset.
+	_, werr := sciter_app.element_asset(name, "terminal")
+	testing.expect(t, werr != nil, "an <input> has no `terminal` interface")
+}
+
+@(test)
+test_asset_call_refuses_a_call_with_too_few_arguments :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	name, _ := sciter_app.select_first(root, "#name")
+	asset, aerr := sciter_app.element_asset(name, "edit")
+	testing.expect_value(t, aerr, nil)
+
+	// The passport carries the required count, and it is not advisory: the engine's thunk reads argv[0]
+	// whatever `argc` says, so the call below would segfault *inside the engine* if it were made.
+	arity, found := sciter_app.asset_method_arity(asset, "insertText")
+	testing.expect(t, found, "insertText is in the passport")
+	testing.expect_value(t, arity, 1)
+
+	_, err := sciter_app.asset_call(asset, "insertText")
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Wrong_Arity))
+
+	// Too many is fine - the extras are ignored - so over-supplying is the safe direction.
+	a := sciter_app.value_from_string("ab")
+	defer sciter_app.value_clear(&a)
+	spare := sciter_app.value_from_int(0)
+	defer sciter_app.value_clear(&spare)
+	_, cerr := sciter_app.asset_call(asset, "insertText", {a, spare})
+	testing.expect_value(t, cerr, nil)
+
+	// A name no passport lists is `.Not_Found`, and `asset_method_arity` says so first.
+	_, absent := sciter_app.asset_method_arity(asset, "noSuchMethod")
+	testing.expect(t, !absent, "a method that is not in the passport is not found")
+	_, nerr := sciter_app.asset_call(asset, "noSuchMethod")
+	testing.expect_value(t, nerr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+}
+
+@(test)
+test_a_behavior_asset_reads_writes_and_acts :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+	settle()
+
+	term, terr := sciter_app.select_first(root, "#term")
+	testing.expect_value(t, terr, nil)
+	asset, aerr := sciter_app.element_asset(term, "terminal")
+	testing.expect_value(t, aerr, nil)
+
+	// A property the passport lists reads through its getter.
+	columns, gerr := sciter_app.asset_get(asset, "columns")
+	testing.expect_value(t, gerr, nil)
+	defer sciter_app.value_clear(&columns)
+	n, _ := sciter_app.value_to_int(&columns)
+	testing.expect(t, n > 0, "a terminal has a width")
+
+	// A read-only one refuses the write rather than pretending - there is no setter to call.
+	ro := sciter_app.value_from_int(1)
+	defer sciter_app.value_clear(&ro)
+	testing.expect_value(
+		t,
+		sciter_app.asset_set(asset, "columns", &ro),
+		sciter_app.Error(sciter_app.Api_Error.Not_Found),
+	)
+
+	// And a method with its arguments does the work: this one moves the caret, which is observable
+	// through the properties next to it.
+	text := sciter_app.value_from_string("hello")
+	defer sciter_app.value_clear(&text)
+	_, werr := sciter_app.asset_call(asset, "write", {text})
+	testing.expect_value(t, werr, nil)
+
+	col, cerr := sciter_app.asset_get(asset, "caretColumn")
+	testing.expect_value(t, cerr, nil)
+	defer sciter_app.value_clear(&col)
+	after, _ := sciter_app.value_to_int(&col)
+	testing.expect_value(t, after, 5) // one column per character written
+}
+
+@(test)
+test_a_select_opens_through_its_asset_not_through_do_click :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	pick, _ := sciter_app.select_first(root, "#pick")
+
+	// Measured, and the reason this pair is a test: the behavior-method door does nothing for a
+	// dropdown, and the asset door is what opens it.
+	handled, err := sciter_app.do_click(pick)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, !handled, "do_click is not how a <select> opens")
+
+	asset, aerr := sciter_app.element_asset(pick, "select")
+	testing.expect_value(t, aerr, nil)
+	arity, _ := sciter_app.asset_method_arity(asset, "showPopup")
+	testing.expect_value(t, arity, 1) // and calling it with none would take the process down
+
+	mode := sciter_app.value_from_int(0)
+	defer sciter_app.value_clear(&mode)
+	_, serr := sciter_app.asset_call(asset, "showPopup", {mode})
+	testing.expect_value(t, serr, nil)
+	settle()
+
+	_, herr := sciter_app.asset_call(asset, "hidePopup")
+	testing.expect_value(t, herr, nil)
+	settle()
 }

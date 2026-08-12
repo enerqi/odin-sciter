@@ -472,8 +472,9 @@ these read that description and use it — on any `^sciter.Som_Asset_T`, whoever
 | --- | --- |
 | `asset_passport(asset) -> ^sciter.Som_Passport_T` | the description itself, or nil |
 | `asset_members(asset, allocator) -> (properties, methods: []string)` | discovering it rather than assuming it |
-| `asset_call(asset, method, args) -> (Value, Error)` | `.Not_Found` for an unlisted method |
-| `asset_get(asset, property)` / `asset_set(asset, property, ^Value)` | likewise |
+| `asset_method_arity(asset, method) -> (arity: int, found: bool)` | how many arguments a method **requires** |
+| `asset_call(asset, method, args, check_arity := true) -> (Value, Error)` | `.Not_Found` for an unlisted method, `.Wrong_Arity` for too few arguments |
+| `asset_get(asset, property)` / `asset_set(asset, property, ^Value)` | likewise; `.Not_Found` also means "read-only" |
 | `asset_interface(asset, name) -> rawptr` | the C++ side's `dynamic_cast` |
 
 ```odin
@@ -482,6 +483,14 @@ props, methods := sciter_app.asset_members(edit, context.temp_allocator)
 // props   -> ["selectionStart", "selectionEnd", "selectionText", "isStandalone"]
 // methods -> ["selectAll", "selectRange", "removeText", "insertText", "appendText"]
 ```
+
+**Arity is a memory-safety rule, not a convention.** The engine's thunks read their arguments
+positionally and ignore `argc`, so a method declared with one parameter called with none faults inside
+the engine. `asset_call` refuses with `.Wrong_Arity` instead of making the call; passing *more* than
+declared is harmless. `check_arity = false` waives the guard, and there is exactly one honest reason
+to: an asset **you** made with `make_asset_class` tolerates a short call, because the thunk is this
+package's own. [`BEHAVIORS.md`](./BEHAVIORS.md) carries the measured arity of every intrinsic
+behavior's methods.
 
 **A passport is the native interface, and the script interface is a separate decision the behavior
 makes.** `edit`'s members are in both; `<video>`'s `renderingSite` is in the passport and *not* in

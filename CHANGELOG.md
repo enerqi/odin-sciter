@@ -58,7 +58,7 @@ tag `6.0.4.9-bis`.
   and **SOM** -
   `som.odin` - exposes an Odin object to script, with properties and methods, through
   `make_asset_class` / `make_asset` / `set_global_asset`, while `asset_passport` / `asset_members` /
-  `asset_call` / `asset_get` / `asset_set` / `asset_interface` go the other way and read an asset the
+  `asset_method_arity` / `asset_call` / `asset_get` / `asset_set` / `asset_interface` go the other way and read an asset the
   *engine* owns - a behavior's own native interface, which is not the same set of members script sees -
   with `value_to_asset` / `value_from_asset` carrying one in a Value; `value_parse` reads text as a
   value and `value_each` walks a
@@ -112,7 +112,7 @@ Windows.
 
 ### Tests
 
-337 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+342 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -174,6 +174,13 @@ checked by `just check`.
   its `hwndOrNull` parameter is not optional: passing NULL reports success and publishes nothing.
 - **A SOM global asset appears at the next document load**, not when it is published, and is withdrawn
   on the same schedule. Publish before `load_html` / `load_file`.
+- **A SOM method thunk ignores `argc` and segfaults on a short argument list.** The engine reads a
+  method's arguments positionally whatever count it is handed, so calling a passport method with fewer
+  arguments than it declares faults inside `sciter::om::member_function<…>::thunk` — measured on
+  `edit.insertText`, `select.showPopup` and `terminal.read`. `asset_call` refuses with `.Wrong_Arity`
+  rather than making the call, and `asset_method_arity` reports the required count. Extra arguments are
+  ignored by the engine and are safe. [`docs/BEHAVIORS.md`](docs/BEHAVIORS.md) carries the arity of
+  every intrinsic behavior's methods.
 - **The SOM passport's "any property" interceptors are never called.** `prop_getter` / `prop_setter`,
   which take the property atom and would allow a dynamic member list, are ignored; only the
   `properties` and `methods` tables are consulted. That is why an `Asset_Class` is a fixed list and why

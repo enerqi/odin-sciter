@@ -233,7 +233,7 @@ element_asset :: proc(element: Element, behavior: string) -> (asset: ^sciter.Som
 // Reading somebody else's asset
 //
 // `element_asset` hands back an asset the *engine* owns, and everything it can do is described by its
-// passport. These four read that description and use it. They work on any `^sciter.Som_Asset_T`,
+// passport. These read that description and use it. They work on any `^sciter.Som_Asset_T`,
 // whoever made it - an intrinsic behavior's, another extension's, or one of this package's own.
 //
 // Worth knowing before reaching for them: what an intrinsic behavior publishes here is often *not*
@@ -252,6 +252,9 @@ asset_passport :: proc(asset: ^sciter.Som_Asset_T) -> ^sciter.Som_Passport_T {
 
 // The names a passport lists, for discovering an asset rather than assuming it. Both slices are
 // allocated in `allocator`; the names inside them come from `atom_name` and are allocated there too.
+//
+// Names only - a method's argument count comes from `asset_method_arity`, and you need it before
+// calling one. `docs/BEHAVIORS.md` is the same information for the engine's own behaviors, measured.
 asset_members :: proc(
 	asset: ^sciter.Som_Asset_T,
 	allocator := context.allocator,
@@ -278,13 +281,51 @@ asset_members :: proc(
 	return
 }
 
+// How many arguments a method the passport lists requires, and whether it lists one at all. This is
+// `Som_Method_Def_T.params`, and it is not advisory - see `asset_call`.
+asset_method_arity :: proc(asset: ^sciter.Som_Asset_T, method: string) -> (arity: int, found: bool) {
+	p := asset_passport(asset)
+	if p == nil || p.methods == nil {
+		return 0, false
+	}
+	want := u64(atom(method))
+	for def in ([^]sciter.Som_Method_Def_T)(p.methods)[:p.n_methods] {
+		if def.name == want {
+			return int(def.params), true
+		}
+	}
+	return 0, false
+}
+
 // Calls a method the passport lists, by name. `.Not_Found` if the passport has no such method,
 // `.Call_Failed` if the method itself refused.
 //
 // The engine's own thunks are `proc "system"` taking the asset back as their first argument, so this
 // is a direct call rather than anything routed through script - which is what makes it work for
 // members script cannot see.
-asset_call :: proc(asset: ^sciter.Som_Asset_T, method: string, args: []Value = nil) -> (result: Value, err: Error) {
+//
+// **`.Wrong_Arity` is a guard against a segfault, not a nicety.** The *engine's* thunks read their
+// arguments positionally with no check on `argc`: measured on 6.0.4.9, calling `edit`'s `insertText`
+// - which the passport declares as one parameter - with none faults inside
+// `sciter::om::member_function<...>::thunk`, in the engine, before any of this package's code runs
+// again. Passing *more* than the declared count is harmless; the extras are ignored. So the passport's
+// `params` is a minimum, `asset_method_arity` is how to ask for it up front, and `docs/BEHAVIORS.md`
+// has it for every intrinsic behavior.
+//
+// `check_arity = false` turns the guard off, and there is one honest reason to: **an asset made by
+// this package tolerates a short call.** `make_asset_class`'s thunk hands the method whatever slice it
+// was given, so a `params = 2` method called with one argument sees one argument - the check belongs
+// in the method, exactly as it does for a functor. Turn it off for an asset you made; leave it on for
+// one the engine handed you, which is everything out of `element_asset`.
+asset_call :: proc(
+	asset: ^sciter.Som_Asset_T,
+	method: string,
+	args: []Value = nil,
+	check_arity := true,
+) -> (
+	result: Value,
+	err: Error,
+) {
 	p := asset_passport(asset)
 	if p == nil || p.methods == nil {
 		return {}, .Not_Found
@@ -293,6 +334,9 @@ asset_call :: proc(asset: ^sciter.Som_Asset_T, method: string, args: []Value = n
 	for def in ([^]sciter.Som_Method_Def_T)(p.methods)[:p.n_methods] {
 		if def.name != want || def.func == nil {
 			continue
+		}
+		if check_arity && len(args) < int(def.params) {
+			return {}, .Wrong_Arity
 		}
 		if !def.func(asset, u32(len(args)), raw_data(args), &result) {
 			value_clear(&result)

@@ -760,10 +760,15 @@ test_an_assets_properties_can_be_read_and_written_without_script :: proc(t: ^tes
 }
 
 // Calling a method directly. **The engine records a method's arity and does not enforce it**, so a
-// `params = 2` method is called with one argument without complaint - the check has to be in the
-// method, exactly as it does for a functor.
+// `params = 2` method of *ours* can be called with one argument without complaint - the check has to
+// be in the method, exactly as it does for a functor.
+//
+// That tolerance is a property of this package's own thunk, not of SOM: the engine's own thunks read
+// argv positionally and fault on a short list, which is why `asset_call` checks by default. Hence
+// `check_arity = false` below - the honest spelling of "this asset is mine, I know what my method
+// does with a missing argument". See `docs/BEHAVIORS.md`.
 @(test)
-test_an_assets_methods_can_be_called_without_script_and_arity_is_not_enforced :: proc(t: ^testing.T) {
+test_an_assets_methods_can_be_called_without_script_and_the_arity_guard_can_be_waived :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 	_ = window
@@ -780,14 +785,18 @@ test_an_assets_methods_can_be_called_without_script_and_arity_is_not_enforced ::
 	// One argument to a two-parameter method: accepted.
 	one := []sciter_app.Value{sciter_app.value_from(i32(3))}
 	defer for &v in one {sciter_app.value_clear(&v)}
-	short, serr := sciter_app.asset_call(g_asset, "sum", one)
+	short, serr := sciter_app.asset_call(g_asset, "sum", one, check_arity = false)
 	testing.expect_value(t, serr, nil)
 	defer sciter_app.value_clear(&short)
 	partial, _ := sciter_app.value_to_int(&short)
 	testing.expect_value(t, partial, i32(3))
 
+	// The guard is what stands between a caller and that same call on an engine-owned asset.
+	_, aerr := sciter_app.asset_call(g_asset, "sum", one)
+	testing.expect_value(t, aerr, sciter_app.Error(sciter_app.Api_Error.Wrong_Arity))
+
 	// None at all: also accepted, and `sum` of nothing is zero.
-	empty, eerr := sciter_app.asset_call(g_asset, "sum", nil)
+	empty, eerr := sciter_app.asset_call(g_asset, "sum", nil, check_arity = false)
 	testing.expect_value(t, eerr, nil)
 	defer sciter_app.value_clear(&empty)
 	zero, _ := sciter_app.value_to_int(&empty)

@@ -57,7 +57,7 @@ The comparison that decides whether the bindings are complete.
 | `demos/gsciter` | Same again, cross-platform sources | same | **Covered** |
 | `demos/inspector` | Source of the inspector tool itself | `inspector.odin` attaches to the shipped tool | Covered for our purpose; we do not reimplement the tool |
 | `demos/sciter-component` | A DLL component with `exports.def` | [`extension.odin`](../examples/extension.odin) | **Adjacent** — ours is `SciterLibraryInit` + `sciter.loadLibrary`, which is the mechanism the SDK documents for `scapp`/Quark |
-| `demos.lite/lite-bitmap`, `lite-sdl`, `lite-sciter` | Windowless rendering into a bitmap or an SDL surface | [`spike/windowless`](../spike/windowless/main.odin), [`EMBEDDING.md`](./EMBEDDING.md) | **Partial** — `SL_TARGET_BITMAP` works; GPU targets untried; two engine defects found |
+| `demos.lite/lite-bitmap`, `lite-sdl`, `lite-sciter` | Windowless rendering into a bitmap or an SDL surface | [`windowless`](../examples/windowless.odin), [`windowless_gl`](../examples/windowless_gl.odin), [`spike/windowless`](../spike/windowless/main.odin), [`EMBEDDING.md`](./EMBEDDING.md) | **Covered** — `SL_TARGET_BITMAP` and `SL_TARGET_OPENGL` both render; `SL_TARGET_OPENGLES` is refused by this build, and one engine defect stands (`SXM_RESOLUTION`) |
 | `demos/integration` | A Sciter view inside an existing native window | — | **Gap** |
 | `samples.c` | C modules against `jsbridge.h`, `import`ed from script | — | **Gap, and not buildable here**: `jsbridge.h` is absent from the entire checkout |
 | `sciter-sqlite` | A native extension exposing a C library to script | `extension.odin`, much smaller | **Gap in scale, not in mechanism** |
@@ -74,7 +74,7 @@ SDK.
 
 Upstream ships a *script-side* test sample (`samples.sciter/unit-test`) and **no host-side tests**: the
 only C test sources in the whole checkout belong to the copy of SDL vendored inside `demos.lite`. This
-repository carries **310 `@(test)` assertions across 18 files** (`grep -c '@(test)'`), plus
+repository carries **342 `@(test)` assertions across 20 files** (`grep -c '@(test)'`), plus
 `just example-tests`.
 
 **Read: on the cross-platform host API, this repository is at or ahead of the SDK's own C/C++ samples.**
@@ -122,7 +122,8 @@ and a pattern over `Window.*`, `behavior:*`, `Graphics` and `.paint*`.
 | `drag-n-drop`, `drag-n-drop-system` | [`drag_and_drop.odin`](../examples/drag_and_drop.odin) |
 | `video` | [`video.odin`](../examples/video.odin) — and see the libVLC caveat in [`ENGINE.md`](./ENGINE.md) |
 | `virtual-list` | [`workbench.odin`](../examples/workbench.odin), which virtualises by hand rather than using `behavior:virtual-list` |
-| `unit-test` | our 310 `@(test)` assertions — a different mechanism for the same purpose |
+| `unit-test` | our `@(test)` assertions — a different mechanism for the same purpose |
+| `input-elements` and the 39 `docs/md/behaviors` pages | [`BEHAVIORS.md`](./BEHAVIORS.md) — the host-side map of every intrinsic behavior, with tests in `behavior.odin` |
 | `input-elements`, `@inputs` (partly) | [`input.odin`](../examples/input.odin), `behavior.odin` |
 | `window` (partly) | `hello_window`, plus `sciter_app/window.odin` |
 
@@ -153,7 +154,7 @@ look like.**
 
 | SDK area | Files | Our counterpart | State |
 | --- | --- | --- | --- |
-| `behaviors` | 40 | [`html-css-js.md`](./html-css-js.md), `behavior.odin`, `named_behavior.odin` | **Thinnest area.** Forty documented intrinsic behaviors — `button`, `calendar`, `check`, `edit`, `masked-edit`, `pager`, `scrollbar`, `select-dropdown`, `slider`, `terminal`, `virtual-list` … — and our examples touch a handful |
+| `behaviors` | 40 | [`BEHAVIORS.md`](./BEHAVIORS.md), [`html-css-js.md`](./html-css-js.md), `behavior.odin`, `named_behavior.odin` | **Swept, 2026-08-12.** All 39 documented behaviors measured from Odin: what each one's `control_type` is, which 18 publish a callable native interface, every property with whether it is writable, every method with its required arity |
 | `DOM` | 19 | [`dom.md`](./dom.md), [`api.md`](./api.md) | Good |
 | `css` | 15 | `html-css-js.md` | Good on the layout story (`flow:`, flex units, no grid); thinner on `style-sets`, `image-map`, `marker-and-shadow`, vector `path:` images |
 | `JS.runtime` | 15 | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) | **Mostly uncovered** — `Asset`, `Audio`, `BJSON`, `Clipboard`, `Fetch`, `Intl`, `URL`, `Zip`, `@env`, `@sys`, `@markdown`, `@yaml`. All script-side, all things a real app uses |
@@ -166,20 +167,23 @@ look like.**
 
 ## Gaps, ranked by what they would actually tell us
 
-1. **The 40 intrinsic behaviors.** The largest and most useful unexplored area. `behavior.odin` proves
-   `SciterCallBehaviorMethod` is the door into them; nothing systematically walks what is behind it.
-   This is where a real cookbook would come from.
+1. ~~**The 40 intrinsic behaviors.**~~ **Closed** by [`BEHAVIORS.md`](./BEHAVIORS.md). The door turned
+   out not to be `SciterCallBehaviorMethod` — whose method ids are a fixed set — but the SOM asset each
+   behavior publishes. Stage 1 below records what the probe found.
 2. **Embedding into an existing native window** (`demos/integration`). Started —
-   [`EMBEDDING.md`](./EMBEDDING.md) — and it immediately produced two engine defects, which is the usual
-   sign that an area is worth the time.
-3. **GPU windowless targets** — `SL_TARGET_OPENGL` and the DX variants. The spike only did `BITMAP`.
+   [`EMBEDDING.md`](./EMBEDDING.md) — and it immediately produced engine defects, which is the usual
+   sign that an area is worth the time. Now the largest open gap.
+3. ~~**GPU windowless targets**~~ — `SL_TARGET_OPENGL` is done
+   ([`windowless_gl.odin`](../examples/windowless_gl.odin)); `SL_TARGET_OPENGLES` is refused by this
+   build and the DX variants need the Windows machine.
 4. **`JS.runtime`** — not bindable, but the thing every real application uses, and undocumented here.
+   Now the largest documentation gap.
 5. **C modules via `jsbridge.h`** — blocked: the header is not in the checkout.
 
 ## A plan to close them
 
-**Status: not started, and deliberately not started.** Other work is in flight; this is written so the
-work can be picked up cold rather than re-derived. Every stage is independently useful and independently
+**Status: stage 1 done (2026-08-12), stages 2–5 open.** This is written so the work can be picked up
+cold rather than re-derived. Every stage is independently useful and independently
 abandonable, which is the same shape [`VDOM.md`](./VDOM.md#if-it-is-built-build-it-in-this-order) uses
 and for the same reason: the value is front-loaded, so stopping after stage 1 is a good outcome.
 
@@ -188,49 +192,53 @@ area is exactly where they were learned: **probe before documenting**, and **a h
 hypothesis**. Every stage below therefore opens with a cheap measurement whose result is allowed to
 cancel the rest of the stage.
 
-### Stage 1 — the intrinsic behaviors sweep
+### Stage 1 — the intrinsic behaviors sweep — **done**, [`BEHAVIORS.md`](./BEHAVIORS.md)
 
-The largest gap and the one that produces the cookbook. `docs/md/behaviors` documents 40; this
-repository exercises roughly four.
+The largest gap and the one that produces the cookbook. `docs/md/behaviors` documents 39; this
+repository exercised roughly four.
 
-**Open with a probe, not a plan.** `behavior.odin` proves `SciterCallBehaviorMethod` reaches
-`behavior:button` via `do_click`. It does **not** establish that other intrinsic behaviors expose
-anything callable. Before committing to 40 of anything, take four with very different shapes —
-`edit`, `select-dropdown`, `calendar`, `slider` — and find out whether they answer at all.
+**Opened with a probe, not a plan.** `behavior.odin` proved `SciterCallBehaviorMethod` reaches
+`behavior:button` via `do_click`. It did **not** establish that other intrinsic behaviors expose
+anything callable.
 
-| Probe result | What the stage becomes |
-| --- | --- |
-| Most expose callable methods | a systematic sweep, and a real capability table |
-| Only a handful do | a short doc saying which, and why the rest are DOM-and-CSS-only — still a genuine finding |
-| None but `button` do | stop. Write three sentences in [`html-css-js.md`](./html-css-js.md) and move to stage 2 |
+**Probe result: they do, through a door the plan did not name.** `SciterCallBehaviorMethod`'s method
+ids are a fixed set and only `DO_CLICK` is implemented by any intrinsic behavior — so on *that* door
+the pessimistic branch was right. But **18 of the 39 behaviors publish a SOM asset**, with real
+properties and callable methods behind `element_asset` + `asset_get` / `asset_set` / `asset_call`:
+`edit`, `masked-edit`, `textarea`, `plaintext`, `htmlarea`, `select`, `select-dropdown`, `calendar`,
+`slider`, `scrollbar`, `form`, `frame`, `frame-set`, `history`, `pager`, `virtual-list`, `lottie`,
+`terminal` (plus `video`, unmeasurable without libVLC). So the stage became the systematic sweep and a
+real capability table, which is [`BEHAVIORS.md`](./BEHAVIORS.md): every behavior, its element, its
+`control_type`, its interface name, every property with whether it is writable, and every method with
+its required argument count.
 
-If it goes past the probe, the deliverable is **a table, not forty examples**: behavior name, what it
-is, whether it is reachable from Odin, by which call, and what the DOM-side surface is instead. One new
-example — a tour page carrying the behaviors worth driving — plus tests for the ones that answer.
+The probe also found a defect in this repository, which is the reason it was worth running as code
+rather than reasoning: **the engine's SOM thunks ignore `argc`**, so calling a passport method with
+fewer arguments than it declares segfaults inside the engine. `asset_call` now refuses with
+`.Wrong_Arity`, `asset_method_arity` exposes the count, and `behavior.odin` carries the tests.
 
-Scope control: the sweep is the deliverable and the example is the illustration. If it runs long, cut
-the example and keep the table.
+Not done, and deliberately: the tour example. The scope control this stage was written with — *the
+sweep is the deliverable and the example is the illustration; if it runs long, cut the example and keep
+the table* — applied. The table plus four tests in `behavior.odin` carry what the example would have
+shown.
 
 ### Stage 2 — finish the windowless story
 
-[`EMBEDDING.md`](./EMBEDDING.md) got as far as "renders, scripts, and cannot take a mouse". Three
-separable pieces, in order of value per hour:
+[`EMBEDDING.md`](./EMBEDDING.md) renders, scripts, takes a mouse and a key, and runs on the GPU. Two
+pieces are left, and the third is struck out because it is done:
 
-1. **Report the two defects upstream.** `SXM_RESOLUTION` faulting on the next idle drain, and
-   `SXM_MOUSE` never being handled, both with the backtrace already captured. Cheapest possible action
-   with the largest possible payoff, since the second one is what gates interactivity — and the engine
-   is not forkable, so upstream is the only route. See
+1. **Report the defects upstream.** `SXM_RESOLUTION` faulting on the next idle drain, with the
+   backtrace already captured, and `SL_TARGET_OPENGLES` answering `FALSE` from `SXM_PAINT`. The engine
+   is not forkable, so upstream is the only route — see
    [`ALTERNATIVES.md`](./ALTERNATIVES.md#vendor-risk-and-bus-factor) for why that asymmetry matters.
-2. **A GPU target.** `SL_TARGET_OPENGL` with `vendor:sdl3` or `vendor:glfw` supplying the context and
-   `glGetProcAddress`, which is the arrangement the SDK's own `demos.lite/lite-sdl` uses. Establishes
-   whether the defects are specific to the bitmap path.
+   (The third defect, "`SXM_MOUSE` is never handled", was **retracted**: it was this repository's own
+   test document, and windowless input works.)
+2. ~~**A GPU target.**~~ Done — [`windowless_gl.odin`](../examples/windowless_gl.odin) renders through
+   `SL_TARGET_OPENGL` into a framebuffer the host owns.
 3. **A real example, not a spike.** A Sciter pane composited into a frame this repository draws —
    which is the `demos/integration` equivalent, and the thing
    [`ALTERNATIVES.md`](./ALTERNATIVES.md#the-other-direction-sciter-inside-an-immediate-mode-app)
-   claims is possible.
-
-Piece 3 is worth holding until piece 1 has an answer: a pane that cannot be clicked is a demo with a
-hole in it, and shipping it as an example commits us to explaining that hole forever.
+   claims is possible. This is now the whole of the stage.
 
 ### Stage 3 — the script-bridge pattern for host-less capabilities
 
@@ -301,7 +309,8 @@ Per stage, matching the house checklist in
 cross-platform host demo the SDK ships has a counterpart here, most have tests, and several capabilities
 here have no upstream counterpart at all.
 
-**Does not:** confidence that we know how Sciter applications are *written*. That knowledge lives in the
-64 script samples and the 40 behavior documents, and it is mostly unreachable from Odin by design. The
-honest position is that these bindings are complete and the cookbook is not, and that those are separate
-projects.
+**Does not:** confidence that we know how Sciter applications are *written*. That knowledge lives in
+the 64 script samples, and it is mostly unreachable from Odin by design. The behavior documents are no
+longer in that bucket — [`BEHAVIORS.md`](./BEHAVIORS.md) maps all 39 from the host side — but the
+script cookbook still is. The honest position is that these bindings are complete and the cookbook is
+not, and that those are separate projects.

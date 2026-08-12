@@ -355,6 +355,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
+| [`BEHAVIORS.md`](docs/BEHAVIORS.md) | the engine's 39 intrinsic behaviors from the host side — which publish a callable interface, their properties and methods, and the arity rule that is a segfault if you get it wrong |
 | [`EMBEDDING.md`](docs/EMBEDDING.md) | the windowless mode — rendering into a buffer or texture you own, so Sciter can be a pane inside someone else's frame loop |
 | [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
 | [`WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) | what is already done for the Windows port, and the list to work through on the machine |

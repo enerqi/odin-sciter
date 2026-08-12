@@ -47,6 +47,7 @@ Api_Error :: enum {
 	Wrong_Type, // a Value held something other than what was asked for
 	Parse_Failed, // value_parse was handed text the dialect does not accept
 	Asset_Failed, // the engine refused a SOM asset
+	Wrong_Arity, // a SOM method was handed fewer arguments than its passport declares - see asset_call
 }
 
 // `sciter.Scdom_Result.OK_NOT_HANDLED` is -1 and is a success, so `!= .OK` is not the test.
