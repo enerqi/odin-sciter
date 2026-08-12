@@ -76,8 +76,23 @@ set_home_url :: proc(window: Window, url: string) -> Error {
 	return nil if ok else Api_Error.Load_Failed
 }
 
-// Sets this window's own stylesheet, which sits under the document's CSS and over the master one.
-// `media_type` restricts it to one `@media` type; `base_url` is what its relative URLs resolve against.
+// Sets this window's own stylesheet.
+//
+// **It replaces the document's own `<style>`, it does not layer under it.** Measured: against a
+// document whose sheet says `p { color: #00ff00 }`, a `set_css` mentioning only `div` leaves the `p`
+// black - the document's rule is gone, not merely outranked. A `!important` in the document loses to a
+// plain rule here for the same reason. Only inline styles (`set_style`, `style=`) still win.
+//
+// Two more measured rules:
+//
+//   - **A reload discards it.** `load_html` restores the document's own sheet and drops this one, so a
+//     window sheet has to be re-applied after every load.
+//   - **Each call replaces the last.** There is one window sheet, not a stack of them.
+//
+// Empty CSS is refused with `.Load_Failed`. CSS the parser cannot make sense of is *accepted* - and
+// still replaces the document's sheet, so the document ends up with no styling at all rather than an
+// error. `media_type` was measured not to restrict anything on this engine: a sheet declared for
+// `print` applied on screen.
 //
 // For a sheet that applies to every window, see `set_master_css` in `app.odin`.
 set_css :: proc(window: Window, css: string, base_url := "", media_type := "") -> Error {
@@ -193,10 +208,31 @@ set_highlighted_element :: proc(window: Window, element: Element) -> Error {
 // ---------------------------------------------------------------------------------------------------
 // State
 
+// Asks the window to change state.
+//
+// **Only `.SHOWN` and `.CLOSED` are reflected back by `window_state` on the vendored engine under X11.**
+// `.MINIMIZED`, `.MAXIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are all accepted without complaint and the
+// window goes on reporting `.SHOWN`. Whether the window manager acts on them is its own business; what
+// is measured here is that the engine will not tell you. So this is not a state machine to drive an
+// application from - keep your own flag if you need to know.
+//
+// **`.FULL_SCREEN` changes the display mode, and nothing puts it back.** Asking a small window to go
+// full screen on X11 made the window manager switch the monitor to the nearest mode - a 300x200 window
+// took a 1920x1200 laptop panel down to 320x180 - and it stayed there after the process exited. Nothing
+// in this package restores it; `xrandr --output <name> --mode <preferred>` does. Do not call it from a
+// test, and size the window before asking.
 set_window_state :: proc(window: Window, state: sciter.Sciter_Window_State) {
 	sciter.api().SciterWindowExec(rawptr(window), .SET_STATE, uintptr(state), 0)
 }
 
+// The window's state - but see `set_window_state` for how little of it is reported.
+//
+// Two values outside the obvious ones:
+//
+//   - a window that has been created and never shown reports `.CLOSED`, not `.HIDDEN`
+//   - **a closed window reports `0xFFFFFFFE`, which is not in the enum at all.** Odin will not stop you
+//     comparing against it, so a `switch` on this needs a default arm. Everything else about the handle
+//     is dead too: `root` answers `.INVALID_HWND`.
 window_state :: proc(window: Window) -> sciter.Sciter_Window_State {
 	return sciter.Sciter_Window_State(sciter.api().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0))
 }
@@ -205,11 +241,26 @@ show :: proc(window: Window) {
 	set_window_state(window, .SHOWN)
 }
 
+// Asks the window to hide. Measured: the window goes on reporting `.SHOWN` afterwards - see
+// `set_window_state`. The document is untouched either way, so a later `show` finds it as it was.
 hide :: proc(window: Window) {
 	set_window_state(window, .HIDDEN)
 }
 
 // Closing the last `.MAIN` window is what ends `run`.
+//
+// **Closing a secondary window that has a document loaded crashes the engine on the next turn of the
+// pump.** Measured, and reproducible in three lines: `create_window`, `load_html`, `close`, then a
+// single `heartbeat` - the segfault is inside the engine's own `check_paint`, walking down to
+// `GetWindowSizeX11` on a window whose X11 window is gone. It has been left on the paint list. A
+// window that never had a document closes cleanly, and so does one that is never pumped again.
+//
+// There is no workaround here beyond not doing it: unload the document first (`load_html` of an empty
+// page) if a secondary window has to go away, or keep it and hide it. This is why `dom_walk`'s close
+// test asserts what it can before pumping and stops there.
+//
+// Nothing about the close is signalled, either: immediately afterwards the handle still answers - even
+// `root` succeeds - because the close has not happened yet. It happens on the pump.
 close :: proc(window: Window) {
 	set_window_state(window, .CLOSED)
 }

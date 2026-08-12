@@ -537,3 +537,98 @@ test_a_reference_can_be_taken_and_dropped :: proc(t: ^testing.T) {
 	sciter_app.video_release(dest)
 	testing.expect(t, sciter_app.video_is_alive(dest), "and after the reference is dropped")
 }
+
+// The zero-copy path, and the leak-or-not question that comes with it.
+//
+// `video_render_external_frame` does not copy: the buffer goes into a queue for upload to the GPU and
+// the engine calls `release` when it is finished with it. If that callback never runs, a producer that
+// allocates per frame leaks one buffer per frame - so **whether it is called at all is the thing worth
+// pinning**, not the pixels.
+//
+// Measured: it is called, and by the time `video_stop_streaming` has returned every frame handed over
+// has been released. The buffer here is `@(static)` rather than allocated, so that a release that
+// never came would show up as a failed count rather than as a leak the test runner blames on something
+// else.
+@(private = "file")
+Release_Log :: struct {
+	count: int,
+	data:  [^]byte,
+	user:  rawptr,
+}
+
+@(private = "file")
+g_released: Release_Log
+
+@(private = "file")
+on_frame_released :: proc "c" (data: [^]byte, user_data: rawptr) {
+	// `proc "c"`, so no context - which is why this writes to a file-scope record rather than
+	// allocating anything. It runs on the engine's thread and must not block.
+	g_released.count += 1
+	g_released.data = data
+	g_released.user = user_data
+}
+
+@(test)
+test_an_external_frame_is_released_when_the_engine_is_done_with_it :: proc(t: ^testing.T) {
+	dest, ok := test_destination(t)
+	if !ok {return}
+
+	@(static) frame: [FRAME_WIDTH * FRAME_HEIGHT]Pixel
+	for i in 0 ..< len(frame) {
+		frame[i] = bgra(0x18, 0x18, 0x25)
+	}
+	bytes := ([^]byte)(&frame[0])[:len(frame) * size_of(Pixel)]
+
+	g_released = {}
+	marker := rawptr(uintptr(0xC0DE))
+
+	testing.expect(t, sciter_app.video_start_streaming(dest, FRAME_WIDTH, FRAME_HEIGHT, .RGB32))
+
+	stride := FRAME_WIDTH * size_of(Pixel)
+	testing.expect(
+		t,
+		sciter_app.video_render_external_frame(dest, bytes, stride, on_frame_released, marker),
+		"the engine accepted a frame it does not own",
+	)
+
+	// The release may be immediate or may wait for the upload, so give the engine a turn either way.
+	sciter_app.heartbeat()
+	testing.expect(t, sciter_app.video_stop_streaming(dest))
+	sciter_app.heartbeat()
+
+	testing.expect(t, g_released.count > 0, "the release callback must run or every frame leaks")
+	testing.expect(t, g_released.data == raw_data(bytes), "and it hands back the buffer it was given")
+	testing.expect_value(t, g_released.user, marker) // passed straight through, untouched
+
+	testing.expect(t, sciter_app.video_is_alive(dest), "the site outlives the stream")
+}
+
+// The wrapper's own guards, which is where a nil `release` has to be caught: handing the engine a
+// buffer with no way to say it is finished with it is the one mistake that cannot be undone.
+@(test)
+test_an_external_frame_without_a_release_callback_is_refused :: proc(t: ^testing.T) {
+	testing.expect(
+		t,
+		!sciter_app.video_render_external_frame(nil, []byte{1}, 4, on_frame_released),
+		"a nil destination is refused",
+	)
+
+	dest, ok := test_destination(t)
+	if !ok {return}
+	sciter_app.video_start_streaming(dest, FRAME_WIDTH, FRAME_HEIGHT, .RGB32)
+	defer sciter_app.video_stop_streaming(dest)
+
+	frame := background_frame(context.temp_allocator)
+	stride := FRAME_WIDTH * size_of(Pixel)
+
+	testing.expect(
+		t,
+		!sciter_app.video_render_external_frame(dest, frame, stride, nil),
+		"without a release callback the buffer could never be reclaimed, so the wrapper refuses it",
+	)
+	testing.expect(
+		t,
+		!sciter_app.video_render_external_frame(dest, nil, stride, on_frame_released),
+		"and an empty frame is refused the same way the copying calls refuse one",
+	)
+}

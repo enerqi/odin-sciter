@@ -478,6 +478,28 @@ test_intrinsic_behaviors_do_not_implement_the_value_methods :: proc(t: ^testing.
 	testing.expect_value(t, terr, nil)
 	s, _ := sciter_app.value_to_string(&text, context.temp_allocator)
 	testing.expect_value(t, s, "typed by hand")
+
+	// The writing half fails the same way, and is the more dangerous of the two: it reports no error,
+	// so an `<input>` written this way is silently not written at all.
+	replacement := sciter_app.value_from("written through SET_VALUE")
+	defer sciter_app.value_clear(&replacement)
+
+	shandled, serr := sciter_app.set_behavior_value(name, &replacement)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, !shandled, "no intrinsic behavior implements SET_VALUE either")
+
+	unchanged, uerr := sciter_app.element_value(name)
+	defer sciter_app.value_clear(&unchanged)
+	testing.expect_value(t, uerr, nil)
+	still, _ := sciter_app.value_to_string(&unchanged, context.temp_allocator)
+	testing.expect_value(t, still, "typed by hand")
+
+	// `set_element_value` is the call that does write, as `element_value` is the one that reads.
+	testing.expect_value(t, sciter_app.set_element_value(name, &replacement), nil)
+	written, _ := sciter_app.element_value(name)
+	defer sciter_app.value_clear(&written)
+	now, _ := sciter_app.value_to_string(&written, context.temp_allocator)
+	testing.expect_value(t, now, "written through SET_VALUE")
 }
 
 @(test)
@@ -534,6 +556,29 @@ test_a_method_of_your_own_round_trips :: proc(t: ^testing.T) {
 	empty, ehandled, _ := sciter_app.behavior_is_empty(meter_el)
 	testing.expect(t, ehandled, "the handler answered IS_EMPTY")
 	testing.expect(t, !empty, "level is not zero")
+
+	// The write half of the same protocol reaches the same handler, which is the whole point of
+	// implementing it: generic code can set any element's value without knowing what it is.
+	wanted := sciter_app.value_from(i32(7))
+	defer sciter_app.value_clear(&wanted)
+	whandled, werr := sciter_app.set_behavior_value(meter_el, &wanted)
+	testing.expect_value(t, werr, nil)
+	testing.expect(t, whandled, "the handler answered SET_VALUE")
+	testing.expect_value(t, meter.level, u32(7))
+
+	// And reading it back through the protocol agrees with the behavior's own state.
+	after, ahandled, _ := sciter_app.behavior_value(meter_el)
+	defer sciter_app.value_clear(&after)
+	testing.expect(t, ahandled)
+	back, _ := sciter_app.value_to_int(&after)
+	testing.expect_value(t, back, i32(7))
+
+	// A nil Value is passed straight through to the handler, which sees an undefined one and refuses
+	// it - so this is "the behavior said no", not a crash in the wrapper.
+	nil_handled, nil_err := sciter_app.set_behavior_value(meter_el, nil)
+	testing.expect_value(t, nil_err, nil)
+	testing.expect(t, !nil_handled, "an undefined value is not an integer, so the handler refuses it")
+	testing.expect_value(t, meter.level, u32(7))
 }
 
 @(test)

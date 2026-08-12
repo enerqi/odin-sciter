@@ -183,7 +183,7 @@ application in which the server happens to be your own process.
 | .NET MAUI | XAML, wraps real native controls per platform | MIT | Not practical | Not web tech, not even a shared renderer — heaviest of the native-control options |
 | NoesisGUI | XAML for games, own renderer | Closed, commercial | C API exists, commercial licence | The XAML analogue of Gameface. Named for completeness: the games-UI market is where Sciter's closed competitors live |
 | Flutter (desktop) | Skia, own widget system, Dart | BSD-3-Clause | Embedder C API exists, but you still ship the Dart runtime | Same renderer family as Sciter (Skia), unrelated content model |
-| Dear ImGui / egui | No markup — immediate-mode C++/Rust calls, any graphics backend | MIT (both) | ImGui via `cimgui`; egui is Rust-only | Fast because there's no DOM or CSS cascade to run. egui-on-native has full native access; egui-on-wasm is browser-sandboxed |
+| Dear ImGui / egui | No markup — immediate-mode C++/Rust calls, any graphics backend | MIT (both) | ImGui via `dear_bindings` or `cimgui` — [detail below](#immediate-mode-in-detail); egui is Rust-only | Fast because there's no DOM or CSS cascade to run. egui-on-native has full native access; egui-on-wasm is browser-sandboxed |
 
 ### What Odin can already reach today
 
@@ -192,8 +192,10 @@ a hypothetical port of a C++ toolkit:
 
 | | Status | Note |
 | --- | --- | --- |
-| `vendor:microui` | Ships with the compiler (verified in the local Odin tree) | Immediate-mode, tiny, no markup. The zero-friction option |
-| `vendor:raylib` (+ raygui) | Ships with the compiler | Game-oriented, includes basic widgets |
+| `vendor:microui` | Ships with the compiler (verified in the local Odin tree) | Immediate-mode, tiny, no markup. An Odin-native **source port** of rxi's C original, not a binding — so upstream's stalling doesn't reach you. The zero-friction option. [Widget set below](#the-widget-ladder) |
+| `vendor:raylib` (+ raygui) | Ships with the compiler — `vendor/raylib/raygui.odin`, verified present | Game-oriented, and its widget set is markedly wider than microui's. [Below](#the-widget-ladder) |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Third-party bindings only, and the popular one is **archived** — see [below](#getting-dear-imgui-into-odin) | The widest widget set in this document that is reachable from Odin at all. Costs a C++ build step (premake5 + Python), not a vendored `.a` |
+| [Nuklear](https://github.com/Immediate-Mode-UI/Nuklear) | **No Odin bindings** — but a single C89 header with no dependencies, so `odin-c-bindgen` is the whole job | Sits between microui and ImGui on widgets. The least-effort unbound option here |
 | [Clay](https://github.com/nicbarker/clay) | Single-header C, **official Odin bindings** in `bindings/odin/` (verified present), zlib | Flexbox-like retained layout, renderer-agnostic, has an HTML renderer. **Cooling**: 8 commits in the trailing 90 days, all of them before 2026-05-20, so nothing for nearly three months. Usable and dependency-free regardless — it is a single header you vendor. [Full comparison below](#clay-in-detail) |
 | `vendor:nanovg`, `vendor:fontstash` | Ship with the compiler | Vector drawing and text, if you are building the UI layer yourself |
 | [`odin-webui`](https://github.com/webui-dev/odin-webui) | Upstream-authored Odin bindings, MIT, 104★ — but **0 commits in the trailing 90 days** | The sandboxed option: HTML/CSS/JS in the user's own browser, driven from Odin over a localhost socket. [Detail above](#webui-in-detail) |
@@ -298,7 +300,10 @@ The axis this repository exists on, and the one most comparisons omit entirely.
 
 - **Directly bindable, no shim**: Sciter (one `ISciterAPI` struct — see [`api.md`](./api.md)), Ultralight
   (documented C API), `webview/webview` (one header), WebUI, CEF (C API, huge), Clay (bindings already
-  written), anything in Odin's `vendor`.
+  written), Nuklear (one C89 header), anything in Odin's `vendor`.
+- **C++, but somebody already generates the C API**: Dear ImGui, via `dear_bindings` or `cimgui`. Not a
+  shim you write, but not free either — you build the C++ library yourself. See
+  [below](#getting-dear-imgui-into-odin).
 - **Needs a hand-written C shim**: RmlUi, litehtml, Slint, Qt, saucer — all C++-only APIs. This is real
   work and it is ongoing work, since the shim tracks their API changes.
 - **Needs a foreign runtime, so effectively out**: Tauri/wry and Blitz (Rust ABI), Photino/Avalonia/MAUI
@@ -456,6 +461,169 @@ production-proven — but it is a heavyweight build with no single-`.so` embeddi
 | Dear ImGui / egui / microui | No first-class mobile target; embedded ad hoc via custom backends |
 | Flutter | Mobile is the original target, most mature of all — at the cost of its own Dart runtime, not "small" |
 | Orca | Windows + macOS only, no mobile |
+
+## Native access, real widgets, and no HTML/CSS/JS
+
+The mirror image of [the sandboxed question](#sandboxed-small-fast-and-reachable-from-odin): keep the
+in-process native access Sciter gives you, keep a widget stack worth the name, and drop the web
+languages. Filtering the whole document against those three at once removes more than it looks like it
+should. Start from the "same process, no sandbox" family in
+[Native FS / API access](#native-fs--api-access), then drop the HTML engines (Sciter, Ultralight, RmlUi,
+litehtml, Blitz) and the foreign runtimes (.NET, JVM, Dart). What survives:
+
+| | Widget stack | From Odin | The bill |
+| --- | --- | --- | --- |
+| **Qt Widgets / Qt Quick** | The best here, and not close: text entry with IME and bidi, tables, trees, dialogs, model/view — plus **screen-reader support for free** in Widgets, since they wrap real native controls. The only row in this table that clears [the accessibility bar](#devtools-and-accessibility) | C++ only → hand-written shim, maintained forever against their API | You ship a whole framework, not a library. LGPL-3.0 or commercial |
+| **Slint** | `std-widgets`: button, line edit, list view, combo box, scroll view, tabs, spin box, slider. Real, moderate, not app-complete | **No C API** (verified — `api/` holds `cpp`, `rs`, `node`, `python`, `slint-sc`, `wasm-interpreter`) → C++ shim | Under 300KiB runtime, own renderer, identical layout everywhere, designer-editable `.slint` markup. Royalty-free licence: free, attribution required, **not** embedded systems |
+| **Dear ImGui** | Widest of anything actually reachable from Odin — tables, trees, multi-select, docking, plots, colour pickers, menus. Weak exactly where Qt is strong: IME, bidi, i18n, accessibility, and the visual register is "tool", not "application" | `dear_bindings` / `cimgui` → generated C API, third-party Odin bindings. [Below](#getting-dear-imgui-into-odin) | Immediate mode, so this is also the answer to the next section. A C++ build step |
+| **NoesisGUI** | XAML, full widget set, games-oriented | C API exists | Closed, commercial, per-title. The same single-vendor concentration risk as Sciter, [with the same shape](#vendor-risk-and-bus-factor) — you are trading one closed binary for another |
+| **RmlUi** *(borderline)* | Real form controls, data binding, **no JS** (Lua optional) | C++ → shim | Only half-qualifies: the markup is HTML/CSS-*shaped*, so it fails "no HTML/CSS" while passing "no JS". And you still supply the renderer and the font stack |
+
+The shape of that table is the finding. **Nothing offers a rich widget stack behind a C ABI.** Rich
+widgets live in C++ frameworks, and every C++ framework charges the same toll — a shim you write and
+then maintain. The options with a usable C boundary (ImGui, Nuklear, raygui, microui, Clay) are all
+immediate-mode, and all trade widget depth for it. That is not a coincidence, and the next section is
+why.
+
+## Immediate mode, in detail
+
+The API-shape question, asked separately from the sandbox and markup ones because it cuts across both:
+what does a *more immediate-mode-like* experience cost when native access is a given?
+
+Immediate mode means no retained tree that you mutate and the engine reconciles. You call
+`if button("Save") { ... }` inside your frame loop; the widget's identity comes from a hashed id, its
+state lives in one context struct, and its output is a draw list. [Clay](#clay-in-detail) is the same
+authoring model with the widget half removed.
+
+### The widget ladder
+
+Immediate mode is not one point on the spectrum. Four rungs, verified by reading each project's own
+source or Odin binding rather than its feature page:
+
+| | Widgets it actually ships | Read from |
+| --- | --- | --- |
+| **`vendor:microui`** | Twelve: `text`, `label`, `button`, `checkbox`, `textbox`, `slider`, `number`, `header`, `treenode`, `begin_window`, `begin_popup`, `begin_panel`. **No** combo box, list, table, menu bar, tabs or radio | `vendor/microui/microui.odin` in the local Odin tree |
+| **`vendor:raylib` + raygui** | Roughly thirty, and a genuinely different tier: `GuiTabBar`, `GuiScrollPanel`, `GuiComboBox`, `GuiDropdownBox`, `GuiSpinner`, `GuiValueBox`, `GuiListView`/`GuiListViewEx`, `GuiMessageBox`, `GuiTextInputBox`, `GuiGrid`, `GuiToggleGroup`, `GuiProgressBar`, `GuiStatusBar`, four colour pickers, styling and tooltips. **No** tree view, no table, no docking | `vendor/raylib/raygui.odin` in the local Odin tree |
+| **Nuklear** | Between the two, plus charts, groups, and a property/tree system. Single C89 header, ~18kLOC, no dependencies — "not even the standard library if not wanted", per its own README | the project README |
+| **Dear ImGui** | The top rung: tables with sorting/resizing/freezing, trees, docking, multi-viewport, plots, drag-and-drop, an id stack deep enough for real editors | the project's own docs and demo |
+
+The interesting part is that the ladder is *also* a binding-effort ladder in reverse. microui and raygui
+are already in `vendor`, Nuklear is one header away, and ImGui — the only rung with an app-grade widget
+set — is the one that needs a C++ toolchain.
+
+### Freshness
+
+Same method as everywhere else in this document: default-branch commits in the trailing 90 days, counted
+with `jq length` over the **paged** commits endpoint, as of 2026-08-12. The
+[one-liner warning](#ultralights-actual-health-and-whats-more-alive-in-the-same-niche) applies here too —
+ImGui at 173 commits would have silently reported the 100-commit cap.
+
+| | Pushed | Commits/90d | Stars | Licence | Latest release |
+| --- | --- | --- | --- | --- | --- |
+| `ocornut/imgui` | 2026-08-07 | 173 | 75.6k | MIT | v1.92.9b, 2026-07-31 |
+| `raysan5/raygui` | 2026-08-05 | 75 | 5.1k | Zlib | 5.0, 2026-07-20 |
+| `Capati/odin-imgui` | 2026-08-01 | 39 | 44 | MIT | none — pin a commit |
+| `cimgui/cimgui` | 2026-08-12 | 24 | 1.9k | MIT | **v1.53.1, 2018-01-02** |
+| `Immediate-Mode-UI/Nuklear` | 2026-08-08 | 21 | 11.3k | NOASSERTION | v4.13.3, 2026-05-05 |
+| `nicbarker/clay` | 2026-05-20 | 8 | 17.8k | Zlib | v0.14, 2025-06-06 |
+| `rxi/microui` | 2024-08-13 | 0 | 6.8k | MIT | none, ever |
+| `ThisDevDane/odin-imgui` | 2023-07-08 | 0 | 69 | MIT | **archived** |
+
+Three of those rows need reading rather than scanning:
+
+- **Dear ImGui is the healthiest thing in this entire document.** 173 commits in ninety days, 75.6k stars,
+  tagged releases on a monthly cadence, MIT, a single maintainer of long standing but a large contributor
+  base and no closed core. Against Sciter's 17 commits and unforkable binary, that is the opposite risk
+  profile in every respect.
+- **`cimgui`'s last *release* is from 2018** while its last *commit* was today. It is not stale — it
+  tracks ImGui continuously and people consume it from `master`. But anyone filtering the field by release
+  tags would write it off, which is
+  [the `pushed_at` trap](#ultralights-actual-health-and-whats-more-alive-in-the-same-niche) running the
+  other way round.
+- **`rxi/microui` upstream has been idle since August 2024 and never cut a release** — and it does not
+  matter here, because `vendor:microui` is an Odin-native **source port** (header credits rxi, oskarnp and
+  gingerBill), maintained in the Odin repository. You depend on the Odin compiler's tree, not on rxi.
+
+Clay is where [its own section](#clay-in-detail) left it: 8 commits, nothing since 2026-05-20, still
+usable because a vendored single header cannot rot out from under you.
+
+### Getting Dear ImGui into Odin
+
+Worth its own subsection because the obvious path is a trap, in the same way the archived GitHub
+repositories are for [Sciter](#sciters-own-health) and
+[Ultralight](#ultralights-actual-health-and-whats-more-alive-in-the-same-niche).
+
+**The binding most search results point at is archived.** `ThisDevDane/odin-imgui` is the top hit by
+stars (69), and it was last pushed on 2023-07-08 with `archived: true`, pinned to ImGui v1.82 — a 2021
+release. `alektron/imgui-odin-backends` (22 stars) is not archived but has had no commits in ninety days.
+
+**The live one is `Capati/odin-imgui`** — 39 commits in ninety days, tracking **v1.92.9b-docking**, MIT.
+Read out of its README rather than assumed:
+
+- It generates its C API with **`dear_bindings`**, not `cimgui`. Both exist and both work; `dear_bindings`
+  is the newer, metadata-driven generator and is what an actively maintained binding tends to pick today.
+- Backends are bound for `glfw`, `sdl2`, `sdl3`, `sdlgpu3`, `sdlrenderer2/3`, `opengl3`, `vulkan`, `wgpu`,
+  `metal`, `dx11`, `dx12`, `osx` and `win32` — which is close to a one-to-one match with Odin's own
+  `vendor` set, so the window and GPU layer is already there.
+- It publishes **no releases**. Pin a commit.
+
+The cost that the "directly bindable" framing hides: **it ships no prebuilt libraries.** You build C++
+ImGui yourself, via **premake5 + Python 3 + `make`** (and glibc 2.38 or newer on Unix), selecting backends
+at generation time:
+
+```sh
+premake5 --backends=glfw,opengl3 gmake
+cd build/make/linux && make config=release_x86_64
+```
+
+Compare [Clay](#clay-in-detail), which ships `linux/clay.a`, `windows/clay.lib`, `macos`, `macos-arm64`
+and `wasm/clay.o` prebuilt, and compare Sciter, which ships a `.so` you `dlopen`. ImGui-from-Odin is a
+build-system dependency in your project, and that is the real difference between it and everything else
+on the ladder — not the binding quality, which is fine.
+
+### An immediate-mode feel *with* markup
+
+The question splits once markup is allowed back in, because "immediate mode" and "HTML/CSS" are not
+actually opposed — what they are opposed to is *a retained tree you mutate from the host across a
+boundary*.
+
+| | How close it gets |
+| --- | --- |
+| **[Clay](#clay-in-detail)** | The closest thing to immediate-mode *layout*: declare the tree every frame in Odin, get render commands back, no cascade to invalidate. No widgets, no text stack — you supply `SetMeasureTextFunction` (`vendor:kb_text_shape` or `vendor:fontstash` will do it) and every control |
+| **RmlUi** | Host-driven document with data binding and a real cascade, **no JS engine required**. The nearest thing to "CSS styling, immediate-ish authoring, native access". Costs a C++ shim plus a render backend |
+| **Blitz** | Precisely this model — own HTML/CSS engine, host language drives the DOM, no JS — and unreachable: Rust ABI, self-declared pre-alpha |
+| **Sciter** | **Not this, and the distinction matters.** From Odin you drive a *retained* DOM through the DOM API. [Reactor](./reactor.md) does give React-style declarative re-render with diffing, which is the immediate-mode authoring feel — but it runs in QuickJS, in the document, not in your host language. Sciter's answer to "immediate mode from Odin" is "write it in JS instead" |
+
+That last row is the honest limit of what these bindings can offer on this axis. Sciter's architecture
+puts the declarative-rerender ergonomics on the script side of the engine, by design.
+
+### The other direction: Sciter *inside* an immediate-mode app
+
+Worth separating from the row above, because it is a different question with a better answer. Sciter has a
+windowless mode — `SciterProcX` and the `SXM_*` messages — in which it renders the document into a pixel
+buffer or GPU texture **you** allocate, which is exactly the shape an ImGui `Image()` or a raylib
+`DrawTexture` call wants. So a Sciter pane can live inside a frame loop somebody else owns.
+
+Measured rather than assumed, in [`EMBEDDING.md`](./EMBEDDING.md) and
+[`spike/windowless`](../spike/windowless/main.odin), against 6.0.4.9 on Linux x64. The short version:
+rendering, CSS, QuickJS, the DOM API, hit-testing and `SciterEval` all work with no window in the
+process — but `SXM_RESOLUTION` crashes the engine and `SXM_MOUSE` is never handled, so today it is a
+*display* embedding rather than an interactive one.
+
+The size argument does not survive the arrangement, though: a 25MB engine inside a tens-of-KB
+immediate-mode UI inverts the reason most people reach for immediate mode.
+
+### Summary
+
+| If you want | Take |
+| --- | --- |
+| Immediate-mode API *and* an app-grade widget set, native, from Odin | **Dear ImGui** via `Capati/odin-imgui` — and accept premake5 + Python in your build |
+| Immediate mode with zero friction, tool-grade widgets | **`vendor:microui`** — an import statement, twelve widgets |
+| Immediate mode, wider widgets, still zero external build | **`vendor:raylib` + raygui** — roughly thirty controls, renderer included |
+| A single-header C dependency you vendor and own outright | **Nuklear** — write the bindings with `odin-c-bindgen`, no shim, no build system |
+| Immediate-mode *layout* with your own renderer and widgets | **Clay** — [as its section says](#the-honest-read), layout is the solved part |
+| Real widgets, native, no HTML — and budget for a shim | **Qt Widgets** (best widgets, heaviest) or **Slint** (smallest, moderate widgets) |
+| HTML/CSS authoring *and* no boundary | **Sciter** — but the immediate-mode ergonomics live in JS, not in Odin |
 
 ## Clay, in detail
 

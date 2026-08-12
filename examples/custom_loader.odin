@@ -19,10 +19,13 @@
 //     `serve` exists rather than a bare return.
 package main
 
+import sciter ".."
 import "../sciter_app"
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:testing"
 
 // The whole UI, compiled in. The base URL passed to `load_html` is what makes the relative references
 // below resolve to `res://app/...`, which is what the engine then asks the host for.
@@ -52,6 +55,11 @@ h1   { color: #89b4fa; margin-top: 0; }
 code { background: #313244; padding: 0 .3em; border-radius: 3px; }
 img  { width: 96px; height: 96px; }
 .muted { color: #6c7086; font-size: 14px; }
+
+/* Two rules with nothing else in the file selecting them, so the tests can tell "this stylesheet
+   arrived" from "the document was styled by something". */
+#h { color: #00ff00; }
+#p { color: #0000ff; }
 #served { background: #313244; padding: 1em; border-radius: 4px; font: 13px monospace;
           white-space: pre-wrap; margin-top: 1em; }
 `
@@ -147,4 +155,359 @@ on_load_data :: proc(
 	// break the engine's own resources along with the unknown ones.
 	app.misses += 1
 	return .OK
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tests
+//
+// A load callback only happens because a document is loading, so these need a window and skip
+// themselves without a display. They never show one - see `dom_walk` for why.
+//
+// The handler's address is stored by the engine, so it cannot live on a test's stack: there is one at
+// file scope, reset between tests, and everything it keeps comes from the default allocator because the
+// engine goes on calling back while later tests run.
+
+@(private = "file")
+have_display :: proc() -> bool {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		return true
+	} else {
+		return(
+			os.get_env("DISPLAY", context.temp_allocator) != "" ||
+			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
+		)
+	}
+}
+
+// The document the tests load. `#gone` asks for something the loader does not have, which is what makes
+// the `.DISCARD` path observable.
+@(private = "file")
+TEST_DOC :: `<html><head><link rel="stylesheet" href="style.css" /></head>
+<body>
+  <h1 id="h">served</h1>
+  <p id="p">also served</p>
+  <img id="logo" src="logo.svg" />
+  <img id="gone" src="nothere.png" />
+</body></html>`
+
+// How the test handler should answer a URL it does not have.
+@(private = "file")
+Miss_Policy :: enum {
+	Pass_Through, // `.OK` with no data - the engine loads it itself
+	Discard, // refuse it
+	Discard_Everything, // refuse it, including the engine's own `sciter:` resources
+}
+
+@(private = "file")
+Loader :: struct {
+	handler:     sciter_app.Host_Handler,
+	window:      sciter_app.Window,
+	policy:      Miss_Policy,
+	seen:        [dynamic]string,
+	types:       [dynamic]sciter.Sciter_Resource_Type,
+	served:      int,
+	missed:      int,
+
+	// When set, `style.css` is answered with `data_ready` from inside the callback rather than with
+	// `serve`, and the result is recorded here.
+	push_inside: bool,
+	push_result: sciter_app.Error,
+}
+
+@(private = "file")
+g_loader: Loader
+
+@(private = "file")
+g_window: sciter_app.Window
+
+@(private = "file")
+test_loader :: proc(t: ^testing.T, policy := Miss_Policy.Pass_Through) -> (ok: bool) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return false
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	context.allocator = runtime.default_allocator()
+
+	if g_window == nil {
+		sciter_app.init()
+		w, err := sciter_app.create_window({width = 400, height = 300})
+		testing.expect_value(t, err, nil)
+		if w == nil {return false}
+		g_window = w
+
+		g_loader.handler = sciter_app.Host_Handler {
+			on_load_data = test_load_data,
+			user_data    = &g_loader,
+		}
+		sciter_app.set_host_handler(g_window, &g_loader.handler)
+	}
+
+	for uri in g_loader.seen {delete(uri)}
+	clear(&g_loader.seen)
+	clear(&g_loader.types)
+	g_loader.served = 0
+	g_loader.missed = 0
+	g_loader.policy = policy
+	g_loader.window = g_window
+	g_loader.push_result = nil
+
+	// Before the load, always: the document's own resources go through this callback.
+	testing.expect_value(t, sciter_app.load_html(g_window, TEST_DOC, BASE_URL), nil)
+	return true
+}
+
+@(private = "file")
+test_load_data :: proc(
+	handler: ^sciter_app.Host_Handler,
+	request: ^sciter_app.Load_Request,
+) -> sciter_app.Load_Result {
+	// `request.uri` is temp-allocated and gone when this returns; the log outlives the test.
+	context.allocator = runtime.default_allocator()
+	loader := (^Loader)(handler.user_data)
+	append(&loader.seen, strings.clone(request.uri))
+	append(&loader.types, request.type)
+
+	switch request.uri {
+	case BASE_URL + "style.css":
+		loader.served += 1
+		if loader.push_inside {
+			// The copying push, from inside the callback - the only place it works.
+			loader.push_result = sciter_app.data_ready(
+				loader.window,
+				request.uri,
+				transmute([]u8)string(STYLE),
+			)
+			return .DELAYED
+		}
+		return sciter_app.serve(request, transmute([]u8)string(STYLE))
+
+	case BASE_URL + "logo.svg":
+		loader.served += 1
+		return sciter_app.serve(request, transmute([]u8)string(LOGO))
+	}
+
+	loader.missed += 1
+	switch loader.policy {
+	case .Discard_Everything:
+		return .DISCARD
+	case .Discard:
+		// Ours to refuse; anything else - the engine's own `sciter:` URLs - is passed through.
+		if strings.has_prefix(request.uri, BASE_URL) {
+			return .DISCARD
+		}
+		return .OK
+	case .Pass_Through:
+		return .OK
+	}
+	return .OK
+}
+
+@(private = "file")
+requested :: proc(uri: string) -> bool {
+	for seen in g_loader.seen {
+		if seen == uri {return true}
+	}
+	return false
+}
+
+@(private = "file")
+element_style :: proc(selector: string, property: string) -> string {
+	root, _ := sciter_app.root(g_window)
+	el, err := sciter_app.select_first(root, selector)
+	if err != nil {return ""}
+	s, _ := sciter_app.style(el, property, context.temp_allocator)
+	return s
+}
+
+// The claim the example makes, checked: a stylesheet that exists only as a string in the binary is
+// fetched through the host and really styles the document. Nothing was read from disk.
+@(test)
+test_a_stylesheet_served_from_memory_actually_styles_the_document :: proc(t: ^testing.T) {
+	if !test_loader(t) {return}
+
+	testing.expect(t, requested(BASE_URL + "style.css"), "the engine should have asked for the stylesheet")
+	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
+	testing.expect_value(t, element_style("#p", "color"), "#0000FF")
+}
+
+// An image, which is the other half: the bytes are decoded by the engine, so a wrong answer here shows
+// up as a layout size rather than as an error. The SVG declares 64x64 and lays out at that plus its
+// border.
+@(test)
+test_an_image_served_from_memory_is_decoded_and_laid_out :: proc(t: ^testing.T) {
+	if !test_loader(t) {return}
+
+	testing.expect(t, requested(BASE_URL + "logo.svg"))
+
+	root, _ := sciter_app.root(g_window)
+	logo, err := sciter_app.select_first(root, "#logo")
+	testing.expect_value(t, err, nil)
+
+	box, berr := sciter_app.location(logo, .Border, .View)
+	testing.expect_value(t, berr, nil)
+	testing.expect(t, box.width >= 64, "an image the engine could not decode would not be 64 wide")
+	testing.expect(t, box.height >= 64)
+
+	// Both resources were served from the map, and only the unknown one was not.
+	testing.expect_value(t, g_loader.served, 2)
+}
+
+// The type is the engine telling the host what it intends the bytes for, before a single byte has been
+// handed over. A loader that serves several kinds of thing can dispatch on it rather than on the file
+// extension - which is the only option for a URL that has none.
+@(test)
+test_the_engine_says_what_each_resource_is_for :: proc(t: ^testing.T) {
+	if !test_loader(t) {return}
+
+	kinds: map[string]sciter.Sciter_Resource_Type
+	defer delete(kinds)
+	for uri, i in g_loader.seen {
+		kinds[uri] = g_loader.types[i]
+	}
+
+	testing.expect_value(t, kinds[BASE_URL + "style.css"], sciter.Sciter_Resource_Type.STYLE)
+	testing.expect_value(t, kinds[BASE_URL + "logo.svg"], sciter.Sciter_Resource_Type.IMAGE)
+	testing.expect_value(t, kinds[BASE_URL + "nothere.png"], sciter.Sciter_Resource_Type.IMAGE)
+}
+
+// **The rule the header does not state.** The engine asks for its own built-in resources through the
+// very same callback - `sciter:no-image.png` for a broken image, `sciter:window-frame.js` for the
+// window chrome. A host that treats "not in my map" as "refuse it" is refusing the engine's own
+// resources along with the unknown ones, which is why the example passes those through.
+@(test)
+test_the_engine_asks_for_its_own_resources_through_the_same_callback :: proc(t: ^testing.T) {
+	if !test_loader(t) {return}
+
+	engine_urls := 0
+	for uri in g_loader.seen {
+		if strings.has_prefix(uri, "sciter:") {engine_urls += 1}
+	}
+	testing.expect(t, engine_urls > 0, "the engine loads its own resources through the host too")
+
+	// And they are not in the host's scheme, which is what makes them easy to recognise.
+	for uri in g_loader.seen {
+		if strings.has_prefix(uri, "sciter:") {
+			testing.expect(t, !strings.has_prefix(uri, BASE_URL))
+		}
+	}
+}
+
+// `.DISCARD` on a URL the loader does not have. The engine treats it as a failed load and goes looking
+// for its own placeholder - which arrives as another request, through the same callback. So refusing
+// one resource produces a second request rather than silence.
+@(test)
+test_discarding_a_resource_sends_the_engine_looking_for_its_placeholder :: proc(t: ^testing.T) {
+	if !test_loader(t, .Discard) {return}
+
+	testing.expect(t, requested(BASE_URL + "nothere.png"), "the missing image was asked for")
+	testing.expect(t, requested("sciter:no-image.png"), "and refusing it sent the engine to its placeholder")
+
+	// The element is still laid out - at the placeholder's size, not at nothing.
+	root, _ := sciter_app.root(g_window)
+	gone, _ := sciter_app.select_first(root, "#gone")
+	box, err := sciter_app.location(gone, .Border, .View)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, box.width > 0 && box.height > 0)
+
+	// The served resources are unaffected by the policy for the ones that miss.
+	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
+}
+
+// The blunt version of the same policy: discard everything not in the map, the engine's own resources
+// included. This is a characterization test - it pins what was measured rather than recommending it.
+// The document here survives it, because nothing it needs comes from `sciter:`; a window with the
+// engine's own chrome is the case that would not.
+@(test)
+test_discarding_the_engines_own_resources_is_accepted_but_is_not_a_policy_to_copy :: proc(t: ^testing.T) {
+	if !test_loader(t, .Discard_Everything) {return}
+
+	refused := 0
+	for uri in g_loader.seen {
+		if strings.has_prefix(uri, "sciter:") {refused += 1}
+	}
+	testing.expect(t, refused > 0, "the engine's own requests were among the ones refused")
+
+	// The host's own resources still arrived, so this is a test of the miss path only.
+	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
+}
+
+// `serve` of an empty slice is `.DISCARD`, not "an empty resource". That is the wrapper's decision and
+// it is the useful one: an empty answer is almost always a lookup that failed, and handing the engine a
+// zero-length buffer makes it wait rather than fall back.
+@(test)
+test_serving_nothing_is_a_discard :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	// `Load_Request.raw` points at the engine's own struct, so a hand-built request needs one to
+	// point at - `serve` writes the answer through it.
+	raw: sciter.Scn_Load_Data
+	request := sciter_app.Load_Request {
+		raw = &raw,
+	}
+
+	testing.expect_value(t, sciter_app.serve(&request, nil), sciter_app.Load_Result.DISCARD)
+	testing.expect_value(t, sciter_app.serve(&request, {}), sciter_app.Load_Result.DISCARD)
+
+	// And the request was left alone rather than half-filled.
+	testing.expect(t, raw.outData == nil)
+	testing.expect_value(t, raw.outDataSize, u32(0))
+
+	// A non-empty answer fills it in and reports `.OK`.
+	body := transmute([]u8)string("x")
+	testing.expect_value(t, sciter_app.serve(&request, body), sciter_app.Load_Result.OK)
+	testing.expect(t, raw.outData == raw_data(body))
+	testing.expect_value(t, raw.outDataSize, u32(1))
+}
+
+// **`data_ready` works from inside the callback and nowhere else.** It is `serve` with a copy rather
+// than a borrow - the bytes do not have to outlive the call - and it is *not* the way to answer later,
+// which is what its name suggests and what `data_ready_async` is actually for.
+@(test)
+test_the_copying_push_works_from_inside_the_callback :: proc(t: ^testing.T) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return
+	}
+
+	g_loader.push_inside = true
+	defer g_loader.push_inside = false
+
+	if !test_loader(t) {return}
+
+	testing.expect_value(t, g_loader.push_result, nil)
+
+	// And the stylesheet it pushed is the one in effect, so the bytes really were taken.
+	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
+}
+
+// The other half of the same rule: outside a load callback it fails, whether or not there is a request
+// in flight for that URL.
+@(test)
+test_the_copying_push_fails_outside_a_load_callback :: proc(t: ^testing.T) {
+	if !test_loader(t) {return}
+
+	// A URL nothing has asked for.
+	testing.expect_value(
+		t,
+		sciter_app.data_ready(g_window, BASE_URL + "never-requested.css", transmute([]u8)string(STYLE)),
+		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
+	)
+
+	// And one the document really did ask for, moments ago.
+	testing.expect_value(
+		t,
+		sciter_app.data_ready(g_window, BASE_URL + "style.css", transmute([]u8)string(STYLE)),
+		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
+	)
+}
+
+@(private = "file")
+engine_loaded :: proc(t: ^testing.T) -> bool {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	return true
 }

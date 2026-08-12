@@ -266,7 +266,8 @@ request_url :: proc(request: Request, allocator := context.allocator) -> (url: s
 }
 
 // The URL the content actually came from, after any redirection. Empty for a request the host is
-// answering itself, which has not been anywhere.
+// answering itself, which has not been anywhere - not a copy of `request_url`, so do not reach for it
+// as one.
 request_content_url :: proc(request: Request, allocator := context.allocator) -> (url: string, err: Error) {
 	return utf8_string_of(request, request_api().RequestContentUrl, allocator)
 }
@@ -292,11 +293,18 @@ request_data_type :: proc(request: Request) -> (type: sciter.Sciter_Resource_Typ
 }
 
 // The MIME type of the data received so far, or "" before anything has been delivered.
+//
+// It is the *response* type, not a hint from whatever asked - so it is empty for the whole of a
+// pending request and carries what the answer set once there is one. That makes it the way to read
+// back what a request was actually served as: after `serve_request(..., mime = "text/css")` it is
+// "text/css".
 request_mime :: proc(request: Request, allocator := context.allocator) -> (mime: string, err: Error) {
 	return utf8_string_of(request, request_api().RequestGetReceivedDataType, allocator)
 }
 
-// The proxy host, and "" when there is none.
+// The proxy host, and "" when there is none - which on this engine is every request measured,
+// including ones the host serves itself. There is no "not supported" answer to tell apart from "no
+// proxy"; the pair below behaves the same way.
 request_proxy_host :: proc(request: Request, allocator := context.allocator) -> (host: string, err: Error) {
 	return utf8_string_of(request, request_api().RequestGetProxyHost, allocator)
 }
@@ -365,8 +373,21 @@ request_requestor :: proc(request: Request) -> (element: Element, err: Error) {
 //
 // Three lists with identical shapes - a count, then a name and a value per index. The plural forms
 // below read the whole list in one call and are what you want; the counts and the indexed reads are
-// there for a host that only wants one of them.
+// there for a host that only wants one of them. The two views agree.
+//
+// An index past the end is `.FAILURE`, not `.BAD_PARAM` - the handle was fine, the index was not.
+//
+// The response list is not only what the host put in it: **the engine appends a `Content-Encoding`
+// header of its own** once the request is answered, so a count taken after `serve_request` is one more
+// than the number of `set_response_header` calls.
 
+// How many parameters the request carries.
+//
+// **A query string in the URL is not one of them.** A document asking for `t.css?theme=dark` produces
+// one request whose `request_url` is the whole string, query included, and whose parameter count is
+// zero - splitting it is the host's job. What does arrive here is what `http_request` was given, and
+// for a URL the host answers the engine leaves the URL alone and passes the parameters through as
+// parameters, for `.Get` as well as `.Post`. Values are unescaped on the way in.
 request_parameter_count :: proc(request: Request) -> (n: int, err: Error) {
 	return count_of(request, request_api().RequestGetNumberOfParameters)
 }

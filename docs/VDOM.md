@@ -147,6 +147,78 @@ The trigger is specific rather than aesthetic. Reach for it when at least two of
 - per-element handlers or `behavior:` widgets inside a re-rendered region
 - updates at interactive rates rather than on user action
 
+## What actually hurt
+
+**This section is the experiment, not the argument.** The recommendation below used to be "write a
+harder example without a layer and see what breaks"; [`examples/workbench.odin`](../examples/workbench.odin)
+is that example — ten thousand rows, virtualised, editable, live-updating, with an Odin-painted widget
+per row and no script anywhere — and this is what building it was actually like.
+
+The headline: **five of the six costs in the first table never bit, and the one that did was cheap to
+work around.** That is not the answer this note expected.
+
+| Predicted cost | What happened |
+| --- | --- |
+| **Focus is lost** | Real, and the only one that mattered. Editing a cell and scrolling one row destroys the `<input>`. |
+| **Scroll position resets** | Never happened — but only because virtualisation inverts the relationship. The scroll lives on `#viewport`, which is *not* re-rendered; `set_html` goes to `#rows` inside it. The scrollbar is a function of the model, so nothing the renderer does can disturb it. |
+| **CSS transitions restart** | Not reached. A row that lives ~200 ms between renders has nothing to transition. This cost is real for a panel that re-renders occasionally, not for a list that re-renders constantly. |
+| **Per-element handlers die** | Real, and irrelevant — because nothing uses `attach_handler` per row. The sparkline is a `behavior:` name, so the *engine* re-attaches it to every row the renderer creates. That is 33 attach/detach pairs per frame and it costs one `new` and one `free` each. |
+| **Escaping is a rule you must remember** | Real, and unchanged. `escape_html` is on the caller at every interpolation, exactly as predicted. A test pins that a row named `<b>` stays text. |
+| **A full parse per update** | Not reached, by construction. Virtualisation caps the parse at the visible window: `set_html` runs on ~31 rows whether the model holds ten thousand or ten million. |
+
+### The one that hurt, precisely
+
+Focus. The workaround is nine lines — keep the edit in the model, find the new `<input>` after each
+render, `set_focus` it — and it is in
+[`restore_focus`](../examples/workbench.odin). Two things about it are worth recording:
+
+- **It works, completely.** The edit survives re-renders, survives its row scrolling out of the window
+  entirely (it was never in the DOM to begin with), and survives scrolling back. Two tests pin both.
+- **It has to be right on every path that re-renders, and every path re-renders.** That is the actual
+  cost: not the nine lines, but that they are load-bearing from nine call sites and nothing enforces it.
+
+What it does *not* preserve is caret position within the field, or the selection. Nobody noticed in
+this example because the edits are short; in a text area it would be unacceptable, and no amount of
+`set_focus` fixes it. **That is the honest ceiling of the workaround.**
+
+### What was harder than any of it
+
+Two things cost more time than the whole focus problem:
+
+- **Layout.** `display: flex` parses and then does not lay out the way a browser does. The first
+  version of the document came out as a single stacked column and looked like a rendering bug. Sciter's
+  own `flow:` model is the answer and [`html-css-js.md`](./html-css-js.md) says so in as many words. A
+  diff layer would not have helped by one line.
+- **A measured engine rule nothing else here had hit**: a `behavior:` name on an element created by
+  `set_html` is attached on the *next turn of the pump*, not inside the call — unlike an element in the
+  document being loaded, which `named_behavior` measures as attaching inside `load_html`. Code that
+  renders and then immediately reaches for a row's widget finds nothing. There is a test for it.
+
+### What this changes
+
+The recommendation stands, but the trigger moves.
+
+**Virtualisation is a better first move than a diff, and it is a tenth of the size.** It removes the
+parse cost, and it removes the scroll cost as a side effect. It is roughly 40 lines here — `visible_rows`
+plus two `set_style` calls — and the only subtlety is clamping the window at both ends of the model,
+which a test caught during writing.
+
+So the "when you would" list above is too generous. On this evidence:
+
+- *"a list of more than a few dozen rows that updates while the user is looking at it"* — **not
+  sufficient on its own.** Virtualise instead; the workbench does 10,000 rows at 12 Hz with `set_html`.
+- *"anything focusable inside a region that re-renders"* — **this is the real trigger**, and it is the
+  only one that survived contact. Specifically: a text field the user is *typing into* while something
+  else re-renders it. The model-side workaround handles focus but not the caret.
+- *"per-element handlers or `behavior:` widgets inside a re-rendered region"* — **no longer a reason.**
+  A `behavior:` name is free across re-renders. Only `attach_handler` would have suffered, and a
+  `behavior:` name is the better tool for a widget in a list anyway.
+
+The thing that would settle it is the *second* application of the hand-written patching — `VDOM.md`'s
+own advice, and still untaken, since the workbench needed it only once. Until then the estimate stands
+at option 2 of the build order below ("keyed identity, no diff"), and the case for going past it is
+weaker than this note originally assumed.
+
 ## Alternatives, ranked by cost
 
 | | Cost | What you give up |
@@ -165,9 +237,10 @@ what would tell you.
 
 Each stage is independently useful and independently abandonable, which is the point.
 
-1. **A second, harder example first — no layer.** Something with a long scrolling list of focusable
-   rows, updated live, written with `set_html`. Feel the failures listed above rather than take them on
-   trust. This is cheap and it is the only step that produces a real answer to "do we need this".
+1. ~~**A second, harder example first — no layer.**~~ **Done**:
+   [`examples/workbench.odin`](../examples/workbench.odin), and the results are in
+   [What actually hurt](#what-actually-hurt) above. It changed the answer: virtualisation removes most
+   of the cost, and only focus-while-typing survives as a reason to go further.
 2. **Keyed identity, no diff.** A helper that maps model keys to element handles and creates/removes/
    reorders children to match, leaving each row's contents to the caller. Perhaps 200 lines, and it
    kills the top four costs on its own.
@@ -196,6 +269,8 @@ Stopping after 2 would be a perfectly good outcome.
 - [`reactor.md`](./reactor.md) — what Sciter already does, in C++, for script. Read this before deciding
   the Odin layer is necessary.
 - [`FLEURY-UI.md`](./FLEURY-UI.md) — the immediate-mode-over-retained-cache architecture, Parts 1–3.
-- [`examples/task_list.odin`](../examples/task_list.odin) — the current state of the art here, and the
-  thing this would replace the middle of.
+- [`examples/task_list.odin`](../examples/task_list.odin) — the gentle version of the same design, and
+  the thing this would replace the middle of.
+- [`examples/workbench.odin`](../examples/workbench.odin) — the hard version, and the evidence behind
+  [What actually hurt](#what-actually-hurt).
 - [`api.md`](./api.md#the-dom--domodin) — the DOM primitives the apply pass would be written against.

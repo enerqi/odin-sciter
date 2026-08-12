@@ -271,7 +271,7 @@ test_nil_request_is_bad_param :: proc(t: ^testing.T) {
 //     the test runner's tracking one.
 
 @(private = "file")
-TEST_DOC :: `<html><head><link rel="stylesheet" href="t.css" /></head>
+TEST_DOC :: `<html><head><link rel="stylesheet" href="t.css?theme=dark&size=14" /></head>
 <body><img id="img" src="t.svg" /></body></html>`
 
 @(private = "file")
@@ -280,16 +280,42 @@ TEST_CSS :: "h1 { color: #ff0000; }"
 // What the stylesheet request knew about itself, recorded inside the callback.
 @(private = "file")
 Snapshot :: struct {
-	url:           string,
-	method:        string, // borrowed from the engine
-	type:          sciter.Sciter_Resource_Type,
-	state_before:  sciter.Request_State,
-	status_before: u32,
-	state_after:   sciter.Request_State,
-	status_after:  u32,
-	data_after:    string,
-	header_count:  int,
-	requestor_tag: string, // borrowed from the engine
+	url:            string,
+	method:         string, // borrowed from the engine
+	type:           sciter.Sciter_Resource_Type,
+	state_before:   sciter.Request_State,
+	status_before:  u32,
+	state_after:    sciter.Request_State,
+	status_after:   u32,
+	data_after:     string,
+	header_count:   int,
+	requestor_tag:  string, // borrowed from the engine
+
+	// The rest of the getters, read at the same two moments.
+	content_url:    string,
+	mime_before:    string,
+	mime_after:     string,
+	proxy_host:     string,
+	proxy_port:     u32,
+	param_count:    int,
+	response_count: int,
+	responses:      []Name_Value,
+}
+
+// `sciter_app.Name_Value` under a shorter name, since half this file is pairs.
+@(private = "file")
+Name_Value :: sciter_app.Name_Value
+
+// What the `http_request` route saw. Its parameters are the point: a URL served by the host has no
+// query string to parse, so this is the only way anything reaches `request_parameter`.
+@(private = "file")
+Api_Call :: struct {
+	seen:         bool,
+	url:          string,
+	method:       string, // borrowed
+	params:       []Name_Value,
+	param_count:  int,
+	out_of_range: sciter_app.Error,
 }
 
 @(private = "file")
@@ -299,6 +325,7 @@ Probe :: struct {
 	css:        Snapshot,
 	deferred:   sciter_app.Request, // the image, held past the callback
 	fail_image: bool, // 404 the image instead of deferring it
+	api:        Api_Call,
 }
 
 // One handler, at a fixed address, for the life of the test binary.
@@ -314,7 +341,16 @@ probe_reset :: proc() {
 
 	delete(g_probe.css.url)
 	delete(g_probe.css.data_after)
+	delete(g_probe.css.content_url)
+	delete(g_probe.css.mime_before)
+	delete(g_probe.css.mime_after)
+	delete(g_probe.css.proxy_host)
+	sciter_app.delete_name_values(g_probe.css.responses)
 	g_probe.css = {}
+
+	delete(g_probe.api.url)
+	sciter_app.delete_name_values(g_probe.api.params)
+	g_probe.api = {}
 
 	g_probe.deferred = nil
 	g_probe.fail_image = false
@@ -333,12 +369,17 @@ probe_load_data :: proc(
 	rq := sciter_app.request_of(request)
 
 	switch request.uri {
-	case "res://test/t.css":
+	case "res://test/t.css?theme=dark&size=14":
 		s := &g_probe.css
 		s.url, _ = sciter_app.request_url(rq)
 		s.method, _ = sciter_app.request_method(rq)
 		s.type, _ = sciter_app.request_data_type(rq)
 		s.state_before, s.status_before, _ = sciter_app.request_status(rq)
+		s.content_url, _ = sciter_app.request_content_url(rq)
+		s.mime_before, _ = sciter_app.request_mime(rq)
+		s.proxy_host, _ = sciter_app.request_proxy_host(rq)
+		s.proxy_port, _ = sciter_app.request_proxy_port(rq)
+		s.param_count, _ = sciter_app.request_parameter_count(rq)
 
 		if el, err := sciter_app.request_requestor(rq); err == nil {
 			s.requestor_tag, _ = sciter_app.tag(el)
@@ -349,12 +390,31 @@ probe_load_data :: proc(
 		sciter_app.set_request_header(rq, "X-Odin", "1")
 		s.header_count, _ = sciter_app.request_header_count(rq)
 
+		// The same round trip on the response side, which is a separate list.
+		sciter_app.set_response_header(rq, "X-Answer", "42")
+		sciter_app.set_response_header(rq, "Content-Language", "en")
+
 		result := sciter_app.serve_request(request, transmute([]u8)string(TEST_CSS), mime = "text/css")
 		s.state_after, s.status_after, _ = sciter_app.request_status(rq)
 		if data, err := sciter_app.request_data(rq); err == nil {
 			s.data_after = string(data)
 		}
+		s.mime_after, _ = sciter_app.request_mime(rq)
+		s.response_count, _ = sciter_app.response_header_count(rq)
+		s.responses, _ = sciter_app.response_headers(rq)
 		return result
+
+	case "res://test/api":
+		// Driven by `http_request`, not by the document - see `test_http_request_parameters...`.
+		a := &g_probe.api
+		a.seen = true
+		a.url, _ = sciter_app.request_url(rq)
+		a.method, _ = sciter_app.request_method(rq)
+		a.param_count, _ = sciter_app.request_parameter_count(rq)
+		a.params, _ = sciter_app.request_parameters(rq)
+		_, a.out_of_range = sciter_app.request_parameter(rq, a.param_count)
+		sciter_app.succeed_request(rq, transmute([]u8)string("ok"))
+		return .MYSELF
 
 	case "res://test/t.svg":
 		if g_probe.fail_image {
@@ -422,7 +482,9 @@ test_request_reads_and_answers :: proc(t: ^testing.T) {
 	defer answer_deferred()
 
 	s := g_probe.css
-	testing.expect_value(t, s.url, "res://test/t.css")
+	// The query string is part of the URL and stays there - see
+	// `test_a_query_string_stays_in_the_url_and_is_not_a_parameter`.
+	testing.expect_value(t, s.url, "res://test/t.css?theme=dark&size=14")
 	testing.expect_value(t, s.method, "GET")
 	testing.expect_value(t, s.type, sciter.Sciter_Resource_Type.STYLE)
 
@@ -479,4 +541,218 @@ test_deferred_request_survives_the_callback :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.unuse_request(g_probe.deferred), nil)
 	g_probe.deferred = nil
+}
+
+// The getters that describe a request rather than answer it. Most of them are network-shaped and this
+// engine is not doing any networking here, so what they answer is the interesting part - and "empty" is
+// a fine thing to assert as long as it is written down rather than assumed.
+@(test)
+test_the_network_shaped_getters_answer_empty_for_a_request_the_host_serves :: proc(t: ^testing.T) {
+	if !test_document(t) {return}
+	defer answer_deferred()
+
+	s := g_probe.css
+
+	// There is no proxy, and the engine says so with a value rather than with `.NOTSUPPORTED`. Code
+	// that reads these has to tell "no proxy" apart from "not supported", and here there is only one.
+	testing.expect_value(t, s.proxy_host, "")
+	testing.expect_value(t, s.proxy_port, u32(0))
+
+	// `request_content_url` is the URL the content finally came from, after any redirect. Nothing is
+	// redirecting a `res://` URL the host answers, so it is empty - not a copy of the request URL.
+	testing.expect_value(t, s.content_url, "")
+}
+
+// **`request_mime` is the *response* type, not a hint from the requestor.** It is empty while the
+// request is pending and carries whatever the answer set once there is one - so it reads back what
+// `serve_request` was told, which makes it the way to check what a request was actually answered as.
+@(test)
+test_the_request_mime_is_empty_until_the_request_is_answered :: proc(t: ^testing.T) {
+	if !test_document(t) {return}
+	defer answer_deferred()
+
+	testing.expect_value(t, g_probe.css.mime_before, "")
+	testing.expect_value(t, g_probe.css.mime_after, "text/css")
+}
+
+// Response headers are a separate list from request headers, and both round-trip through the engine's
+// UTF-16. **The engine adds one of its own** when the request is answered - an empty
+// `Content-Encoding` - so the count is not just what the host set.
+@(test)
+test_response_headers_round_trip_and_the_engine_adds_one_of_its_own :: proc(t: ^testing.T) {
+	if !test_document(t) {return}
+	defer answer_deferred()
+
+	s := g_probe.css
+
+	// One on the request side, two set here on the response side, plus the engine's.
+	testing.expect_value(t, s.header_count, 1)
+	testing.expect_value(t, s.response_count, 3)
+	testing.expect_value(t, len(s.responses), 3)
+
+	found: map[string]string
+	defer delete(found)
+	for pair in s.responses {
+		found[pair.name] = pair.value
+	}
+	testing.expect_value(t, found["X-Answer"], "42")
+	testing.expect_value(t, found["Content-Language"], "en")
+
+	// The engine's own, which is there whether or not anything asked for it.
+	_, engines := found["Content-Encoding"]
+	testing.expect(t, engines, "the engine appends a Content-Encoding header when the request is answered")
+}
+
+// **A query string in the URL is not parsed into parameters.** The document asks for
+// `t.css?theme=dark&size=14`; `request_url` hands back the whole thing, query and all, and
+// `request_parameter_count` is zero. Anything that wants the fields has to split the URL itself.
+@(test)
+test_a_query_string_stays_in_the_url_and_is_not_a_parameter :: proc(t: ^testing.T) {
+	if !test_document(t) {return}
+	defer answer_deferred()
+
+	testing.expect_value(t, g_probe.css.url, "res://test/t.css?theme=dark&size=14")
+	testing.expect_value(t, g_probe.css.param_count, 0)
+}
+
+// So where do parameters come from? `http_request`, which is the only thing here that has any. It works
+// against a `res://` URL the host answers, so this needs no network and no `.SOCKET_IO`.
+//
+// Note what the engine does *not* do: for a host-served URL it leaves the URL alone and keeps the
+// parameters as parameters, for `.Get` as well as `.Post` - the query-string encoding described on
+// `http_request` is what happens on the way out to a real server.
+@(test)
+test_http_request_parameters_arrive_as_request_parameters_with_no_network :: proc(t: ^testing.T) {
+	for method in ([]sciter_app.Http_Method{.Get, .Post}) {
+		if !test_document(t) {return}
+		defer answer_deferred()
+
+		root, rerr := sciter_app.root(g_window)
+		testing.expect_value(t, rerr, nil)
+		target, terr := sciter_app.select_first(root, "#img")
+		testing.expect_value(t, terr, nil)
+
+		err := sciter_app.http_request(target, "res://test/api", method, {{"page", "2"}, {"q", "two words"}})
+		testing.expect_value(t, err, nil)
+
+		// The request is delivered on the engine's thread, so pump until the callback has run.
+		for _ in 0 ..< 40 {
+			if g_probe.api.seen {break}
+			sciter_app.run_once()
+			sciter_app.heartbeat()
+		}
+
+		if !testing.expectf(t, g_probe.api.seen, "%v: the request never reached the host", method) {
+			continue
+		}
+
+		a := g_probe.api
+		testing.expectf(t, a.url == "res://test/api", "%v: the URL should be untouched, got %q", method, a.url)
+		testing.expect_value(t, a.param_count, 2)
+		testing.expect_value(t, len(a.params), 2)
+		testing.expect_value(t, a.params[0].name, "page")
+		testing.expect_value(t, a.params[0].value, "2")
+		testing.expect_value(t, a.params[1].name, "q")
+
+		// Unescaped on the way in - the space is a space, not `%20`.
+		testing.expect_value(t, a.params[1].value, "two words")
+
+		// Past the end is `.FAILURE` rather than `.BAD_PARAM`: the handle was fine, the index was not.
+		testing.expect_value(t, a.out_of_range, sciter_app.Error(sciter.Request_Result.FAILURE))
+	}
+}
+
+// The indexed getters and the whole-list ones are two views of the same thing, and they agree. The list
+// forms allocate, and `delete_name_values` is what frees them - including the strings inside, which a
+// plain `delete` on the slice would leak.
+@(test)
+test_the_indexed_and_whole_list_header_getters_agree :: proc(t: ^testing.T) {
+	if !test_document(t) {return}
+	defer answer_deferred()
+
+	if !testing.expect(t, g_probe.deferred != nil, "the image request should have been taken over") {
+		return
+	}
+	rq := g_probe.deferred
+
+	testing.expect_value(t, sciter_app.set_request_header(rq, "X-One", "1"), nil)
+	testing.expect_value(t, sciter_app.set_request_header(rq, "X-Two", "2"), nil)
+	testing.expect_value(t, sciter_app.set_response_header(rq, "X-Three", "3"), nil)
+
+	request_count, rcerr := sciter_app.request_header_count(rq)
+	testing.expect_value(t, rcerr, nil)
+	testing.expect_value(t, request_count, 2)
+
+	// The indexed form, one at a time.
+	for i in 0 ..< request_count {
+		pair, err := sciter_app.request_header(rq, i, context.temp_allocator)
+		testing.expect_value(t, err, nil)
+		testing.expect(t, pair.name != "" && pair.value != "")
+	}
+
+	// And the same list in one call.
+	all, aerr := sciter_app.request_headers(rq)
+	testing.expect_value(t, aerr, nil)
+	defer sciter_app.delete_name_values(all)
+	testing.expect_value(t, len(all), request_count)
+
+	first, ferr := sciter_app.request_header(rq, 0, context.temp_allocator)
+	testing.expect_value(t, ferr, nil)
+	testing.expect_value(t, all[0].name, first.name)
+	testing.expect_value(t, all[0].value, first.value)
+
+	// The response side, the same way round.
+	response_count, rperr := sciter_app.response_header_count(rq)
+	testing.expect_value(t, rperr, nil)
+	testing.expect_value(t, response_count, 1)
+
+	one, oerr := sciter_app.response_header(rq, 0, context.temp_allocator)
+	testing.expect_value(t, oerr, nil)
+	testing.expect_value(t, one.name, "X-Three")
+	testing.expect_value(t, one.value, "3")
+
+	responses, rserr := sciter_app.response_headers(rq)
+	testing.expect_value(t, rserr, nil)
+	defer sciter_app.delete_name_values(responses)
+	testing.expect_value(t, len(responses), 1)
+	testing.expect_value(t, responses[0].name, "X-Three")
+
+	// Freeing an empty or nil list is what a `defer` after a failed call does, so it has to be safe.
+	sciter_app.delete_name_values(nil)
+	sciter_app.delete_name_values({})
+}
+
+// The remaining getters against a nil handle, extending the table in `test_nil_request_is_bad_param`.
+// The whole surface has to agree, or one unchecked notification is a crash rather than an error.
+@(test)
+test_the_rest_of_the_request_getters_also_refuse_a_nil_handle :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	bad := sciter_app.Error(sciter.Request_Result.BAD_PARAM)
+
+	_, content_err := sciter_app.request_content_url(nil)
+	testing.expect_value(t, content_err, bad)
+	_, mime_err := sciter_app.request_mime(nil)
+	testing.expect_value(t, mime_err, bad)
+	_, proxy_host_err := sciter_app.request_proxy_host(nil)
+	testing.expect_value(t, proxy_host_err, bad)
+	_, proxy_port_err := sciter_app.request_proxy_port(nil)
+	testing.expect_value(t, proxy_port_err, bad)
+
+	_, param_count_err := sciter_app.request_parameter_count(nil)
+	testing.expect_value(t, param_count_err, bad)
+	_, param_err := sciter_app.request_parameter(nil, 0)
+	testing.expect_value(t, param_err, bad)
+
+	_, header_count_err := sciter_app.request_header_count(nil)
+	testing.expect_value(t, header_count_err, bad)
+	_, header_err := sciter_app.request_header(nil, 0)
+	testing.expect_value(t, header_err, bad)
+
+	_, response_count_err := sciter_app.response_header_count(nil)
+	testing.expect_value(t, response_count_err, bad)
+	_, response_err := sciter_app.response_header(nil, 0)
+	testing.expect_value(t, response_err, bad)
+	_, responses_err := sciter_app.response_headers(nil)
+	testing.expect_value(t, responses_err, bad)
 }

@@ -93,12 +93,19 @@ node_from_value :: proc(v: ^Value) -> (node: Node, err: Error) {
 //		// ...
 //	}
 
+// **This counts text and comment nodes too, so it is not `child_count(element)`.** A `<ul>` written
+// across several lines has a whitespace text node between every pair of `<li>`s: five node children
+// against two element children, measured. That difference is the first thing the node view surprises
+// people with, and indexing with `node_child` on the assumption that children are elements is how it
+// bites.
 node_child_count :: proc(node: Node) -> (n: int, err: Error) {
 	count: u32
 	dom_err(sciter.api().SciterNodeChildrenCount(sciter.Hnode(node), &count)) or_return
 	return int(count), nil
 }
 
+// The nth child. Unlike the rest of the walk, an index past the end is `.INVALID_PARAMETER` rather
+// than `.Not_Found` - it is a mistake, not the end of anything.
 node_child :: proc(node: Node, n: int) -> (child: Node, err: Error) {
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterNodeNthChild(sciter.Hnode(node), u32(n), &hn)) or_return
@@ -163,6 +170,15 @@ node_text :: proc(node: Node, allocator := context.allocator) -> (text: string, 
 	return sink.out, nil
 }
 
+// Replaces the text of a text or comment node.
+//
+// **On an element node it answers `.OK` and does nothing.** Not an error, not a partial edit - the
+// markup, the children and the text all come back unchanged, on an element with inline children and on
+// one holding a single word alike. It pairs with `node_text`, which likewise reports `""` for an
+// element; both work on the node's own text, and an element has none.
+//
+// `set_text(element)` is the call that replaces an element's content. This one edits the words around
+// an inline child without disturbing the child, which `set_text` cannot do.
 node_set_text :: proc(node: Node, text: string) -> Error {
 	w := utf16_from_string(text, context.temp_allocator)
 	return dom_err(sciter.api().SciterNodeSetText(sciter.Hnode(node), raw_data(w), u32(len(w) - 1)))
@@ -189,12 +205,24 @@ make_comment_node :: proc(text: string) -> (node: Node, err: Error) {
 
 // Puts `what` into the document, positioned relative to `node`: `.BEFORE`, `.AFTER`, `.APPEND` (as the
 // last child of `node`) or `.PREPEND` (as the first). The document takes ownership from here.
+//
+// **A node can be inserted once and never again.** A second insertion of the same handle - into another
+// parent, or anywhere at all - is `.INVALID_HANDLE`, and so is inserting a node that has been taken
+// back out with `node_remove`. See there.
 node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Node) -> Error {
 	return dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
 }
 
-// Takes the node out of the document. `finalize = true` destroys it; `false` detaches it and hands
-// ownership back to the caller, which is what a move between two places in the document wants.
+// Takes the node out of the document. `finalize = true` destroys it.
+//
+// **`finalize = false` does not give you a node you can put back.** The name and the C header both
+// suggest a detach-and-reattach, which would be how a subtree is moved; measured, it is not. The handle
+// stays *readable* afterwards - `node_type` and `node_text` still answer, and `node_parent` reports
+// `.Not_Found` - but every insertion of it fails with `.INVALID_HANDLE`: into the old parent, into a
+// new one, relative to a sibling, and with or without a `node_add_ref` taken first.
+//
+// So there is no move. To relocate content, read it out (`html`, or `node_text`) and build a new node
+// from it - which is what `dom_walk`'s node tests do.
 node_remove :: proc(node: Node, finalize := true) -> Error {
 	return dom_err(sciter.api().SciterNodeRemove(sciter.Hnode(node), b32(finalize)))
 }

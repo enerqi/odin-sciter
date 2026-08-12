@@ -84,10 +84,17 @@ data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sc
 	return nil if ok else Api_Error.Load_Failed
 }
 
-// Hands the engine data for a URL outside of a load callback, copying it immediately.
+// Hands the engine data for a URL, copying it immediately.
 //
-// This is the "push" half of the loader: it answers a request that is in flight, and is the safe way
-// to supply bytes whose lifetime you cannot guarantee for the duration of a `serve`.
+// **It works from inside a load callback and nowhere else.** Measured: called from within
+// `on_load_data` - alongside a `.DELAYED` return - it answers `nil` and the resource is used. Called
+// after the callback has returned it answers `.Load_Failed`, both for a request left in flight by
+// `.DELAYED` and for a URL nothing has asked for. So this is not the way to answer later; it is `serve`
+// with a copy instead of a borrow, which is what to reach for when the bytes are about to go out of
+// scope.
+//
+// `data_ready_async`, which carries the request id, is the one that answers a `.DELAYED` request after
+// the fact.
 data_ready :: proc(window: Window, uri: string, data: []u8) -> Error {
 	w := utf16_from_string(uri, context.temp_allocator)
 	ok := sciter.api().SciterDataReady(rawptr(window), raw_data(w), raw_data(data), u32(len(data)))

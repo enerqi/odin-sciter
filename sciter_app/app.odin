@@ -139,10 +139,19 @@ set_debug_mode :: proc(enabled := true, window: Window = nil) -> Error {
 	return set_option(.SET_DEBUG_MODE, uintptr(1 if enabled else 0), window)
 }
 
-// Routes the engine's HTML/CSS/script diagnostics somewhere. Without this, a CSS typo or a script error
+// Routes the engine's script diagnostics somewhere. Without this, an error in a document's `<script>`
 // is silent - which is the single most confusing thing about a first Sciter document.
 //
-// `handler` is called from the engine, so it must be `proc "system"`. Pass nil to detach.
+// **What arrives is the *document's* script errors, not `eval`'s.** Measured: a `<script>` that will
+// not parse produces a `.SCRIPT` diagnostic at `.ERROR`, an unhandled throw produces one at `.WARNING`
+// - and a failing `eval` produces nothing at all. A handler that only logs `.ERROR` therefore drops
+// every unhandled rejection; `eval`'s own failure is reported by its return value and nowhere else.
+//
+// With a `window` the handler hears only that window's diagnostics; without one it is global. The
+// message is counted UTF-16, so `string_from_utf16` decodes it - not the cstring form.
+//
+// `handler` is called from the engine, so it must be `proc "system"` and has no `context`: copy what
+// you need and decode it later. Pass nil to detach, and do detach before the handler's memory goes.
 set_debug_output :: proc(handler: sciter.Debug_Output_Proc, param: rawptr = nil, window: Window = nil) {
 	sciter.api().SciterSetupDebugOutput(rawptr(window), param, handler)
 }

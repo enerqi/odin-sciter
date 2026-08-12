@@ -80,13 +80,16 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Twenty-one, each a single self-contained file with its explanation in the header comment:
+Twenty-three, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
 `dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
-`worker_thread`, `drag_and_drop`, `graphics`, `video` (frames generated in Odin, streamed into a
-`<video>` element), `named_behavior` (widgets a stylesheet asks for by name), `custom_loader`,
-`request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a native extension
-the engine loads).
+`workbench` (a harder one - ten thousand rows virtualised, editable and live, and the experiment behind
+`docs/VDOM.md`),
+`worker_thread`, `drag_and_drop`, `graphics`, `graphics_gallery` (every call in the 2D API drawn once
+and asserted once, and the eight places the renderer is wrong), `video` (frames generated in Odin,
+streamed into a `<video>` element), `named_behavior` (widgets a stylesheet asks for by name),
+`custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`, and `extension` (Odin as a
+native extension the engine loads).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
 to the symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on
@@ -94,7 +97,7 @@ Windows.
 
 ### Tests
 
-183 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+309 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -180,6 +183,68 @@ checked by `just check`.
   everything else in the graphics table works normally through those.
 - **`.RAW` image encoding is BGRA**, not the `[a,b,g,r]` `sciter-x-graphics.h` describes. Measured by
   clearing an image to pure red and reading `[0, 0, 255, 255]` back.
+- **`gStar` is broken.** It answers `.OK` and paints a scatter of disconnected line fragments that never
+  closes and never fills - 63 lit pixels against 353 for the same star built by hand, and deterministic,
+  so the geometry is wrong rather than the memory. Build the points and use `draw_polygon`.
+- **`gFillMode` answers `.NOTSUPPORTED` and the renderer is always even-odd.** Two nested squares wound
+  the same way come out with a hole whichever rule is asked for.
+- **`gWorldToScreen` and `gScreenToWorld` ignore the transform.** They answer `.OK` and hand the point
+  straight back under translate, scale, rotate, skew and a full matrix alike. Drawing *is* transformed;
+  only these two accessors lie, so a widget hit-testing a transformed shape must keep its own matrix.
+- **`textSetBox` does nothing.** Every width from 200 down to 20 leaves `lines = 1` and the metrics
+  untouched on a string whose tightest wrap is 35 wide, and the drawn pixels are identical. Text through
+  the graphics API is one line.
+- **An unbalanced `gStateSave` kills the process.** A painter that returns with the state stack still
+  pushed aborts on the way out - `terminate called without an active exception`, no error code. The
+  other direction is harmless: restoring more often than you saved is `.OK`, from an empty stack too.
+- **`gDrawText`'s anchor numbers are a numeric keypad**, so 7/8/9 is the top row and 1 is bottom-left.
+  This package had `Text_Anchor` upside down until each of the nine was measured; the horizontal half
+  was right either way, which is why it went unnoticed.
+- **`gRoundedRectangle` reads eight numbers, not four** - an `rx` and an `ry` per corner, as the header's
+  own comment says. This package passed four, so the engine read four floats of stack past the end and
+  the corners came out square. `draw_rounded_rect` is now a proc group taking either form.
+- **`gArc` fills the segment under its chord, not the pie wedge** - the centre of the ellipse stays
+  unpainted. And `pathArcTo` has two usable flag combinations rather than four: `clockwise` picks the
+  arc, and `clockwise = true` with `large_arc = false` produces no arc at all.
+- **`image_from_element` inside a `.DRAW` handler recurses until the stack is gone.** It renders the
+  element by painting it, so from within a paint it re-enters the paint already running - ~39,500 frames
+  of the engine's own `do_draw` before the segfault. Snapshot between frames.
+- **The `vUnWrap*` calls do not fail on the wrong type.** Unwrapping a `Value` holding an integer as a
+  graphics handle answers `.OK` and a nil handle, so the handle is the thing to check, not the error.
+- **`ValueIsolate` does not break the sharing it exists to break.** After `value_copy`, isolating either
+  side (or both) leaves a write through one visible through the other, for maps and arrays, nested or
+  not. An independent copy has to be rebuilt.
+- **`ValueIntData` reads `.INT` only: a `.BIG_INT` answers 0 with no error**, including one holding 5.
+  `value_from(i64(...))` makes a `.BIG_INT`, so anything that went through an `i64` reads back as zero
+  through the 32-bit accessor. Use `value_to_i64`.
+- **`SciterNodeRemove(finalize = false)` does not produce a node you can reinsert.** The handle stays
+  readable - type and text still answer - but every insertion of it is `.INVALID_HANDLE`, with or
+  without a `node_add_ref` first, into the old parent or a new one. There is no node move.
+- **`SciterNodeSetText` on an element node answers `.OK` and does nothing.** It pairs with
+  `SciterNodeGetText`, which reports `""` for an element; both work on the node's own text, and an
+  element has none. `set_text(element)` is the call that replaces an element's content.
+- **`SciterSetCSS` replaces the document's own stylesheet rather than layering under it.** A window
+  sheet that never mentions `#target` leaves it unstyled, and a `!important` document rule loses to a
+  plain rule here. A reload drops the window sheet; each call replaces the last; unparseable CSS is
+  accepted and still replaces, leaving the document with no styling and no error anywhere.
+- **`SciterWindowExec`'s state is reported as `.SHOWN` or `.CLOSED` and nothing else.** `.MINIMIZED`,
+  `.MAXIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are accepted and never reflected back, and a window that
+  has been created but never shown reports `.CLOSED`, not `.HIDDEN`.
+- **Closing a secondary window that has a document crashes the engine on the next pump.** The segfault
+  is inside its own `check_paint`, down in `GetWindowSizeX11` on a window it destroyed but left on the
+  paint list - and the window stays on that list, so every later pump in the process dies too. A window
+  that never had a document closes cleanly. `close` is therefore the one wrapper with no test.
+- **`.FULL_SCREEN` changes the monitor's display mode and nothing puts it back.** A 300x200 window taken
+  full screen on X11 dropped a 1920x1200 panel to 320x180, and it stayed there after the process exited.
+- **`SciterDataReady` works from inside a load callback and nowhere else.** Called after the callback
+  returns it answers false, for a request left in flight by `.DELAYED` as well as for a URL nothing
+  asked for. `SciterDataReadyAsync`, which carries the request id, is the one that answers later.
+- **A URL's query string is not parsed into request parameters.** `request_url` hands back the whole
+  string and `request_parameter_count` is zero; what does arrive there is what `http_request` was given.
+  The engine also appends a `Content-Encoding` response header of its own once a request is answered.
+- **`SciterSetupDebugOutput` reports the document's script errors, not `eval`'s.** A `<script>` that
+  will not parse produces a `.SCRIPT` diagnostic at `.ERROR` and an unhandled throw one at `.WARNING`,
+  while a failing `eval` produces nothing at all - its return value is the only report.
 - **A drop target must consume `.DRAG` as well as `.WILL_ACCEPT_DROP`.** `sciter-x-behavior.h` documents
   only the second; consuming just that leaves the engine telling the drag source it is not interested,
   and no `.DROP` arrives. Measured by driving a real X11 drag against every combination.

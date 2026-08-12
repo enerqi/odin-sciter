@@ -1,14 +1,18 @@
 # odin-sciter — findings and implementation plan
 
-Status as of 2026-08-09: **the bindings generate, compile, and run, and there is an ergonomic layer on
+Status as of 2026-08-12: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-one examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-three examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
 the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
-background threads, drag-and-drop, graphics,
+background threads, drag-and-drop, graphics (both a custom-painted element and a gallery covering the
+whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 183 `@(test)` procs, and the eleven guides in `docs/` are written. What remains
+`just example-tests` runs 309 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+the wrapper is 309 of its 347 exported procedures called from a test; the rest are proc-group members
+reached through their group, plus `close`, which cannot be exercised without crashing the engine (see
+`window.odin`). What remains
 is Windows - and everything that could be prepared for it without the machine has been, including
 `api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
 
@@ -459,7 +463,7 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all twenty-one examples run, and the eleven guides are
+9. ~~**Examples and guides** — §9~~ **done**: all twenty-three examples run, and the eleven guides are
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
 10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);

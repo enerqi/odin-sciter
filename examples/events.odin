@@ -1100,3 +1100,48 @@ test_a_sub_millisecond_interval_still_runs :: proc(t: ^testing.T) {
 	// it is a good deal fewer.
 	testing.expect(t, tk.count > 0, "a sub-millisecond interval must run, not stop")
 }
+
+// The gesture accessor, decoded from a hand-built parameter struct.
+//
+// **The engine never sends `.GESTURE` here**, so there is nothing to drive it with: it needs touch
+// hardware, and `GESTURE_CMD` is commented out in `sciter-x-behavior.h` on this SDK, which is why
+// `Gesture_Event.code` is a bare number rather than an enum. What can be pinned is the decode - that
+// the accessor reads the right fields out of the right struct, refuses an event from another group,
+// and splits `cmd` into a code and a phase the way every other accessor here does.
+@(test)
+test_the_gesture_accessor_decodes_its_parameters :: proc(t: ^testing.T) {
+	params := sciter.Gesture_Params {
+		cmd = 3 | u32(sciter.Phase_Mask.SINKING),
+		target = sciter.Helement(uintptr(0x4000)),
+		pos = {x = 11, y = 22},
+		pos_view = {x = 33, y = 44},
+	}
+
+	ge, ok := sciter_app.gesture_event({group = {.GESTURE}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, ge.code, u32(3))
+	testing.expect_value(t, ge.phase, sciter_app.Event_Phase.Sinking)
+	testing.expect_value(t, ge.target, sciter_app.Element(uintptr(0x4000)))
+
+	// `pos` is element-relative; the view-relative one is only on `raw`.
+	testing.expect_value(t, ge.pos, [2]i32{11, 22})
+	testing.expect(t, ge.raw == &params)
+	testing.expect_value(t, ge.raw.pos_view.x, i32(33))
+
+	// The phase bits come out of `cmd` and do not leak into the code.
+	bubbling := sciter.Gesture_Params {
+		cmd = 3,
+	}
+	bg, _ := sciter_app.gesture_event({group = {.GESTURE}, params = &bubbling})
+	testing.expect_value(t, bg.code, u32(3))
+	testing.expect_value(t, bg.phase, sciter_app.Event_Phase.Bubbling)
+
+	// Another group's parameters are refused rather than reinterpreted, which is the whole reason
+	// these accessors return an `ok` at all.
+	mouse: sciter.Mouse_Params
+	_, from_mouse := sciter_app.gesture_event({group = {.MOUSE}, params = &mouse})
+	testing.expect(t, !from_mouse, "gesture_event must refuse a MOUSE event")
+
+	_, no_params := sciter_app.gesture_event({group = {.GESTURE}, params = nil})
+	testing.expect(t, !no_params)
+}

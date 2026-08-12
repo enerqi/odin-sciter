@@ -562,6 +562,15 @@ Drawing: `set_fill_color` / `set_line_color` / `set_line_width` / `set_line_join
 `draw_path` / `draw_image` / `draw_text`, `push_clip_rect` / `push_clip_path` / `pop_clip`, and
 `flush`. Every shape both fills and strokes.
 
+`draw_rounded_rect` is a proc group: `[4]f32` is one radius per corner, `[4][2]f32` the engine's own
+`{rx, ry}` pairs, clockwise from the top-left. `Text_Anchor`'s numbers are a **numeric keypad** - 7/8/9
+is the top row - which is not what reading order suggests.
+
+Five of these do not work on the vendored engine and are documented at their definitions and in
+`CHANGELOG.md`'s known issues: `draw_star` paints fragments, `set_fill_mode` is `.NOTSUPPORTED` (the
+renderer is always even-odd), `world_to_screen` / `screen_to_world` ignore the transform, and
+`set_text_box` never wraps. **An unbalanced `save_state` aborts the process** when the painter returns.
+
 Paths: `create_path`, `path_move_to`, `path_line_to`, `path_arc_to`, `path_quad_to`, `path_bezier_to`,
 `path_close`.
 

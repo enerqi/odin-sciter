@@ -37,7 +37,17 @@ value_copy :: proc(dst: ^Value, src: ^Value) -> Error {
 	return value_err(sciter.api().ValueCopy(dst, src))
 }
 
-// Detaches the Value from anything sharing it, so writing to it cannot be observed elsewhere.
+// Meant to detach the Value from anything sharing it, so a write to it cannot be observed elsewhere -
+// the copy-on-write break, and the only reason the call exists.
+//
+// **It does not work on the vendored 6.0.4.9 engine.** `.OK`, and the sharing survives: after
+// `value_copy` and then `value_isolate` on either side (or both), writing a key through the copy is
+// still visible through the original, for maps and for arrays, at the top level and on a nested Value
+// pulled out with `value_get`. Measured every way round.
+//
+// So there is no cheap detach. A Value that must not be written through by somebody else has to be
+// rebuilt - walk it with `value_each` and construct a new one - or kept from being shared in the first
+// place. `value_copy` shares; `value_parse` of the same text does not.
 value_isolate :: proc(v: ^Value) -> Error {
 	return value_err(sciter.api().ValueIsolate(v))
 }
@@ -175,11 +185,18 @@ value_to_bool :: proc(v: ^Value) -> (b: bool, err: Error) {
 	return i != 0, nil
 }
 
+// **This reads `.INT` and `.BOOL` only. On a `.BIG_INT` it answers 0 and no error** - including one
+// holding 5, which would fit in an `i32` with room to spare. `value_from(i64(5))` makes a `.BIG_INT`,
+// so a number that made the round trip through an `i64` anywhere in its life reads back as zero here.
+// Use `value_to_i64`, which handles both, unless the type is known to be `.INT`.
 value_to_int :: proc(v: ^Value) -> (i: i32, err: Error) {
 	value_err(sciter.api().ValueIntData(v, &i)) or_return
 	return i, nil
 }
 
+// Reads `.INT` and `.BIG_INT` alike, and the full `i64` range round-trips - `min(i64)` and `max(i64)`
+// included. A `.FLOAT` or a `.STRING` is `.INCOMPATIBLE_TYPE` rather than being coerced, so this never
+// silently rounds or parses.
 value_to_i64 :: proc(v: ^Value) -> (i: i64, err: Error) {
 	value_err(sciter.api().ValueInt64Data(v, &i)) or_return
 	return i, nil
@@ -275,6 +292,14 @@ value_at :: proc(v: ^Value, n: int) -> (element: Value, err: Error) {
 }
 
 // The nth key of a map. The result owns a reference; `value_clear` it.
+//
+// A key is whatever was used as one - an integer, or a whole map - not necessarily a string, so read
+// `value_type` on it rather than assuming.
+//
+// Two things it does not do: an index past the end is `.OK` and an `.UNDEFINED` Value rather than an
+// error (as `value_at` also is - check the type, not the error), and on an *array* it is
+// `.INCOMPATIBLE_TYPE`. Arrays are described here as maps keyed by 0..n, and for this one call they
+// are not.
 value_key_at :: proc(v: ^Value, n: int) -> (key: Value, err: Error) {
 	value_err(sciter.api().ValueNthElementKey(v, sciter.Int(n), &key)) or_return
 	return key, nil

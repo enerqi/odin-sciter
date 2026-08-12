@@ -29,6 +29,9 @@ import "core:mem"
 
 // The engine's HIMG, HGFX, HPATH and HTEXT. All four are reference counted; the `retain_*`/`release_*`
 // pairs below are the engine's AddRef/Release.
+//
+// The two halves of each pair do not treat nil alike: `release_*(nil)` is `nil` here, because that is
+// what a `defer` after a failed create does, but `retain_*(nil)` is the engine's `.BAD_PARAM`.
 Image :: distinct sciter.Himg
 Graphics :: distinct sciter.Hgfx
 Path :: distinct sciter.Hpath
@@ -76,6 +79,9 @@ graphics_caps :: proc() -> (caps: u32, ok: bool) {
 // ---------------------------------------------------------------------------------------------------
 // Colours
 
+// The packing is the engine's, and it is `r | g<<8 | b<<16 | a<<24` on this build - `rgba(1,2,3,4)`
+// comes back as `0x04030201`. That is the *opposite* of the byte order `save_image(.RAW)` hands pixels
+// back in, which is BGRA; a colour and a pixel are not interchangeable, so go through this call.
 rgba :: proc(r, g, b, a: u8) -> Color {
 	return Color(graphics_api().RGBA(u32(r), u32(g), u32(b), u32(a)))
 }
@@ -124,7 +130,13 @@ load_image :: proc(bytes: []u8) -> (image: Image, err: Error) {
 	return Image(img), nil
 }
 
-// A snapshot of how an element is currently painted, at its current size.
+// A snapshot of how an element is currently painted, at its current size. The result carries an alpha
+// channel, and the parts of the box the element does not paint are transparent in it.
+//
+// **Never call this from inside a `.DRAW` handler.** It produces the image by painting the element, so
+// from within a paint it re-enters the paint that is already running and recurses until the stack is
+// gone - measured at ~39,500 frames of the engine's own `do_draw` before the segfault. There is no
+// error to check and nothing to catch. Take the snapshot between frames.
 image_from_element :: proc(element: Element) -> (image: Image, err: Error) {
 	img: sciter.Himg
 	gfx_err(graphics_api().imageCreateFromElement(&img, sciter.Helement(element))) or_return
@@ -220,13 +232,20 @@ release_image :: proc(image: Image) -> Error {
 //
 // The state stack holds the transform, the colours, the line width and the clip. `save_state` and
 // `restore_state` are the only way to undo a transform - there is no "set the matrix to identity".
+//
+// **Pair them with `defer`. An unbalanced save kills the process.** A painter that returns with the
+// stack still pushed aborts on the way out - `terminate called without an active exception` - with no
+// error code anywhere to react to. The other direction is harmless: see `restore_state`.
 
 save_state :: proc(gfx: Graphics) -> Error {
 	return gfx_err(graphics_api().gStateSave(sciter.Hgfx(gfx)))
 }
 
-// Pops the state stack. An unpaired restore is answered `.OK` by this engine rather than `.FAILURE`,
-// so it will not tell you when the pairing is wrong - keep them together.
+// Pops the state stack.
+//
+// Restoring more often than you saved is answered `.OK` by this engine rather than `.FAILURE`, from an
+// empty stack as well as past a matched pair, so it will never tell you the pairing is wrong that way
+// round. Getting it wrong the other way is fatal - see `save_state`.
 restore_state :: proc(gfx: Graphics) -> Error {
 	return gfx_err(graphics_api().gStateRestore(sciter.Hgfx(gfx)))
 }
@@ -251,7 +270,13 @@ set_line_cap :: proc(gfx: Graphics, cap: sciter.Sciter_Line_Cap_Type) -> Error {
 	return gfx_err(graphics_api().gLineCap(sciter.Hgfx(gfx), cap))
 }
 
-// `even_odd` false is the non-zero winding rule, which is the default.
+// `even_odd` false asks for the non-zero winding rule.
+//
+// **The vendored 6.0.4.9 engine answers `.NOTSUPPORTED` to both arguments and always fills even-odd.**
+// Measured on a path of two nested squares wound the same way: non-zero would fill the pair solid,
+// even-odd holes the inner one out, and the hole is there whatever this is set to. A shape that needs
+// non-zero has to be built so that even-odd gives the same answer - which for the common case of a
+// self-intersecting outline means winding the subpaths in opposite directions yourself.
 set_fill_mode :: proc(gfx: Graphics, even_odd: bool) -> Error {
 	return gfx_err(graphics_api().gFillMode(sciter.Hgfx(gfx), b32(even_odd)))
 }
@@ -343,6 +368,12 @@ transform :: proc(gfx: Graphics, m11, m12, m21, m22, dx, dy: f32) -> Error {
 }
 
 // Maps a point through the current transform, and back.
+//
+// **Both are no-ops on the vendored 6.0.4.9 engine.** They answer `.OK` and hand back the point
+// unchanged under `translate`, `scale`, `rotate`, `skew` and `transform` alike - measured for each.
+// Drawing *is* transformed correctly; only these two accessors ignore the matrix. So a widget that
+// needs to hit-test a mouse position against a transformed shape has to keep its own matrix and invert
+// it in Odin rather than asking the engine.
 world_to_screen :: proc(gfx: Graphics, p: [2]f32) -> (out: [2]f32, err: Error) {
 	x, y := p.x, p.y
 	gfx_err(graphics_api().gWorldToScreen(sciter.Hgfx(gfx), &x, &y)) or_return
@@ -369,21 +400,60 @@ draw_rect :: proc(gfx: Graphics, x1, y1, x2, y2: f32) -> Error {
 	return gfx_err(graphics_api().gRectangle(sciter.Hgfx(gfx), x1, y1, x2, y2))
 }
 
-// `radii` is four corner radii, clockwise from the top-left.
-draw_rounded_rect :: proc(gfx: Graphics, x1, y1, x2, y2: f32, radii: [4]f32) -> Error {
+// Draws a rectangle with rounded corners.
+//
+// **The engine reads eight numbers, not four**: an `rx` and an `ry` for each corner, clockwise from the
+// top-left. `gRoundedRectangle`'s parameter is named `radii8` in `sciter-x-graphics.h` and the header
+// comment spells out `SC_DIM[8] - four rx/ry pairs`. Passing four - one per corner - hands the engine a
+// pointer to four floats and it reads eight, so the last two corners come out of whatever was next on
+// the stack. Measured: the radii were simply ignored and the rectangle came back square.
+//
+// The two forms below are the two things a caller means. `[4]f32` is one radius per corner and is
+// expanded here; `[4][2]f32` is the engine's own `rx`/`ry` pairs, for elliptical corners.
+draw_rounded_rect_uniform :: proc(gfx: Graphics, x1, y1, x2, y2: f32, radii: [4]f32) -> Error {
+	pairs: [4][2]f32
+	for r, i in radii {
+		pairs[i] = {r, r}
+	}
+	return draw_rounded_rect_xy(gfx, x1, y1, x2, y2, pairs)
+}
+
+// `radii` is `{rx, ry}` per corner, clockwise from the top-left.
+draw_rounded_rect_xy :: proc(gfx: Graphics, x1, y1, x2, y2: f32, radii: [4][2]f32) -> Error {
 	r := radii
-	return gfx_err(graphics_api().gRoundedRectangle(sciter.Hgfx(gfx), x1, y1, x2, y2, raw_data(r[:])))
+	return gfx_err(graphics_api().gRoundedRectangle(sciter.Hgfx(gfx), x1, y1, x2, y2, &r[0][0]))
+}
+
+draw_rounded_rect :: proc {
+	draw_rounded_rect_uniform,
+	draw_rounded_rect_xy,
 }
 
 draw_ellipse :: proc(gfx: Graphics, x, y, rx, ry: f32) -> Error {
 	return gfx_err(graphics_api().gEllipse(sciter.Hgfx(gfx), x, y, rx, ry))
 }
 
-// Angles are radians.
+// Angles are radians, measured from the +x axis and sweeping towards +y - which is *down* on screen, so
+// a positive sweep goes clockwise.
+//
+// Like every other shape here it fills as well as strokes, and **what it fills is the circular segment
+// between the arc and its chord, not the pie wedge**: the centre of the ellipse stays unpainted.
+// Measured with a quarter arc - the pixel at the centre is background, the one just inside the arc is
+// filled. For a wedge, build a path: centre, line out, `path_arc_to`, close.
 draw_arc :: proc(gfx: Graphics, x, y, rx, ry, start, sweep: f32) -> Error {
 	return gfx_err(graphics_api().gArc(sciter.Hgfx(gfx), x, y, rx, ry, start, sweep))
 }
 
+// A star of `rays` points, alternating between radius `r1` and `r2`, the first point at `start` radians.
+//
+// **Broken on the vendored 6.0.4.9 engine: do not use it.** It answers `.OK` and paints a scatter of
+// disconnected line fragments - never a closed outline, and never a fill, whatever the fill colour and
+// line width are. Measured against the same star built by hand: 63 lit pixels out of 1024 against 353.
+// It is deterministic, so it is the engine's geometry that is wrong rather than uninitialised memory.
+// Any `rays` count, including 0, 1 and 2, is accepted without complaint.
+//
+// Build the outline yourself and hand it to `draw_polygon` - ten points for a five-pointed star,
+// alternating the two radii. `graphics_gallery` has the loop.
 draw_star :: proc(gfx: Graphics, x, y, r1, r2, start: f32, rays: int) -> Error {
 	return gfx_err(graphics_api().gStar(sciter.Hgfx(gfx), x, y, r1, r2, start, u32(rays)))
 }
@@ -395,6 +465,9 @@ draw_polygon :: proc(gfx: Graphics, points: [][2]f32) -> Error {
 	return gfx_err(graphics_api().gPolygon(sciter.Hgfx(gfx), (^f32)(raw_data(points)), u32(len(points))))
 }
 
+// An *open* run of line segments: unlike `draw_polygon` it neither closes the last point back to the
+// first nor fills the interior, whatever the fill colour is. Measured on a right angle - the polygon
+// form paints the triangle solid, this one paints two strokes.
 draw_polyline :: proc(gfx: Graphics, points: [][2]f32) -> Error {
 	if len(points) == 0 {
 		return sciter.Graphin_Result.BAD_PARAM
@@ -497,7 +570,18 @@ path_line_to :: proc(path: Path, x, y: f32, relative := false) -> Error {
 }
 
 // An SVG-style elliptical arc to (x, y): the ellipse is `rx` by `ry`, rotated by `angle` radians, and
-// the two flags pick which of the four possible arcs is meant.
+// the two flags are meant to pick which of the four possible arcs is intended.
+//
+// **On this engine there are two, not four, and one combination draws nothing.** Measured between two
+// endpoints a quarter turn apart one way and three quarters the other:
+//
+//   - `clockwise = true,  large_arc = true`  - the long way round. Works.
+//   - `clockwise = false, large_arc = false` - the short way round. Works.
+//   - `clockwise = false, large_arc = true`  - the short way round again; `large_arc` is ignored.
+//   - `clockwise = true,  large_arc = false` - **an empty path**. `.OK`, and nothing is drawn.
+//
+// So `clockwise` is what picks the arc, and `large_arc` has to agree with it. A path that silently
+// paints nothing is usually this.
 path_arc_to :: proc(
 	path: Path,
 	x, y, angle, rx, ry: f32,
@@ -552,6 +636,9 @@ release_path :: proc(path: Path) -> Error {
 
 // Lays `text` out with `element`'s own style, or with the style of `class_name` as it would apply to
 // that element.
+//
+// A `class_name` that matches no rule is not an error - the text comes back in the element's own style.
+// So is a nil element `.BAD_PARAM`, which is the only failure worth checking for.
 create_text :: proc(element: Element, text: string, class_name := "") -> (out: Text, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	class: [^]u16
@@ -566,6 +653,14 @@ create_text :: proc(element: Element, text: string, class_name := "") -> (out: T
 }
 
 // The same, with a style declaration instead of a class - "font-size: 24px; color: #f00".
+//
+// It is the same layout the class form gives for equivalent CSS: `create_text(el, s, "big")` against a
+// `.big { font-size: 32px }` rule and `create_text_with_style(el, s, "font-size: 32px")` measure
+// identically, down to the ascent.
+//
+// **Nonsense in the declaration is swallowed.** `"this is not css ;;;"` answers `.OK` with a usable
+// handle laid out in the element's own style, so a typo in a style string shows up as text that is
+// simply the wrong size rather than as an error.
 create_text_with_style :: proc(element: Element, text: string, style: string) -> (out: Text, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	s := utf16_from_string(style, context.temp_allocator)
@@ -612,23 +707,33 @@ text_metrics :: proc(text: Text) -> (metrics: Text_Metrics, err: Error) {
 	return metrics, nil
 }
 
-// Wraps the text into a box. Do this before `draw_text` for anything that has to wrap; the metrics
-// afterwards describe the wrapped layout.
+// Asks for the text to be wrapped into a box.
+//
+// **A no-op on the vendored 6.0.4.9 engine.** It answers `.OK` and nothing moves: `text_metrics`
+// reports the same `min_width`, `max_width` and `lines = 1` for every width from 200 down to 20 on a
+// string whose tightest wrap is 35 wide, and the pixels `draw_text` puts down are identical with and
+// without it. Text laid out through this API is one line, so anything that has to wrap has to be split
+// into several `Text` objects and drawn a line at a time.
 set_text_box :: proc(text: Text, width, height: f32) -> Error {
 	return gfx_err(graphics_api().textSetBox(sciter.Htext(text), width, height))
 }
 
 // Where (x, y) sits relative to the text block.
+//
+// **The numbers are a numeric keypad, not reading order** - `sciter-x-graphics.h` says "position (1..9
+// on MUMPAD)", so 7/8/9 is the *top* row and 1/2/3 the bottom, the way the keys are arranged. This
+// package had them upside down until it was measured: drawing at `1` put the text above the point, not
+// below it. The horizontal half was right either way, which is what let it go unnoticed.
 Text_Anchor :: enum u32 {
-	Top_Left      = 1,
-	Top_Center    = 2,
-	Top_Right     = 3,
+	Bottom_Left   = 1,
+	Bottom_Center = 2,
+	Bottom_Right  = 3,
 	Middle_Left   = 4,
 	Middle_Center = 5,
 	Middle_Right  = 6,
-	Bottom_Left   = 7,
-	Bottom_Center = 8,
-	Bottom_Right  = 9,
+	Top_Left      = 7,
+	Top_Center    = 8,
+	Top_Right     = 9,
 }
 
 draw_text :: proc(gfx: Graphics, text: Text, x, y: f32, anchor := Text_Anchor.Top_Left) -> Error {
@@ -652,6 +757,16 @@ release_text :: proc(text: Text) -> Error {
 // Wrapped handles arrive in script as `Graphics`, `Image`, `Path` and `Text` objects, so an Odin
 // procedure exposed with `value_from_function` can take or return them. The wrapped `Value` is a
 // `.RESOURCE`, and clearing it releases the reference it holds.
+//
+// Two measured rules apply to all eight:
+//
+//   - **`value_to_*` does not fail on the wrong type. Check the handle, not the error.** Unwrapping a
+//     `Value` holding an integer answers `.OK` and a nil handle - so code that only tests `err` walks
+//     off with nothing and finds out at the next call. Every `value_to_*` here can hand back
+//     `nil, nil`.
+//   - `value_from_*` of a nil handle is `.BAD_PARAM` and leaves the `Value` `.UNDEFINED`.
+//
+// The wrap does add a reference: clearing the `Value` leaves the original handle usable.
 
 value_from_graphics :: proc(gfx: Graphics) -> (v: Value, err: Error) {
 	value_init(&v)

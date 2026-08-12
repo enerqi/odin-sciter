@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twenty-one examples, 183 tests and eleven
+> engine, there is an Odin-shaped layer on top of them, and twenty-three examples, 309 tests and eleven
 > guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -130,8 +130,10 @@ Run one with `just example NAME`.
 | `behavior` | Driving the built-in widgets — a real click, hit testing, and a behavior method of your own |
 | `input` | Real mouse and keyboard input from Odin, animation frames, and an element's script object |
 | `task_list` | **A whole small application** — an Odin model, one render, keyboard commands, saved state, no script |
+| `workbench` | **A harder one** — 10,000 rows virtualised, editable, live-updating, with an Odin-painted widget per row. The evidence behind [`VDOM.md`](docs/VDOM.md) |
 | `worker_thread` | Getting work off the UI thread and its results back on, with `post_callback` |
 | `graphics` | Drawing with the engine's renderer: a custom-painted element, and an offscreen image |
+| `graphics_gallery` | Every shape, gradient, transform, clip, path and text call, drawn once and asserted once — and the five places the renderer is wrong |
 | `video` | Frames generated in Odin, streamed into a `<video>` — the one C++ vtable in the whole API |
 | `named_behavior` | `behavior: my-gauge` in CSS — the stylesheet, not a call site, choosing which elements get Odin |
 | `drag_and_drop` | Accepting a system drop through the `.EXCHANGE` event group |

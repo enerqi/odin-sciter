@@ -85,13 +85,31 @@ for _ in 0 ..< 12 {
 sciter_app.restore_state(gfx)
 ```
 
-An unpaired `restore_state` answers `.OK` on this engine rather than `.FAILURE`, so it will not tell you
-when the pairing is wrong.
+**`world_to_screen` and `screen_to_world` do not work.** They answer `.OK` and hand the point straight
+back under translate, scale, rotate, skew and a full matrix alike. Drawing *is* transformed correctly —
+it is only these two accessors that lie — so a widget that has to turn a mouse position into shape
+coordinates must keep and invert its own matrix rather than asking the engine.
+
+Nor can the fill rule be changed: `set_fill_mode` answers `.NOTSUPPORTED` and the renderer is always
+even-odd. A shape that needs non-zero has to be built so both rules agree on it.
+
+Restoring more often than you saved answers `.OK` on this engine rather than `.FAILURE`, from an empty
+stack included, so it will not tell you when the pairing is wrong that way round. **The other direction
+is fatal: a painter that returns with the stack still pushed aborts the process** - no error code, no
+chance to react. Pair them with `defer`.
 
 **Every shape both fills and strokes.** `draw_rect`, `draw_ellipse`, `draw_arc`, `draw_star`,
 `draw_polygon`, `draw_polyline`, `draw_rounded_rect` and `draw_path` all use the fill colour *and* the
 line colour, so setting only one leaves the other at whatever the last drawing used. Set both, every
 time — it is the most common way a drawing comes out wrong.
+
+Two exceptions worth knowing before you reach for them. `draw_polyline` is open: it neither closes back
+to the first point nor fills. And `draw_arc` closes with a *chord*, so what it fills is the circular
+segment rather than the pie wedge — a wedge needs a path.
+
+**`draw_star` is broken on this engine** and paints a scatter of disconnected fragments. Build the
+points and use `draw_polygon`; `examples/graphics_gallery.odin` has the loop, and draws the two side by
+side so the difference is visible.
 
 Gradients replace the flat colour until a colour is set again: `set_fill_gradient_linear`,
 `set_fill_gradient_radial` and the `set_line_*` pair, each taking `[]Color_Stop` with offsets 0..1.
@@ -115,8 +133,11 @@ sciter_app.path_close(path)
 sciter_app.draw_path(gfx, path, .FILL_AND_STROKE)
 ```
 
-`path_arc_to` is SVG's elliptical arc: a destination, two radii, a rotation, and the two flags that pick
-which of the four possible arcs is meant. Every segment takes `relative`, which means "from where the
+`path_arc_to` is SVG's elliptical arc: a destination, two radii, a rotation, and two flags that are
+meant to pick which of the four possible arcs you want. **On this engine there are two, and one
+combination draws nothing**: `clockwise` picks the arc, `large_arc` has to agree with it, and
+`clockwise = true` with `large_arc = false` produces an empty path with no error. A path that silently
+paints nothing is usually this. Every segment takes `relative`, which means "from where the
 pen is" rather than "in path coordinates".
 
 ## Text
@@ -129,12 +150,23 @@ text, _ := sciter_app.create_text(element, "42.7 °C")
 defer sciter_app.release_text(text)
 
 m, _ := sciter_app.text_metrics(text)          // min_width, max_width, height, ascent, descent, lines
-sciter_app.set_text_box(text, 200, 100)        // wrap it, then measure again
 sciter_app.draw_text(gfx, text, x, y, .Middle_Center)
 ```
 
 `create_text_with_style(element, "…", "font-size: 24px; color: #f00")` takes a declaration instead of
-the element's own style, and `create_text(element, "…", class_name)` takes a class.
+the element's own style, and `create_text(element, "…", class_name)` takes a class. The two are the same
+mechanism: equivalent CSS measures identically, down to the ascent. Neither complains about input it
+cannot use — a class that matches no rule and a declaration that will not parse both come back laid out
+in the element's own style, so a typo shows up as text of the wrong size and nowhere else.
+
+**`set_text_box` does nothing on this engine**, which is why it is not in the snippet above: every width
+from 200 down to 20 leaves `lines = 1` and the metrics untouched on a string whose tightest wrap is 35
+wide, and the drawn pixels are identical with and without it. Text laid out through this API is one
+line; anything that has to wrap has to be split into several `Text` objects and drawn a line at a time.
+
+**`Text_Anchor`'s numbers are a numeric keypad, not reading order** — `sciter-x-graphics.h` says
+"position (1..9 on MUMPAD)", so 7/8/9 is the *top* row and 1 is bottom-left. This package had the enum
+upside down until each of the nine was measured by drawing at a known point and finding the ink.
 
 ## Images
 
@@ -168,10 +200,22 @@ Every drawing test in `examples/graphics.odin` works exactly this way, and none 
 `value_to_graphics` and friends unwrap the other way, for a handle arriving from script. Combined with
 `value_from_function`, that is an Odin procedure a document can call to draw with.
 
+**Check the handle, not the error.** Unwrapping a `Value` holding something else — an integer, a string
+— answers `.OK` and a nil handle, so code that only tests `err` walks off with nothing and finds out at
+the next call. The other direction does fail properly: wrapping a nil handle is `.BAD_PARAM` and leaves
+the `Value` undefined. The wrap takes a reference of its own, so clearing the `Value` leaves the
+original handle usable.
+
 ## Reference counting
 
 `Image`, `Graphics`, `Path` and `Text` are all reference counted. Each has a `retain_*` / `release_*`
 pair, and releasing nil is not an error — which is what makes `defer release_path(path)` safe straight
-after a create that may have failed.
+after a create that may have failed. `retain_*(nil)` is not given the same treatment: it is the engine's
+`.BAD_PARAM`.
+
+One more trap on the image side: **`image_from_element` must not be called from inside a `.DRAW`
+handler.** It produces the image by painting the element, so from within a paint it re-enters the paint
+already running and recurses until the stack is gone — ~39,500 frames deep when it was measured, and a
+segfault rather than anything catchable. Snapshot between frames.
 
 You do not release the `Graphics` the engine hands you in `paint_image` or a `DRAW` event; it owns it.

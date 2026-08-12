@@ -39,6 +39,16 @@ DOC :: `<html>
     <li class="todo" data-id="4">vendor the Windows binary</li>
   </ul>
   <div id="summary">(Odin fills this in)</div>
+
+  <!-- Three elements the node tests need, and which say why they are shaped the way they are.
+       #tight is written on one line: no whitespace between the spans, so its node children and its
+       element children are the same two. #rich has an inline child, to tell "set the text of a text
+       node" apart from "set the text of an element node". #commented carries a comment from the
+       source. -->
+  <div id="tight"><span>a</span><span>b</span></div>
+  <div id="rich">beta <b>bold</b> tail</div>
+  <div id="commented">before<!-- from the source -->after</div>
+
   <div id="scroller">
     <p>one</p><p>two</p><p>three</p><p>four</p>
     <p>five</p><p>six</p><p>seven</p><p>eight</p>
@@ -400,6 +410,370 @@ test_node_insert :: proc(t: ^testing.T) {
 	after, terr := sciter_app.text(summary, context.temp_allocator)
 	testing.expect_value(t, terr, nil)
 	testing.expect(t, strings.has_suffix(after, " appended"), after)
+}
+
+// **The first thing the node view surprises people with.** `<ul id="tasks">` is written across five
+// lines, so between every pair of `<li>`s there is a text node holding a newline and some indentation.
+// The node count is five where the element count is four - and code that indexes `node_child` expecting
+// elements picks up whitespace instead.
+//
+// Which is why the document has `#tight` in it: the same structure written on one line has no
+// whitespace nodes at all, so this is a property of the *source text*, not of the DOM.
+@(test)
+test_node_children_include_the_whitespace_between_the_elements :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	node, _ := sciter_app.node_from_element(list)
+
+	elements, ecerr := sciter_app.child_count(list)
+	testing.expect_value(t, ecerr, nil)
+	testing.expect_value(t, elements, 4)
+
+	nodes, ncerr := sciter_app.node_child_count(node)
+	testing.expect_value(t, ncerr, nil)
+	testing.expect_value(t, nodes, 9) // four <li>, and the newline before, between and after them
+
+	// Odd indices are the elements, even ones the whitespace - but only for this document. Read the
+	// type rather than relying on the arithmetic.
+	kinds: [dynamic]sciter.Node_Type
+	defer delete(kinds)
+	for i in 0 ..< nodes {
+		child, err := sciter_app.node_child(node, i)
+		testing.expect_value(t, err, nil)
+		kind, _ := sciter_app.node_type(child)
+		append(&kinds, kind)
+	}
+	testing.expect_value(t, kinds[0], sciter.Node_Type.TEXT)
+	testing.expect_value(t, kinds[1], sciter.Node_Type.ELEMENT)
+	testing.expect_value(t, kinds[8], sciter.Node_Type.TEXT)
+
+	// The same markup on one line: no whitespace, so the two counts agree.
+	tight, terr := sciter_app.select_first(root, "#tight")
+	testing.expect_value(t, terr, nil)
+	tight_node, _ := sciter_app.node_from_element(tight)
+	tight_nodes, _ := sciter_app.node_child_count(tight_node)
+	tight_elements, _ := sciter_app.child_count(tight)
+	testing.expect_value(t, tight_nodes, 2)
+	testing.expect_value(t, tight_elements, 2)
+}
+
+// An index past the end is `.INVALID_PARAMETER`, not the `.Not_Found` the rest of the walk uses. The
+// difference is deliberate: running off the end of a sibling chain is how a loop finishes, and asking
+// for the ninth of three children is a mistake.
+@(test)
+test_asking_for_a_child_that_is_not_there_is_a_bad_parameter :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	tight, _ := sciter_app.select_first(root, "#tight")
+	node, _ := sciter_app.node_from_element(tight)
+
+	count, _ := sciter_app.node_child_count(node)
+	_, err := sciter_app.node_child(node, count)
+	testing.expect_value(t, err, sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER))
+}
+
+// The walk terminates on `.Not_Found` at both ends, and a text node is a leaf: no children, and
+// `node_last_child` says so rather than answering a nil handle.
+@(test)
+test_the_node_walk_ends_with_not_found_at_both_ends :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	tight, _ := sciter_app.select_first(root, "#tight")
+	node, _ := sciter_app.node_from_element(tight)
+
+	first, ferr := sciter_app.node_first_child(node)
+	testing.expect_value(t, ferr, nil)
+	last, lerr := sciter_app.node_last_child(node)
+	testing.expect_value(t, lerr, nil)
+	testing.expect(t, first != last, "#tight has two children, so these are different nodes")
+
+	// Walking back from the end reaches the start, which is what `node_prev_sibling` is for.
+	back, berr := sciter_app.node_prev_sibling(last)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, back, first)
+
+	_, before_first := sciter_app.node_prev_sibling(first)
+	testing.expect_value(t, before_first, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+	_, after_last := sciter_app.node_next_sibling(last)
+	testing.expect_value(t, after_last, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	// A text node is a leaf.
+	span_text, _ := sciter_app.node_first_child(first)
+	kind, _ := sciter_app.node_type(span_text)
+	testing.expect_value(t, kind, sciter.Node_Type.TEXT)
+
+	leaf_count, cerr := sciter_app.node_child_count(span_text)
+	testing.expect_value(t, cerr, nil)
+	testing.expect_value(t, leaf_count, 0)
+	_, lferr := sciter_app.node_last_child(span_text)
+	testing.expect_value(t, lferr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+}
+
+// Comments are nodes like any other: they survive being read out of the source, being built in Odin and
+// inserted, and a `set_html` round trip. What they do *not* do is show up in the flattened text, which
+// is the property that makes them usable as markers in a document.
+@(test)
+test_comments_are_nodes_that_survive_a_round_trip_but_never_appear_in_the_text :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	host, herr := sciter_app.select_first(root, "#commented")
+	testing.expect_value(t, herr, nil)
+	node, _ := sciter_app.node_from_element(host)
+
+	// The one that came from the source.
+	from_source, serr := sciter_app.node_child(node, 1)
+	testing.expect_value(t, serr, nil)
+	kind, _ := sciter_app.node_type(from_source)
+	testing.expect_value(t, kind, sciter.Node_Type.COMMENT)
+	body, _ := sciter_app.node_text(from_source, context.temp_allocator)
+	testing.expect_value(t, body, " from the source ")
+
+	// One built here. It is a `.COMMENT` before it is ever inserted - a detached node is a real node.
+	made, merr := sciter_app.make_comment_node(" made in Odin ")
+	testing.expect_value(t, merr, nil)
+	made_kind, _ := sciter_app.node_type(made)
+	testing.expect_value(t, made_kind, sciter.Node_Type.COMMENT)
+	made_text, _ := sciter_app.node_text(made, context.temp_allocator)
+	testing.expect_value(t, made_text, " made in Odin ")
+
+	testing.expect_value(t, sciter_app.node_insert(node, .APPEND, made), nil)
+
+	// It is in the markup...
+	markup, _ := sciter_app.html(host, false, context.temp_allocator)
+	testing.expect(t, strings.contains(markup, "<!-- made in Odin -->"), markup)
+
+	// ...and not in the text, which is the whole point of a comment.
+	flat, _ := sciter_app.text(host, context.temp_allocator)
+	testing.expect_value(t, flat, "beforeafter")
+
+	// And a comment written into `set_html` comes back as a node rather than being eaten.
+	testing.expect_value(t, sciter_app.set_html(host, "x<!--kept-->y"), nil)
+	after, _ := sciter_app.node_child_count(node)
+	testing.expect_value(t, after, 3)
+	middle, _ := sciter_app.node_child(node, 1)
+	middle_kind, _ := sciter_app.node_type(middle)
+	testing.expect_value(t, middle_kind, sciter.Node_Type.COMMENT)
+	middle_text, _ := sciter_app.node_text(middle, context.temp_allocator)
+	testing.expect_value(t, middle_text, "kept")
+}
+
+// Setting the text of a *text* node edits the words around an inline child and leaves the child alone,
+// which is the one thing `set_text(element)` cannot do - it would throw the `<b>` away.
+//
+// **And on an element node the same call does nothing at all**, silently: `.OK`, and the markup, the
+// children and the text all unchanged. It pairs with `node_text`, which reports `""` for an element.
+// Both work on the node's own text, and an element has none - so a `node_set_text` that appears to be
+// ignored is usually aimed one node too high.
+@(test)
+test_setting_text_on_a_text_node_spares_its_siblings_and_on_an_element_node_does_nothing :: proc(
+	t: ^testing.T,
+) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	rich, rerr := sciter_app.select_first(root, "#rich")
+	testing.expect_value(t, rerr, nil)
+	node, _ := sciter_app.node_from_element(rich)
+
+	// The text node in front of the <b>.
+	leading, lerr := sciter_app.node_first_child(node)
+	testing.expect_value(t, lerr, nil)
+	testing.expect_value(t, sciter_app.node_set_text(leading, "CHANGED "), nil)
+
+	markup, _ := sciter_app.html(rich, false, context.temp_allocator)
+	testing.expectf(t, strings.contains(markup, "<b>"), "the inline child should have survived: %s", markup)
+	testing.expect(t, strings.has_prefix(markup, "CHANGED "), markup)
+
+	// The same call on the element's own node: accepted, and ignored.
+	before_count, _ := sciter_app.node_child_count(node)
+	testing.expect_value(t, sciter_app.node_set_text(node, "flattened"), nil)
+
+	after, _ := sciter_app.html(rich, false, context.temp_allocator)
+	testing.expect_value(t, after, markup)
+	after_count, _ := sciter_app.node_child_count(node)
+	testing.expect_value(t, after_count, before_count)
+
+	// An element node reports no text of its own, which is the same rule read the other way.
+	own, oerr := sciter_app.node_text(node, context.temp_allocator)
+	testing.expect_value(t, oerr, nil)
+	testing.expect_value(t, own, "")
+
+	// `set_text` on the *element* is the call that does replace the content, markup and all.
+	testing.expect_value(t, sciter_app.set_text(rich, "via set_text"), nil)
+	replaced, _ := sciter_app.html(rich, false, context.temp_allocator)
+	testing.expect_value(t, replaced, "via set_text")
+}
+
+// **The one that contradicts both the name and the header.** `finalize = false` reads like a detach, and
+// a detach ought to be half of a move. It is not: the node comes out of the document and can never go
+// back in. Every route was measured - into the old parent, into a new one, relative to a sibling, with
+// and without a `node_add_ref` taken beforehand - and every one is `.INVALID_HANDLE`.
+//
+// The handle is not *dead*, which is what makes this easy to miss: it still reports its type and its
+// text. It is only unusable as something to insert.
+@(test)
+test_a_node_removed_without_finalizing_can_be_read_but_never_reinserted :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	tight, _ := sciter_app.select_first(root, "#tight")
+	summary, _ := sciter_app.select_first(root, "#summary")
+	parent, _ := sciter_app.node_from_element(tight)
+	elsewhere, _ := sciter_app.node_from_element(summary)
+
+	before, _ := sciter_app.node_child_count(parent)
+	victim, _ := sciter_app.node_child(parent, 0)
+	first_text, _ := sciter_app.node_text(victim, context.temp_allocator)
+
+	// Take a reference first, which is the thing that ought to make this safe.
+	testing.expect_value(t, sciter_app.node_add_ref(victim), nil)
+	testing.expect_value(t, sciter_app.node_remove(victim, finalize = false), nil)
+
+	after, _ := sciter_app.node_child_count(parent)
+	testing.expect_value(t, after, before - 1)
+
+	// Still readable.
+	kind, kerr := sciter_app.node_type(victim)
+	testing.expect_value(t, kerr, nil)
+	testing.expect_value(t, kind, sciter.Node_Type.ELEMENT)
+	still, terr := sciter_app.node_text(victim, context.temp_allocator)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, still, first_text)
+
+	// And with no parent, which is the only part that behaves as the name suggests.
+	_, perr := sciter_app.node_parent(victim)
+	testing.expect_value(t, perr, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+
+	// But not insertable, by any route.
+	invalid := sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE)
+	testing.expect_value(t, sciter_app.node_insert(parent, .APPEND, victim), invalid)
+	testing.expect_value(t, sciter_app.node_insert(elsewhere, .APPEND, victim), invalid)
+	remaining, _ := sciter_app.node_child(parent, 0)
+	testing.expect_value(t, sciter_app.node_insert(remaining, .BEFORE, victim), invalid)
+	testing.expect_value(t, sciter_app.node_insert(remaining, .AFTER, victim), invalid)
+
+	testing.expect_value(t, sciter_app.node_release(victim), nil)
+}
+
+// The same rule from the other side: a node built here goes into the document once. There is no
+// "insert this everywhere" and no implicit clone.
+@(test)
+test_a_node_can_be_inserted_once_and_never_again :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	tight, _ := sciter_app.select_first(root, "#tight")
+	summary, _ := sciter_app.select_first(root, "#summary")
+	first, _ := sciter_app.node_from_element(tight)
+	second, _ := sciter_app.node_from_element(summary)
+
+	made, err := sciter_app.make_text_node("once")
+	testing.expect_value(t, err, nil)
+
+	testing.expect_value(t, sciter_app.node_insert(first, .APPEND, made), nil)
+	testing.expect_value(t, sciter_app.node_insert(second, .APPEND, made), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
+
+	// It went to the first one and stayed there.
+	a, _ := sciter_app.text(tight, context.temp_allocator)
+	b, _ := sciter_app.text(summary, context.temp_allocator)
+	testing.expect(t, strings.has_suffix(a, "once"), a)
+	testing.expect(t, !strings.contains(b, "once"), b)
+}
+
+// `finalize = true` destroys the node, so the handle is gone rather than merely uninsertable. Nothing
+// here touches it afterwards, deliberately: that is the free-out-from-under hazard `remove_element` has
+// as well, and reading it back would be the bug rather than the test.
+@(test)
+test_finalizing_a_removed_node_takes_it_out_of_the_document :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	node, _ := sciter_app.node_from_element(list)
+
+	before, _ := sciter_app.node_child_count(node)
+	elements_before, _ := sciter_app.child_count(list)
+
+	victim, _ := sciter_app.node_child(node, 1) // the first <li>
+	testing.expect_value(t, sciter_app.node_remove(victim, finalize = true), nil)
+
+	after, _ := sciter_app.node_child_count(node)
+	elements_after, _ := sciter_app.child_count(list)
+	testing.expect_value(t, after, before - 1)
+	testing.expect_value(t, elements_after, elements_before - 1)
+
+	// The document really lost it: the first task's text is not in there any more.
+	markup, _ := sciter_app.html(list, false, context.temp_allocator)
+	testing.expect(t, !strings.contains(markup, "vendor the headers"), markup)
+}
+
+// The reference counting pair, and the one asymmetry in it: a nil handle is `.INVALID_HANDLE` here
+// where the rest of the node API answers `.INVALID_PARAMETER`. A detached node - one this code owns
+// outright - takes and drops references the same way one in the document does.
+@(test)
+test_node_references_can_be_taken_and_dropped_on_both_kinds_of_node :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	list, _ := sciter_app.select_first(root, "#tasks")
+	node, _ := sciter_app.node_from_element(list)
+
+	// A node in the document. The handle was not AddRef'ed on the way out, so this is what makes it
+	// safe to keep past the moment the document might drop it.
+	testing.expect_value(t, sciter_app.node_add_ref(node), nil)
+	testing.expect_value(t, sciter_app.node_release(node), nil)
+
+	// One this code made and has not inserted.
+	detached, err := sciter_app.make_text_node("mine")
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, sciter_app.node_add_ref(detached), nil)
+	testing.expect_value(t, sciter_app.node_release(detached), nil)
+	testing.expect_value(t, sciter_app.node_release(detached), nil)
+
+	testing.expect_value(t, sciter_app.node_add_ref(nil), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
+	testing.expect_value(t, sciter_app.node_release(nil), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
+}
+
+// Everything else in the node API refuses a nil handle rather than dereferencing it. Table-driven
+// because the interesting thing is that the whole surface agrees.
+@(test)
+test_every_node_call_refuses_a_nil_handle :: proc(t: ^testing.T) {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	bad := sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER)
+
+	_, count_err := sciter_app.node_child_count(nil)
+	testing.expect_value(t, count_err, bad)
+	_, child_err := sciter_app.node_child(nil, 0)
+	testing.expect_value(t, child_err, bad)
+	_, first_err := sciter_app.node_first_child(nil)
+	testing.expect_value(t, first_err, bad)
+	_, last_err := sciter_app.node_last_child(nil)
+	testing.expect_value(t, last_err, bad)
+	_, next_err := sciter_app.node_next_sibling(nil)
+	testing.expect_value(t, next_err, bad)
+	_, prev_err := sciter_app.node_prev_sibling(nil)
+	testing.expect_value(t, prev_err, bad)
+	_, type_err := sciter_app.node_type(nil)
+	testing.expect_value(t, type_err, bad)
+
+	testing.expect_value(t, sciter_app.node_set_text(nil, "x"), bad)
+	testing.expect_value(t, sciter_app.node_remove(nil), bad)
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2442,3 +2816,175 @@ test_element_asset_finds_a_behavior :: proc(t: ^testing.T) {
 	_, no_such := sciter_app.element_asset(edit, "no-such-behavior")
 	testing.expect_value(t, no_such, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The window's own stylesheet, and its state
+//
+// `set_css` is the third stylesheet in the picture, after the document's `<style>` and the engine-wide
+// master sheet the tests above cover. It behaves like neither of them.
+//
+// None of these show a window. That is not squeamishness: a shown window on X11 here segfaults inside
+// the engine's input-method handling unless `XMODIFIERS=@im=none` is set, and the test recipe does not
+// set it. So what is pinned is everything that can be reached without one.
+
+// **`set_css` replaces the document's own stylesheet - it does not layer under it.** The document says
+// `#target { color: #222222 }` and a `set_css` that never mentions `#target` leaves it at the inherited
+// default, which it could not do if the document's rule were still in play.
+//
+// That makes the name misleading: this is not "the window's contribution to the cascade", it is "the
+// stylesheet, instead of the document's".
+@(test)
+test_a_window_stylesheet_replaces_the_documents_own :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	// The document's rule, before anything else happens. (`@media screen` wins over the bare rule.)
+	testing.expect_value(t, styled_color(window), "#00FF00")
+
+	// A window sheet that says nothing at all about #target.
+	testing.expect_value(t, sciter_app.set_css(window, "div { color: #123456; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+
+	// If the document's sheet still applied, this would be #00FF00.
+	testing.expect_value(t, styled_color(window), "#000000")
+
+	// And a rule here does apply, so the sheet is not simply being ignored.
+	testing.expect_value(t, sciter_app.set_css(window, "#target { color: #0000FF; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#0000FF")
+}
+
+// The corollary, and the reason the layering matters: `!important` in the document does not save it.
+// A plain rule in the window sheet beats it, because the document's sheet is not in the cascade at all
+// any more. An inline style still wins - that is the only thing that does.
+@(test)
+test_an_important_document_rule_loses_to_a_plain_window_rule :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+
+	IMPORTANT :: `<html><head><style>
+	  #target { color: #00FF00 !important; }
+	</style></head><body><p id="target">styled</p></body></html>`
+
+	testing.expect_value(t, sciter_app.load_html(window, IMPORTANT), nil)
+	testing.expect_value(t, styled_color(window), "#00FF00")
+
+	testing.expect_value(t, sciter_app.set_css(window, "#target { color: #0000FF; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#0000FF")
+
+	// An inline style outranks the window sheet, as it outranks everything.
+	testing.expect_value(t, sciter_app.set_style(styled_target(window), "color", "#FF00FF"), nil)
+	testing.expect_value(t, styled_color(window), "#FF00FF")
+}
+
+// There is one window sheet, not a stack: each call replaces the last. And a reload drops it - unlike
+// the master sheet, which belongs to the engine and survives. So a window sheet has to be re-applied
+// after every `load_html`, which is the same rule the document's globals have.
+@(test)
+test_a_window_stylesheet_is_replaced_by_the_next_one_and_dropped_by_a_reload :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	testing.expect_value(t, sciter_app.set_css(window, "#target { color: #0000FF; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#0000FF")
+
+	// Replaced, not merged: the first rule is gone rather than being overridden.
+	testing.expect_value(t, sciter_app.set_css(window, "p { letter-spacing: 1px; }"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#000000")
+
+	// And a reload puts the document back in charge.
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect_value(t, styled_color(window), "#00FF00")
+}
+
+// Empty CSS is refused, the same way `set_master_css("")` is. **Unparseable CSS is not** - it is
+// accepted, and it still replaces the document's sheet, so the document ends up with no styling and
+// nothing anywhere says why.
+@(test)
+test_empty_css_is_refused_but_nonsense_css_is_accepted_and_still_replaces :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	testing.expect_value(
+		t,
+		sciter_app.set_css(window, ""),
+		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
+	)
+	testing.expect_value(t, styled_color(window), "#00FF00") // unchanged
+
+	testing.expect_value(t, sciter_app.set_css(window, "this is not css {{{"), nil)
+	sciter_app.update_element(styled_target(window), render = true)
+	testing.expect_value(t, styled_color(window), "#000000")
+}
+
+// A window that has been created and never shown reports `.CLOSED`, not `.HIDDEN`. Worth knowing
+// before writing `if window_state(w) == .CLOSED { ... }` and meaning "gone".
+@(test)
+test_a_window_that_was_never_shown_reports_itself_closed :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+
+	testing.expect_value(t, sciter_app.window_state(window), sciter.Sciter_Window_State.CLOSED)
+
+	// It is perfectly usable in that state - a document loads, and the DOM answers.
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+	testing.expect(t, styled_target(window) != nil)
+	testing.expect_value(t, sciter_app.window_state(window), sciter.Sciter_Window_State.CLOSED)
+}
+
+// **`window_state` reports almost nothing.** `.MINIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are accepted
+// and not reflected; what a window manager does about them is its own business, and the engine will
+// not tell you either way. So this is a characterization test in the weak sense: what it pins is that
+// the calls are harmless and the window is still usable afterwards, because that is all that held
+// across the arrangements measured.
+//
+// Keep your own flag if the application needs to know whether it is minimised.
+@(test)
+test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	for state in ([]sciter.Sciter_Window_State{.MINIMIZED, .MAXIMIZED, .FULL_SCREEN, .HIDDEN, .SHOWN}) {
+		sciter_app.set_window_state(window, state)
+		sciter_app.heartbeat()
+
+		// Whatever it now claims to be, it is one of the two states this engine reports.
+		reported := sciter_app.window_state(window)
+		testing.expectf(
+			t,
+			reported == .SHOWN || reported == .CLOSED,
+			"after asking for %v the window reported %v, which this engine was not measured to do",
+			state,
+			reported,
+		)
+	}
+
+	// `hide` and `activate` are the same call under other names, and equally harmless.
+	sciter_app.hide(window)
+	sciter_app.activate(window)
+	sciter_app.activate(window, false)
+	sciter_app.heartbeat()
+
+	// The document came through all of it untouched, which is the part that actually matters.
+	testing.expect_value(t, styled_color(window), "#00FF00")
+}
+
+// **`close` is not tested here, and cannot be.** Closing a secondary window that has a document loaded
+// crashes the engine on the next turn of the pump - the segfault is inside its own `check_paint`,
+// walking down to `GetWindowSizeX11` on a window it has destroyed but left on the paint list. It is not
+// merely that the closing test dies: the closed window stays on that list for the rest of the process,
+// so *every later test in the binary* segfaults too, whether or not it has anything to do with windows.
+//
+// Reproduced in four lines - `create_window`, `load_html`, `close`, `heartbeat` - and written up on
+// `close` in `window.odin`, along with what to do instead. A window that never had a document closes
+// cleanly, which is the only reason `close` is reachable at all.
+//
+// Measured on the way to that: `close` does nothing until the pump runs. Immediately after the call the
+// handle still answers and `root` still succeeds.
