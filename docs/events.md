@@ -101,13 +101,13 @@ if be, ok := sciter_app.behavior_event(event); ok {
 if me, ok := sciter_app.mouse_event(event); ok {
 	// me.code    - .MOUSE_DOWN, .MOUSE_MOVE, ...
 	// me.pos     - [2]i32, relative to the target element
-	// me.buttons - Mouse_Buttons
+	// me.buttons - Mouse_Buttons, a set: `.MAIN_MOUSE_BUTTON in me.buttons`
 }
 
 if ke, ok := sciter_app.key_event(event); ok {
 	// ke.code      - .KEY_DOWN, .KEY_UP, .KEY_CHAR
 	// ke.key_code  - a virtual key for DOWN/UP, a character for CHAR
-	// ke.modifiers - Keyboard_States
+	// ke.modifiers - Keyboard_States, a set: `sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {}`
 }
 
 if de, ok := sciter_app.draw_event(event); ok {
@@ -416,8 +416,8 @@ seen them until the pump turns.
 so the intrinsic behaviors run:
 
 ```odin
-sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.Main})
-sciter_app.send_mouse(button, .MOUSE_UP, at, {.Main})     // BUTTON_CLICK follows
+sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.MAIN_MOUSE_BUTTON})
+sciter_app.send_mouse(button, .MOUSE_UP, at, {.MAIN_MOUSE_BUTTON})     // BUTTON_CLICK follows
 
 sciter_app.set_focus(field)
 sciter_app.send_text(field, "hello")                      // .DOWN/.CHAR/.UP per rune

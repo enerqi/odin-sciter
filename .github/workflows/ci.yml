@@ -38,23 +38,10 @@ jobs:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
 
-      # libsciter.so links 16 libraries (see docs/ENGINE.md); the runner image is missing the EGL and
-      # GLES pair and the software rasteriser behind them. `libgles2` is the current name and
-      # `libgles2-mesa` the older one, hence the fallback. clang is Odin's linker driver on Linux.
-      # Fonts matter more than they look: the engine measures text through fontconfig, and an image
-      # with no fonts installed makes text metrics assertions fail for a reason that reads like a
-      # binding bug.
-      - name: Install engine runtime dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb libegl1 libgl1-mesa-dri libglx-mesa0 \
-            libfontconfig1 libfreetype6 fonts-dejavu-core
-          sudo apt-get install -y --no-install-recommends libgles2 \
-            || sudo apt-get install -y --no-install-recommends libgles2-mesa
-          command -v clang >/dev/null || sudo apt-get install -y --no-install-recommends clang
-          ldd lib/linux/x64/libsciter.so
+      # X11 and EGL development packages, the engine's own runtime dependencies, and fonts. The script
+      # says which group is which and how each one fails when it is missing.
+      - name: Install build and runtime dependencies
+        run: .github/scripts/install-linux-deps.sh
 
       # The step the upgrade procedure exists for. No display needed - it loads the library and walks
       # the table without creating a window.

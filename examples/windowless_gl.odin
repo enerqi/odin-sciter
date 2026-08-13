@@ -40,6 +40,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 W :: 400
 H :: 300
@@ -335,7 +336,7 @@ main :: proc() {
 		}
 
 		for i in 0 ..< 10 {
-			sciter_app.windowless_heartbeat(&view, u32(i) * 16)
+			sciter_app.windowless_heartbeat(&view, time.Duration(i) * 16 * time.Millisecond)
 			sciter_app.paint_windowless(&view)
 		}
 
@@ -346,7 +347,7 @@ main :: proc() {
 		root, _ := sciter_app.root(view.window)
 		if label, lerr := sciter_app.select_first(root, "#label"); lerr == nil {
 			sciter_app.set_text(label, "the host changed this between frames")
-			sciter_app.windowless_heartbeat(&view, 200)
+			sciter_app.windowless_heartbeat(&view, 200 * time.Millisecond)
 			sciter_app.paint_windowless(&view)
 		}
 
@@ -433,7 +434,7 @@ test_gl_view :: proc(t: ^testing.T) -> (^Context, ^sciter_app.Windowless_View, b
 
 		testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 		for i in 0 ..< 10 {
-			sciter_app.windowless_heartbeat(&g_view, u32(i) * 16)
+			sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
 			testing.expect_value(t, sciter_app.paint_windowless(&g_view), nil)
 		}
 		return &g_gc, &g_view, true
@@ -475,7 +476,7 @@ test_a_host_driven_change_reaches_the_texture :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	sciter_app.value_clear(&value)
 
-	sciter_app.windowless_heartbeat(view, 300)
+	sciter_app.windowless_heartbeat(view, 300 * time.Millisecond)
 	testing.expect_value(t, sciter_app.paint_windowless(view), nil)
 
 	after := gl_pixel(gc, W / 2, 4)
@@ -556,7 +557,7 @@ test_a_bitmap_view_still_works_alongside_a_gpu_one :: proc(t: ^testing.T) {
 		nil,
 	)
 	for i in 0 ..< 8 {
-		sciter_app.windowless_heartbeat(&bitmap, u32(i) * 16)
+		sciter_app.windowless_heartbeat(&bitmap, time.Duration(i) * 16 * time.Millisecond)
 		testing.expect_value(t, sciter_app.paint_windowless(&bitmap), nil)
 	}
 

@@ -112,8 +112,8 @@ on_invalidate_rect :: proc(handler: ^sciter_app.Host_Handler, window: sciter_app
 
 // One frame: give the engine its turn of the clock, then draw. A real embedder paints only when
 // `host.invalidations` has moved; this example paints every frame because it renders so few.
-frame :: proc(view: ^sciter_app.Windowless_View, time_ms: u32) -> sciter_app.Error {
-	sciter_app.windowless_heartbeat(view, time_ms)
+frame :: proc(view: ^sciter_app.Windowless_View, elapsed: time.Duration = 0) -> sciter_app.Error {
+	sciter_app.windowless_heartbeat(view, elapsed)
 	return paint(view)
 }
 
@@ -172,7 +172,7 @@ main :: proc() {
 
 	// Let the load settle, then draw the first frame.
 	for i in 0 ..< 8 {
-		frame(&view, u32(i) * 16)
+		frame(&view, time.Duration(i) * 16 * time.Millisecond)
 	}
 	fmt.printfln(
 		"%dx%d surface, %d bytes, %v order",
@@ -192,13 +192,13 @@ main :: proc() {
 	if ferr == nil {
 		for step in 1 ..= 10 {
 			sciter_app.set_style(fill, "width", fmt.tprintf("%d%%", step * 10))
-			frame(&view, u32(200 + step * 16))
+			frame(&view, time.Duration(200 + step * 16) * time.Millisecond)
 		}
 	}
 	if note, nerr := sciter_app.select_first(root, "#note"); nerr == nil {
 		sciter_app.set_text(note, "ten frames later, driven entirely from Odin")
 	}
-	frame(&view, 400)
+	frame(&view, 400 * time.Millisecond)
 	write_ppm("target/windowless-2.ppm", &view)
 
 	// **Typing works, clicking does not.** Focus the field, send a few characters, and read back what
@@ -209,7 +209,7 @@ main :: proc() {
 		for c in "typed with no window" {
 			sciter_app.windowless_key(&view, .CHAR, u32(c))
 		}
-		frame(&view, 500)
+		frame(&view, 500 * time.Millisecond)
 
 		value, verr := sciter_app.element_value(field)
 		if verr == nil {
@@ -225,7 +225,7 @@ main :: proc() {
 	sciter_app.windowless_mouse(&view, .MOUSE_MOVE, {W / 2, 40})
 	sciter_app.windowless_mouse(&view, .MOUSE_DOWN, {W / 2, 40})
 	sciter_app.windowless_mouse(&view, .MOUSE_UP, {W / 2, 40})
-	frame(&view, 600)
+	frame(&view, 600 * time.Millisecond)
 	if seen, err := sciter_app.eval(view.window, "globalThis.mouse"); err == nil {
 		defer sciter_app.value_clear(&seen)
 		text, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
@@ -291,7 +291,7 @@ test_view :: proc(t: ^testing.T) -> (^sciter_app.Windowless_View, ^Host, bool) {
 	// host swap what a view shows": load another one. There is no destroy in it.
 	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 	for i in 0 ..< 8 {
-		frame(&g_view, u32(i) * 16)
+		frame(&g_view, time.Duration(i) * 16 * time.Millisecond)
 	}
 	return &g_view, g_host, true
 }
@@ -349,7 +349,7 @@ test_the_host_is_told_when_a_repaint_is_due :: proc(t: ^testing.T) {
 	note, err := sciter_app.select_first(root, "#note")
 	testing.expect_value(t, err, nil)
 	sciter_app.set_text(note, "changed")
-	sciter_app.windowless_heartbeat(view, 100)
+	sciter_app.windowless_heartbeat(view, 100 * time.Millisecond)
 
 	testing.expect(t, host.invalidations > before, "a DOM change should have invalidated something")
 }
@@ -370,7 +370,7 @@ test_the_dom_and_eval_reach_the_pixels_with_no_window :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	sciter_app.value_clear(&value)
 
-	testing.expect_value(t, frame(view, 300), nil)
+	testing.expect_value(t, frame(view, 300 * time.Millisecond), nil)
 
 	r, g, b, _ := sciter_app.windowless_pixel(view, W / 2, 30)
 	testing.expect_value(t, r, 0xff)
@@ -410,7 +410,7 @@ test_a_view_can_be_typed_into :: proc(t: ^testing.T) {
 	for c in "abc" {
 		sciter_app.windowless_key(view, .CHAR, u32(c))
 	}
-	sciter_app.windowless_heartbeat(view, 200)
+	sciter_app.windowless_heartbeat(view, 200 * time.Millisecond)
 
 	value, verr := sciter_app.element_value(field)
 	testing.expect_value(t, verr, nil)
@@ -456,7 +456,7 @@ test_the_mouse_reaches_the_document :: proc(t: ^testing.T) {
 	sciter_app.windowless_mouse(view, .MOUSE_MOVE, at)
 	sciter_app.windowless_mouse(view, .MOUSE_DOWN, at)
 	sciter_app.windowless_mouse(view, .MOUSE_UP, at)
-	sciter_app.windowless_heartbeat(view, 250)
+	sciter_app.windowless_heartbeat(view, 250 * time.Millisecond)
 
 	seen, serr := sciter_app.eval(view.window, "globalThis.mouse")
 	testing.expect_value(t, serr, nil)
@@ -518,15 +518,15 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 
 	testing.expect_value(t, sciter_app.load_html(view.window, WIDGETS, "about:blank"), nil)
 	for i in 0 ..< 10 {
-		testing.expect_value(t, frame(&view, u32(i) * 16), nil)
+		testing.expect_value(t, frame(&view, time.Duration(i) * 16 * time.Millisecond), nil)
 	}
 	root, _ := sciter_app.root(view.window)
 
-	click :: proc(view: ^sciter_app.Windowless_View, at: [2]i32, time_ms: u32) {
+	click :: proc(view: ^sciter_app.Windowless_View, at: [2]i32, elapsed: time.Duration) {
 		sciter_app.windowless_mouse(view, .MOUSE_MOVE, at)
 		sciter_app.windowless_mouse(view, .MOUSE_DOWN, at)
 		sciter_app.windowless_mouse(view, .MOUSE_UP, at)
-		frame(view, time_ms)
+		frame(view, elapsed)
 	}
 
 	// Ask the engine where things are rather than assuming the CSS was honoured - which is the lesson
@@ -540,7 +540,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	}
 
 	// The button fires its own click...
-	click(&view, center(root, "#btn"), 100)
+	click(&view, center(root, "#btn"), 100 * time.Millisecond)
 	presses, perr := sciter_app.eval(view.window, "globalThis.presses")
 	testing.expect_value(t, perr, nil)
 	defer sciter_app.value_clear(&presses)
@@ -552,7 +552,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	testing.expect_value(t, cerr, nil)
 	before, _ := sciter_app.element_state(check)
 	testing.expect(t, .CHECKED not_in before, "it starts unchecked")
-	click(&view, center(root, "#check"), 200)
+	click(&view, center(root, "#check"), 200 * time.Millisecond)
 	checked, kerr := sciter_app.element_state(check)
 	testing.expect_value(t, kerr, nil)
 	testing.expect(t, .CHECKED in checked, "a click through the view should toggle a checkbox")
@@ -561,7 +561,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	field, ferr := sciter_app.select_first(root, "#field")
 	testing.expect_value(t, ferr, nil)
 	testing.expect(t, sciter_app.windowless_focus(&view))
-	click(&view, center(root, "#field"), 300)
+	click(&view, center(root, "#field"), 300 * time.Millisecond)
 	state, serr := sciter_app.element_state(field)
 	testing.expect_value(t, serr, nil)
 	testing.expect(t, .FOCUS in state, "a click should focus an intrinsic edit")
@@ -569,7 +569,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	for c in "typed" {
 		sciter_app.windowless_key(&view, .CHAR, u32(c))
 	}
-	frame(&view, 400)
+	frame(&view, 400 * time.Millisecond)
 
 	value, verr := sciter_app.element_value(field)
 	testing.expect_value(t, verr, nil)
@@ -582,7 +582,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	testing.expect_value(t, berr, nil)
 	_, clickerr := sciter_app.do_click(button)
 	testing.expect_value(t, clickerr, nil)
-	frame(&view, 500)
+	frame(&view, 500 * time.Millisecond)
 
 	after, aerr := sciter_app.eval(view.window, "globalThis.presses")
 	testing.expect_value(t, aerr, nil)
@@ -623,7 +623,7 @@ test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.load_html(view.window, DOC_BTN, "about:blank"), nil)
 	for i in 0 ..< 10 {
-		testing.expect_value(t, frame(&view, u32(i) * 16), nil)
+		testing.expect_value(t, frame(&view, time.Duration(i) * 16 * time.Millisecond), nil)
 	}
 	root, _ := sciter_app.root(view.window)
 	btn, _ := sciter_app.select_first(root, "#btn")
@@ -642,7 +642,7 @@ test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
 	sciter_app.windowless_mouse(&view, .MOUSE_UP, at)
 	testing.expect_value(t, presses(&view), i32(0)) // posted, not delivered
 
-	sciter_app.windowless_heartbeat(&view, 100)
+	sciter_app.windowless_heartbeat(&view, 100 * time.Millisecond)
 	testing.expect_value(t, presses(&view), i32(1)) // one beat is enough
 }
 
@@ -686,7 +686,7 @@ test_script_timers_run_on_the_wall_clock_not_the_heartbeat_timestamp :: proc(t: 
 	// clock from the message, nothing here could fire.
 	arm(t, view)
 	for _ in 0 ..< 20 {
-		testing.expect_value(t, frame(view, 0), nil)
+		testing.expect_value(t, frame(view, 0 * time.Millisecond), nil)
 		time.sleep(16 * time.Millisecond)
 	}
 	testing.expect(t, count(view, "globalThis.interval") > 0, "setInterval should have fired as real time passed")
@@ -701,7 +701,7 @@ test_script_timers_run_on_the_wall_clock_not_the_heartbeat_timestamp :: proc(t: 
 	testing.expect_value(t, count(view, "globalThis.timeout"), 0)
 
 	// One heartbeat afterwards delivers what came due while nothing was pumping.
-	testing.expect_value(t, frame(view, 0), nil)
+	testing.expect_value(t, frame(view, 0 * time.Millisecond), nil)
 	testing.expect(t, count(view, "globalThis.timeout") == 1, "the due timeout should arrive on the next beat")
 }
 
@@ -718,7 +718,7 @@ test_resizing_a_view_reflows_the_document_into_the_new_surface :: proc(t: ^testi
 	testing.expect_value(t, len(view.pixels), W * 2 * H * 2 * 4)
 	testing.expect(t, raw_data(view.pixels) != old_pixels, "a bigger surface is a new allocation")
 
-	testing.expect_value(t, frame(view, 400), nil)
+	testing.expect_value(t, frame(view, 400 * time.Millisecond), nil)
 
 	// The far corner of the *new* surface is painted, so the document really did reflow rather than
 	// being letterboxed into the old size.
@@ -729,7 +729,7 @@ test_resizing_a_view_reflows_the_document_into_the_new_surface :: proc(t: ^testi
 
 	// Put it back for whatever runs next: these tests share one view.
 	testing.expect_value(t, sciter_app.resize_windowless(view, W, H), nil)
-	testing.expect_value(t, frame(view, 500), nil)
+	testing.expect_value(t, frame(view, 500 * time.Millisecond), nil)
 }
 
 // **The compositing case, which is the reason the mode exists.** The host owns a 640x480 image; the
@@ -778,7 +778,7 @@ test_a_view_renders_into_a_sub_rectangle_of_a_larger_image :: proc(t: ^testing.T
 		nil,
 	)
 	for i in 0 ..< 8 {
-		testing.expect_value(t, frame(&view, u32(i) * 16), nil)
+		testing.expect_value(t, frame(&view, time.Duration(i) * 16 * time.Millisecond), nil)
 	}
 
 	pixel :: proc(image: []u8, x, y: int) -> (r, g, b: u8) {
@@ -840,8 +840,8 @@ test_two_views_render_independently :: proc(t: ^testing.T) {
 		"about:blank",
 	)
 	for i in 0 ..< 8 {
-		frame(&first, u32(i) * 16)
-		frame(&second, u32(i) * 16)
+		frame(&first, time.Duration(i) * 16 * time.Millisecond)
+		frame(&second, time.Duration(i) * 16 * time.Millisecond)
 	}
 
 	r1, g1, b1, _ := sciter_app.windowless_pixel(&first, 32, 32)
@@ -874,7 +874,7 @@ test_the_view_is_never_destroyed_here :: proc(t: ^testing.T) {
 		html := fmt.tprintf(`<html><body style="margin:0;background:%s"></body></html>`, colour)
 		testing.expect_value(t, sciter_app.load_html(view.window, html, "about:blank"), nil)
 		for i in 0 ..< 6 {
-			testing.expect_value(t, frame(view, u32(i) * 16), nil)
+			testing.expect_value(t, frame(view, time.Duration(i) * 16 * time.Millisecond), nil)
 		}
 
 		r, g, b, _ := sciter_app.windowless_pixel(view, W / 2, H / 2)

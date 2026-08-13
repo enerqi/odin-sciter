@@ -129,8 +129,8 @@ centre :: proc(element: sciter_app.Element) -> [2]i32 {
 // A press and a release at one point - what a click is made of.
 click_at :: proc(element: sciter_app.Element, pos: [2]i32) -> sciter_app.Error {
 	// The button has to be in the set or the behavior ignores the press entirely.
-	sciter_app.send_mouse(element, .MOUSE_DOWN, pos, {.Main}) or_return
-	sciter_app.send_mouse(element, .MOUSE_UP, pos, {.Main}) or_return
+	sciter_app.send_mouse(element, .MOUSE_DOWN, pos, {.MAIN_MOUSE_BUTTON}) or_return
+	sciter_app.send_mouse(element, .MOUSE_UP, pos, {.MAIN_MOUSE_BUTTON}) or_return
 	return nil
 }
 
@@ -393,14 +393,14 @@ test_send_mouse_presses_a_button :: proc(t: ^testing.T) {
 	button, _ := sciter_app.select_first(root, "#go")
 	at := centre(button)
 
-	processed, err := sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.Main})
+	processed, err := sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.MAIN_MOUSE_BUTTON})
 	testing.expect_value(t, err, nil)
 	testing.expect(t, processed, "the button behavior acted on the press")
 
 	state, _ := sciter_app.element_state(button)
 	testing.expect(t, .ACTIVE in state, "the button is :active while held")
 
-	up, uerr := sciter_app.send_mouse(button, .MOUSE_UP, at, {.Main})
+	up, uerr := sciter_app.send_mouse(button, .MOUSE_UP, at, {.MAIN_MOUSE_BUTTON})
 	testing.expect_value(t, uerr, nil)
 	testing.expect(t, up, "the release was acted on too")
 
@@ -459,7 +459,7 @@ test_send_mouse_needs_a_target :: proc(t: ^testing.T) {
 
 	// There is no hit testing inside the call: the element is named, not found. `element_at` is the
 	// way from a point to an element.
-	_, err := sciter_app.send_mouse(nil, .MOUSE_DOWN, {10, 10}, {.Main})
+	_, err := sciter_app.send_mouse(nil, .MOUSE_DOWN, {10, 10}, {.MAIN_MOUSE_BUTTON})
 	testing.expect_value(t, err, sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
 
 	_, kerr := sciter_app.send_key(nil, .CHAR, 'x')

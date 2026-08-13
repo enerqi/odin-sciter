@@ -386,12 +386,14 @@ Value_Unit_Type :: enum u32 {
 	UT_CH             = 24, // width of '0'
 }
 
-Value_Unit_Type_Date :: enum u32 {
-	HAS_DATE    = 1, // date contains date portion
-	HAS_TIME    = 2, // date contains time portion HH:MM
-	HAS_SECONDS = 4, // date contains time and seconds HH:MM:SS
-	UTC         = 16, // T_DATE is known to be UTC. Otherwise it is local date/time
+Value_Unit_Date :: enum u32 {
+	HAS_DATE    = 0, // date contains date portion
+	HAS_TIME    = 1, // date contains time portion HH:MM
+	HAS_SECONDS = 2, // date contains time and seconds HH:MM:SS
+	UTC         = 4, // T_DATE is known to be UTC. Otherwise it is local date/time
 }
+
+Value_Unit_Type_Date :: bit_set[Value_Unit_Date;u32]
 
 // Sciter or TIScript specific
 Value_Unit_Type_Object :: enum u32 {
@@ -1169,29 +1171,33 @@ Phase_Mask :: enum u32 {
 	HANDLED  = 65536,
 }
 
-Mouse_Buttons :: enum u32 {
-	MAIN_MOUSE_BUTTON   = 1, //aka left button
-	PROP_MOUSE_BUTTON   = 2, //aka right button
-	MIDDLE_MOUSE_BUTTON = 4,
+Mouse_Button :: enum u32 {
+	MAIN_MOUSE_BUTTON   = 0, //aka left button
+	PROP_MOUSE_BUTTON   = 1, //aka right button
+	MIDDLE_MOUSE_BUTTON = 2,
 }
 
-Keyboard_States :: enum u32 {
-	LSHIFT   = 1,
-	RSHIFT   = 2,
-	LCONTROL = 64,
-	RCONTROL = 128,
-	LALT     = 256,
-	RALT     = 512,
-	LCOMMAND = 1024,
-	RCOMMAND = 2048,
-	NUM      = 4096,
-	CAPS     = 8192,
-	MODE     = 16384,
-	CONTROL  = 192,
-	SHIFT    = 3,
-	ALT      = 768,
-	COMMAND  = 3072, // "command key" on OSX, "win" on Windows
+Mouse_Buttons :: bit_set[Mouse_Button;u32]
+
+Keyboard_State :: enum u32 {
+	LSHIFT   = 0,
+	RSHIFT   = 1,
+	LCONTROL = 6,
+	RCONTROL = 7,
+	LALT     = 8,
+	RALT     = 9,
+	LCOMMAND = 10,
+	RCOMMAND = 11,
+	NUM      = 12,
+	CAPS     = 13,
+	MODE     = 14,
 }
+
+Keyboard_States :: bit_set[Keyboard_State;u32]
+KEYBOARD_STATE_CONTROL :: Keyboard_States{.LCONTROL, .RCONTROL}
+KEYBOARD_STATE_SHIFT :: Keyboard_States{.LSHIFT, .RSHIFT}
+KEYBOARD_STATE_ALT :: Keyboard_States{.LALT, .RALT}
+KEYBOARD_STATE_COMMAND :: Keyboard_States{.LCOMMAND, .RCOMMAND}
 
 // parameters of evtg == HANDLE_INITIALIZATION
 Initialization_Events :: enum u32 {
@@ -1249,8 +1255,8 @@ Mouse_Params :: struct {
 	target:        Helement, // target element
 	pos:           Point, // position of cursor, element relative
 	pos_view:      Point, // position of cursor, view relative
-	button_state:  Uint, // MOUSE_BUTTONS
-	alt_state:     Uint, // KEYBOARD_STATES
+	button_state:  Mouse_Buttons, // MOUSE_BUTTONS
+	alt_state:     Keyboard_States, // KEYBOARD_STATES
 	cursor_type:   Uint, // CURSOR_TYPE to set, see CURSOR_TYPE
 	is_on_icon:    Bool32, // mouse is over icon (foreground-image, foreground-repeat:no-repeat)
 	dragging:      Helement, // element that is being dragged over, this field is not NULL if (cmd & DRAGGING) != 0
@@ -1287,7 +1293,7 @@ Key_Params :: struct {
 	cmd:       Uint, // KEY_EVENTS
 	target:    Helement, // target element
 	key_code:  Uint, // key scan code, or character unicode for KEY_CHAR
-	alt_state: Uint, // KEYBOARD_STATES
+	alt_state: Keyboard_States, // KEYBOARD_STATES
 }
 
 /** #HANDLE_FOCUS commands */

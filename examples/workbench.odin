@@ -1512,9 +1512,7 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 		if app.drag_id < 0 {
 			return false
 		}
-		// `Mouse_Event.buttons` is a *mask* in an enum-shaped field, not a `bit_set` - see the note on
-		// `Mouse_Button` in `events.odin` - so it is tested with an and rather than an `in`.
-		if !has_main_button(me.buttons) {
+		if .MAIN_MOUSE_BUTTON not_in me.buttons {
 			// The button came up somewhere this handler never saw - over another window, or outside the
 			// list. Nothing was dropped, so nothing is moved.
 			drag_reset(app)
@@ -1589,16 +1587,15 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 				return true
 			}
 		case 90:
-			// Ctrl+Z. `modifiers` is the engine's `Keyboard_States`, where `.CONTROL` is both control
-			// keys - the left and right bits ORed - so testing against it directly is wrong for a single
-			// key. Test the two separately.
-			if app.editing < 0 && has_control(ke.modifiers) {
+			// Ctrl+Z. `sciter.KEYBOARD_STATE_CONTROL` is both control keys, so intersecting with it is "either one is
+			// down"; `.LCONTROL in ke.modifiers` would be the left key specifically.
+			if app.editing < 0 && sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {} {
 				undo(app)
 				render(app)
 				return true
 			}
 		case 89:
-			if app.editing < 0 && has_control(ke.modifiers) {
+			if app.editing < 0 && sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {} {
 				redo(app)
 				render(app)
 				return true
@@ -1606,14 +1603,6 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 		}
 	}
 	return false
-}
-
-has_main_button :: proc(buttons: sciter.Mouse_Buttons) -> bool {
-	return u32(buttons) & u32(sciter.Mouse_Buttons.MAIN_MOUSE_BUTTON) != 0
-}
-
-has_control :: proc(modifiers: sciter.Keyboard_States) -> bool {
-	return u32(modifiers) & u32(sciter.Keyboard_States.CONTROL) != 0
 }
 
 drag_reset :: proc(app: ^App) {
@@ -2554,7 +2543,7 @@ test_dragging_a_row_onto_another_reorders_the_model :: proc(t: ^testing.T) {
 	testing.expect(t, source_el != nil && target_el != nil)
 
 	// Press: selects the row and *arms* a drag without starting one.
-	sciter_app.send_mouse(source_el, .MOUSE_DOWN, element_centre(source_el), {.Main})
+	sciter_app.send_mouse(source_el, .MOUSE_DOWN, element_centre(source_el), {.MAIN_MOUSE_BUTTON})
 	testing.expect_value(t, app.view.selected, dragged)
 	testing.expect_value(t, app.drag_id, dragged)
 	testing.expect(t, !app.dragging, "a press that has not moved is not a drag")
@@ -2562,13 +2551,13 @@ test_dragging_a_row_onto_another_reorders_the_model :: proc(t: ^testing.T) {
 	// Move, with the button held. The elements were destroyed and rebuilt by the render the press
 	// caused, so the position is taken again rather than reused.
 	target_el = row_element(app, 4)
-	sciter_app.send_mouse(target_el, .MOUSE_MOVE, element_centre(target_el), {.Main})
+	sciter_app.send_mouse(target_el, .MOUSE_MOVE, element_centre(target_el), {.MAIN_MOUSE_BUTTON})
 	testing.expect(t, app.dragging, "moving with the button down is a drag")
 	testing.expect_value(t, app.drag_over, target)
 
 	// Release: one undoable move, and the drag state is cleared whatever happened.
 	target_el = row_element(app, 4)
-	sciter_app.send_mouse(target_el, .MOUSE_UP, element_centre(target_el), {.Main})
+	sciter_app.send_mouse(target_el, .MOUSE_UP, element_centre(target_el), {.MAIN_MOUSE_BUTTON})
 	testing.expect_value(t, app.drag_id, -1)
 	testing.expect(t, !app.dragging)
 
@@ -2596,15 +2585,15 @@ test_a_click_without_movement_is_not_a_drag :: proc(t: ^testing.T) {
 	element := row_element(app, 0)
 	at := element_centre(element)
 
-	sciter_app.send_mouse(element, .MOUSE_DOWN, at, {.Main})
-	sciter_app.send_mouse(row_element(app, 0), .MOUSE_UP, at, {.Main})
+	sciter_app.send_mouse(element, .MOUSE_DOWN, at, {.MAIN_MOUSE_BUTTON})
+	sciter_app.send_mouse(row_element(app, 0), .MOUSE_UP, at, {.MAIN_MOUSE_BUTTON})
 
 	testing.expect_value(t, app.rows[0].id, before)
 	testing.expect_value(t, len(app.history.done), 0)
 	testing.expect_value(t, app.drag_id, -1)
 
 	// Nor does a move whose button has come up - a drag that ended outside the window drops nothing.
-	sciter_app.send_mouse(row_element(app, 0), .MOUSE_DOWN, at, {.Main})
+	sciter_app.send_mouse(row_element(app, 0), .MOUSE_DOWN, at, {.MAIN_MOUSE_BUTTON})
 	sciter_app.send_mouse(row_element(app, 3), .MOUSE_MOVE, element_centre(row_element(app, 3)), {})
 	sciter_app.send_mouse(row_element(app, 3), .MOUSE_UP, element_centre(row_element(app, 3)), {})
 	testing.expect_value(t, app.rows[0].id, before)

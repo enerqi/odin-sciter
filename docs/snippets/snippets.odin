@@ -710,8 +710,8 @@ events_raf :: proc(el: sciter_app.Element) {
 // events.md, synthesising input
 
 events_send_input :: proc(button: sciter_app.Element, field: sciter_app.Element, at: [2]i32) {
-	sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.Main})
-	sciter_app.send_mouse(button, .MOUSE_UP, at, {.Main}) // BUTTON_CLICK follows
+	sciter_app.send_mouse(button, .MOUSE_DOWN, at, {.MAIN_MOUSE_BUTTON})
+	sciter_app.send_mouse(button, .MOUSE_UP, at, {.MAIN_MOUSE_BUTTON}) // BUTTON_CLICK follows
 
 	sciter_app.set_focus(field)
 	sciter_app.send_text(field, "hello") // .DOWN/.CHAR/.UP per rune

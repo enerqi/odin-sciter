@@ -398,8 +398,7 @@ main :: proc() {
 
 		// The host's clock drives the engine. Real elapsed time, because script timers run on the wall
 		// clock whatever timestamp they are handed - see `windowless.odin`.
-		elapsed := u32(time.duration_milliseconds(time.since(start)))
-		sciter_app.windowless_heartbeat(&view, elapsed)
+		sciter_app.windowless_heartbeat(&view, time.since(start))
 		sciter_app.paint_windowless(&view)
 
 		typed := "-"
@@ -471,7 +470,7 @@ test_pane :: proc(t: ^testing.T) -> (view: ^sciter_app.Windowless_View, root: sc
 	// Reloading is what keeps the tests independent, since the view itself is not.
 	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 	for i in 0 ..< 10 {
-		sciter_app.windowless_heartbeat(&g_view, u32(i) * 16)
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
 		sciter_app.paint_windowless(&g_view)
 	}
 	r, _ := sciter_app.root(g_view.window)
@@ -576,7 +575,7 @@ test_a_translated_click_drives_the_panes_widgets :: proc(t: ^testing.T) {
 		sciter_app.windowless_mouse(view, .MOUSE_DOWN, pos)
 		sciter_app.windowless_mouse(view, .MOUSE_UP, pos)
 		// **The beat is what delivers it** - a behavior's event is posted, not raised inline.
-		sciter_app.windowless_heartbeat(view, 100)
+		sciter_app.windowless_heartbeat(view, 100 * time.Millisecond)
 	}
 
 	click(view, root, "#press")
@@ -595,7 +594,7 @@ test_a_translated_click_drives_the_panes_widgets :: proc(t: ^testing.T) {
 	for c in "odin" {
 		sciter_app.windowless_key(view, .CHAR, u32(c))
 	}
-	sciter_app.windowless_heartbeat(view, 200)
+	sciter_app.windowless_heartbeat(view, 200 * time.Millisecond)
 
 	field, ferr := sciter_app.select_first(root, "#name")
 	testing.expect_value(t, ferr, nil)

@@ -130,6 +130,21 @@ bit_setify = {
 
 	// SCROLL_TO_TOP (0x01) and SCROLL_SMOOTH (0x10).
 	"SCITER_SCROLL_FLAGS" = "Sciter_Scroll_Flag"
+
+	// MOUSE_PARAMS::button_state is every button held at once, not one of them: left-and-right together
+	// is 3, and an ordinary move with nothing held is 0. Neither is a value of the C enum, so the enum
+	// shape produced an invalid value on the *common* path - see the tests in examples/events.odin.
+	"MOUSE_BUTTONS" = "Mouse_Button"
+
+	// KEYBOARD_STATES the same, for MOUSE_PARAMS::alt_state and KEY_PARAMS::alt_state. Its SHIFT,
+	// CONTROL, ALT and COMMAND members are not extra keys but the left-or-right pairs ORed together, so
+	// they come out of bindgen as multi-bit constants of the bit_set type, which is exactly right.
+	"KEYBOARD_STATES" = "Keyboard_State"
+
+	// VALUE_UNIT_TYPE_DATE - HAS_DATE, HAS_TIME, HAS_SECONDS and UTC combine: a full timestamp carries
+	// three of them at once. Note this one is *not* reachable through a typed slot, because ValueType's
+	// pUnits stays a ^Uint (see the note further down); it is the shape that matters.
+	"VALUE_UNIT_TYPE_DATE" = "Value_Unit_Date"
 }
 
 // NOT bit_setified, though docs/PLAN.md section 7 lists them - both would generate values that compile
@@ -416,6 +431,29 @@ rename = {
 
 	// The handle from SciterOpenArchive, used with SciterGetArchiveItem / SciterCloseArchive.
 	"HSARCHIVE" = "Archive"
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Struct fields that are an enum wearing a UINT
+//
+// Same idea as `procedure_type_overrides` above, for fields rather than parameters. Keys are
+// `CStructName.field_name`.
+//
+// The event parameter structs are where this matters: the header types every one of their fields as
+// UINT and names the real type in a trailing comment, so nothing is inferable. The three below are the
+// two mask fields, which now have a bit_set to point at.
+struct_field_overrides = {
+	// "every button held", not "which button" - see the MOUSE_BUTTONS note in bit_setify.
+	"MOUSE_PARAMS.button_state" = "Mouse_Buttons"
+
+	// "every modifier down", likewise, on both structs that carry one.
+	"MOUSE_PARAMS.alt_state" = "Keyboard_States"
+	"KEY_PARAMS.alt_state"   = "Keyboard_States"
+
+	// The `cmd` fields are deliberately NOT typed. Every one of them is an event code with the
+	// propagation phase ORed in - `MOUSE_DOWN | SINKING` is not a MOUSE_EVENTS value - and the mouse
+	// group ORs `DRAGGING` (0x100) on top of that. `sciter_app/events.odin` splits the three apart;
+	// naming one enum here would assert something false about the other two bits.
 }
 
 // The automatic "strip the prefix all members share" pass gets SET_ELEMENT_HTML wrong: its members are

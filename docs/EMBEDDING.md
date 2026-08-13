@@ -19,7 +19,7 @@ ordinary `Window`:
 ```odin
 view, _ := sciter_app.create_windowless({width = 320, height = 240})
 sciter_app.load_html(view.window, DOC, "about:blank")
-sciter_app.windowless_heartbeat(&view, 0)
+sciter_app.windowless_heartbeat(&view)
 sciter_app.paint_windowless(&view)   // view.pixels is now RGBA
 ```
 

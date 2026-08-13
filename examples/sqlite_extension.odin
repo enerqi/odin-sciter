@@ -54,6 +54,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
 // The library, opened at runtime
@@ -940,7 +941,7 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.load_html(view.window, LOADER, "about:blank"), nil)
 	for _ in 0 ..< 20 {
-		sciter_app.windowless_heartbeat(&view, 16)
+		sciter_app.windowless_heartbeat(&view, 16 * time.Millisecond)
 		sciter_app.paint_windowless(&view)
 	}
 

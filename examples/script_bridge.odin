@@ -47,6 +47,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // The bridge document. Everything Odin will call lives here; the module script is part 1 of the
 // pattern, and the functions below it are part 2.
@@ -281,7 +282,7 @@ main :: proc() {
 	// The module script runs asynchronously, so the interface is not there the instant the load
 	// returns. Beat until it is - `globalThis.ready` is the flag the document sets last.
 	for _ in 0 ..< 20 {
-		sciter_app.windowless_heartbeat(&view, 16)
+		sciter_app.windowless_heartbeat(&view, 16 * time.Millisecond)
 		if ready, rerr := sciter_app.global(view.window, "ready"); rerr == nil {
 			defer sciter_app.value_clear(&ready)
 			if b, _ := sciter_app.value_to_bool(&ready); b {
@@ -391,7 +392,7 @@ test_view :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	}
 	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 	for _ in 0 ..< 20 {
-		sciter_app.windowless_heartbeat(&g_view, 16)
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 		if ready, rerr := sciter_app.global(g_view.window, "ready"); rerr == nil {
 			defer sciter_app.value_clear(&ready)
 			if b, _ := sciter_app.value_to_bool(&ready); b {

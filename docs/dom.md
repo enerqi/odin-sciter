@@ -344,7 +344,8 @@ than an error code. Unuse it once it has been re-inserted, or to throw it away.
 
 ### Identity
 
-`element_uid(el)` returns an integer that survives being stored where a handle cannot go. Its partner
+`element_uid(el)` returns an `Element_Uid` - a `distinct u32`, opaque like `Atom` - that survives being
+stored where a handle cannot go. Its partner
 `element_by_uid(window, uid)` **does not work on the vendored 6.x engine** — every UID the engine
 hands out is refused with `OPERATION_FAILED`, whichever window handle is used and whether or not the
 element has been `use_element`ed. Treat UIDs as opaque labels for now, not as a way back to an element.

@@ -637,15 +637,21 @@ sort_children :: proc(
 // map key, a message to another part of the program. It is only meaningful for as long as the element
 // is in its document, and only within the window it came from.
 
-element_uid :: proc(element: Element) -> (uid: u32, err: Error) {
-	dom_err(sciter.api().SciterGetElementUID(sciter.Helement(element), &uid)) or_return
-	return uid, nil
+// An element's identity within one window. `distinct` for the same reason `Atom` is: it is an opaque
+// token the engine hands out and takes back, never a count, an index or a length, and the two calls
+// below are the only things that should ever produce or consume one.
+Element_Uid :: distinct u32
+
+element_uid :: proc(element: Element) -> (uid: Element_Uid, err: Error) {
+	raw: u32
+	dom_err(sciter.api().SciterGetElementUID(sciter.Helement(element), &raw)) or_return
+	return Element_Uid(raw), nil
 }
 
 // The element a UID refers to. Returns `.Not_Found` for a UID this window does not know.
-element_by_uid :: proc(window: Window, uid: u32) -> (element: Element, err: Error) {
+element_by_uid :: proc(window: Window, uid: Element_Uid) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), uid, &he)) or_return
+	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), u32(uid), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}

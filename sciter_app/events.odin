@@ -109,6 +109,15 @@ event_code :: proc(cmd: u32) -> u32 {
 	return cmd & EVENT_CODE_MASK
 }
 
+// The mouse group needs one more bit taken off. `MOUSE_EVENTS.DRAGGING` is 0x100, and the header says
+// it is "ORed with MOUSE_ENTER...MOUSE_DOWN codes above" - so it sits *below* `EVENT_CODE_MASK` and
+// survives `event_code`, which would leave a drag's `.MOUSE_MOVE` reading as 258 and matching nothing.
+// `Mouse_Event.dragging` carries the bit instead.
+@(private)
+mouse_code :: proc(cmd: u32) -> u32 {
+	return event_code(cmd) & ~u32(sciter.Mouse_Events.DRAGGING)
+}
+
 event_phase :: proc(cmd: u32) -> Event_Phase {
 	switch {
 	case cmd & u32(sciter.Phase_Mask.HANDLED) != 0:
@@ -166,13 +175,22 @@ event_name :: proc(be: Behavior_Event, allocator := context.allocator) -> string
 	return string_from_utf16_cstring(be.raw.name, allocator)
 }
 
+// `buttons` is every button held during the event, so it is empty for an ordinary move and holds two
+// entries when two are down - `.MAIN_MOUSE_BUTTON in me.buttons` is the question to ask.
+//
+// `dragging` is the engine's *internal* drag, which is the `DRAGGING` flag OR'ed into the event code
+// rather than a code of its own: during one, `.MOUSE_ENTER` and friends arrive with it set and
+// `dragged` naming the element being dragged over. It is unrelated to the `.EXCHANGE` group, which is
+// the system's cross-application drag - see `Exchange_Event`.
 Mouse_Event :: struct {
-	code:    sciter.Mouse_Events,
-	phase:   Event_Phase,
-	target:  Element,
-	pos:     [2]i32, // relative to the target element
-	buttons: sciter.Mouse_Buttons,
-	raw:     ^sciter.Mouse_Params,
+	code:     sciter.Mouse_Events,
+	phase:    Event_Phase,
+	target:   Element,
+	pos:      [2]i32, // relative to the target element
+	buttons:  sciter.Mouse_Buttons,
+	dragging: bool, // the DRAGGING flag was set on the code
+	dragged:  Element, // the element being dragged over; nil unless `dragging`
+	raw:      ^sciter.Mouse_Params,
 }
 
 mouse_event :: proc(event: Event) -> (me: Mouse_Event, ok: bool) {
@@ -181,11 +199,13 @@ mouse_event :: proc(event: Event) -> (me: Mouse_Event, ok: bool) {
 	}
 	p := (^sciter.Mouse_Params)(event.params)
 	return Mouse_Event {
-			code = sciter.Mouse_Events(event_code(p.cmd)),
+			code = sciter.Mouse_Events(mouse_code(p.cmd)),
 			phase = event_phase(p.cmd),
 			target = Element(p.target),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
-			buttons = sciter.Mouse_Buttons(p.button_state),
+			buttons = p.button_state,
+			dragging = p.cmd & u32(sciter.Mouse_Events.DRAGGING) != 0,
+			dragged = Element(p.dragging),
 			raw = p,
 		},
 		true
@@ -210,7 +230,7 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 			phase = event_phase(p.cmd),
 			target = Element(p.target),
 			key_code = p.key_code,
-			modifiers = sciter.Keyboard_States(p.alt_state),
+			modifiers = p.alt_state,
 			raw = p,
 		},
 		true
@@ -345,6 +365,15 @@ focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
 // `.ANIMATION_END` (12) and this engine emits **14** for an ordinary `set_scroll_pos`, so a typed
 // field would print a value that does not exist. Compare against `u32(sciter.Scroll_Events.POS)` and
 // friends where the code is one of the documented ones.
+//
+// **14 is a real code, not a flag on top of `.POS` (6).** Worth stating because 14 is 6 | 8 and that is
+// exactly the shape `MOUSE_EVENTS.DRAGGING` has - but measured, a smooth `scroll_to_view` brackets its
+// run with the header's own `.ANIMATION_START` (11) and `.ANIMATION_END` (12), delivered as 11 and 12
+// with no extra bit set. If 8 were a flag those would arrive as 19 and 20. So the vendored header is
+// simply behind the engine here, and masking anything off `code` would corrupt it.
+//
+// The same measurement shows 14 is not only a `set_scroll_pos` code: during a smooth scroll it arrives
+// once per frame between 11 and 12, with `source` reading `.ANIMATOR` rather than `.SCROLLBAR`.
 //
 // `source` says where the scroll came from, and it chooses what `reason` means: a key code for
 // `.KEYBOARD`, a SCROLLBAR_PART for `.SCROLLBAR`, nothing for the rest.
@@ -790,7 +819,7 @@ send_mouse :: proc(
 	element: Element,
 	code: sciter.Mouse_Events,
 	pos: [2]i32,
-	buttons: bit_set[Mouse_Button;u32] = {},
+	buttons: sciter.Mouse_Buttons = {},
 	modifiers: sciter.Keyboard_States = {},
 ) -> (
 	processed: bool,
@@ -801,22 +830,14 @@ send_mouse :: proc(
 		target = sciter.Helement(element),
 		pos = {x = pos.x, y = pos.y},
 		pos_view = {x = pos.x, y = pos.y},
-		button_state = transmute(u32)buttons,
-		alt_state = u32(modifiers),
+		button_state = buttons,
+		alt_state = modifiers,
 	}
 	was: b32
 	// The group is passed as the *mask*, not the enum's ordinal - `Event_Group.MOUSE` is 0 and would be
 	// `.INVALID_PARAMETER`. Only the mouse and key masks are accepted; anything else is refused.
 	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.MOUSE}, &params, &was)) or_return
 	return bool(was), nil
-}
-
-// Which mouse buttons are down. `sciter.Mouse_Buttons` is an enum of single values rather than a
-// bit_set, and the field is a mask, so this is the set form of it.
-Mouse_Button :: enum u32 {
-	Main   = 0, // left
-	Prop   = 1, // right
-	Middle = 2,
 }
 
 // Delivers a key event to `element`. `key_code` is a virtual key for `.DOWN` and `.UP`, and a
@@ -837,7 +858,7 @@ send_key :: proc(
 		cmd       = u32(code),
 		target    = sciter.Helement(element),
 		key_code  = key_code,
-		alt_state = u32(modifiers),
+		alt_state = modifiers,
 	}
 	was: b32
 	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.KEY}, &params, &was)) or_return

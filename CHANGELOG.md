@@ -321,10 +321,20 @@ checked by `just check`.
   coexist; a second destroy of the same view is a harmless false. Swap a view's document with
   `load_html` rather than destroying and recreating it.
 - **`SXM_HEARTBIT`'s timestamp is ignored; windowless script timers run on the wall clock.**
-  `setTimeout`, `setInterval` and `requestAnimationFrame` fire as real time passes, whatever `time_ms`
+  `setTimeout`, `setInterval` and `requestAnimationFrame` fire as real time passes, whatever `elapsed`
   says - passing 0 every time behaves identically - and do not fire at all without a heartbeat to drain
   them. A host rendering frames faster than real time therefore sees no timers and must drive animation
   itself.
+- **`MOUSE_PARAMS::button_state` and `alt_state` are masks, not choices.** The headers type both as
+  `MOUSE_BUTTONS` / `KEYBOARD_STATES` enums whose members are single bits, but the fields carry every
+  button held and every modifier down at once - two buttons is 3, nothing held is 0, and neither is a
+  member. Both are `bit_set`s here (`Mouse_Button` / `Keyboard_State` singulars, the C-named plurals in
+  signatures), and the headers' `KEYBOARD_STATE_SHIFT` / `_CONTROL` / `_ALT` / `_COMMAND` become
+  multi-bit constants, being the left-or-right pairs rather than keys of their own. Applied in
+  `bindgen.sjson`, so regeneration keeps it.
+- **`MOUSE_EVENTS::DRAGGING` (0x100) is OR'ed into the event code**, and it sits below the phase bits,
+  so masking the code with `0x7FFF` is not enough to recover it: a drag's `MOUSE_MOVE` arrives as 258.
+  `Mouse_Event` splits it out as `dragging` / `dragged`.
 - **`SXM_RESOLUTION` crashes one message later**, in `html::iwindow::setup_window_frame` on a view that
   has no native window frame. There is deliberately no wrapper for it; a windowless view runs at the
   engine's default DPI.

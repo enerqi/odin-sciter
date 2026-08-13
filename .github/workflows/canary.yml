@@ -85,13 +85,9 @@ jobs:
         if: steps.tags.outputs.new == 'true'
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            llvm-dev libclang-dev clang \
-            xvfb libegl1 libgl1-mesa-dri libglx-mesa0 \
-            libfontconfig1 libfreetype6 fonts-dejavu-core
-          sudo apt-get install -y --no-install-recommends libgles2 \
-            || sudo apt-get install -y --no-install-recommends libgles2-mesa
+          .github/scripts/install-linux-deps.sh
+          # libclang on top, for odin-c-bindgen only - see docs/BINDGEN-LIBCLANG.md.
+          sudo apt-get install -y --no-install-recommends llvm-dev libclang-dev clang
           git clone https://github.com/karl-zylinski/odin-c-bindgen.git "$RUNNER_TEMP/odin-c-bindgen"
           git -C "$RUNNER_TEMP/odin-c-bindgen" checkout "$BINDGEN_COMMIT"
           cd "$RUNNER_TEMP/odin-c-bindgen"

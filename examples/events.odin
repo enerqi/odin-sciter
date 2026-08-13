@@ -365,7 +365,7 @@ test_mouse_event_maps_the_params :: proc(t: ^testing.T) {
 		target = sciter.Helement(target),
 		pos = {x = 12, y = 34},
 		pos_view = {x = 512, y = 534}, // view-relative; `pos` is the element-relative one
-		button_state = u32(sciter.Mouse_Buttons.PROP_MOUSE_BUTTON),
+		button_state = {.PROP_MOUSE_BUTTON},
 	}
 
 	me, ok := sciter_app.mouse_event({group = {.MOUSE}, params = &params})
@@ -376,8 +376,64 @@ test_mouse_event_maps_the_params :: proc(t: ^testing.T) {
 
 	// The element-relative position, not the view-relative one that sits next to it in the struct.
 	testing.expect_value(t, me.pos, [2]i32{12, 34})
-	testing.expect_value(t, me.buttons, sciter.Mouse_Buttons.PROP_MOUSE_BUTTON)
+	testing.expect_value(t, me.buttons, sciter.Mouse_Buttons{.PROP_MOUSE_BUTTON})
 	testing.expect(t, me.raw == &params)
+}
+
+// The two things a mask can do that the header's enum shape could not represent at all: hold nothing,
+// and hold more than one. Both used to decode to an invalid enum value - `%!(BAD ENUM VALUE=0)` for an
+// ordinary move with no button held, which is the common case rather than a corner of it.
+@(test)
+test_mouse_buttons_is_a_set :: proc(t: ^testing.T) {
+	target := fake_element(0x3100)
+
+	none := sciter.Mouse_Params {
+		cmd    = u32(sciter.Mouse_Events.MOUSE_MOVE),
+		target = sciter.Helement(target),
+	}
+	me, _ := sciter_app.mouse_event({group = {.MOUSE}, params = &none})
+	testing.expect_value(t, me.buttons, sciter.Mouse_Buttons{})
+	testing.expect(t, .MAIN_MOUSE_BUTTON not_in me.buttons, "nothing held")
+
+	both := sciter.Mouse_Params {
+		cmd          = u32(sciter.Mouse_Events.MOUSE_DOWN),
+		target       = sciter.Helement(target),
+		button_state = {.MAIN_MOUSE_BUTTON, .PROP_MOUSE_BUTTON}, // the engine reports 3 for this
+	}
+	me2, _ := sciter_app.mouse_event({group = {.MOUSE}, params = &both})
+	testing.expect(t, .MAIN_MOUSE_BUTTON in me2.buttons, "left is down")
+	testing.expect(t, .PROP_MOUSE_BUTTON in me2.buttons, "and so is right")
+	testing.expect(t, .MIDDLE_MOUSE_BUTTON not_in me2.buttons)
+	testing.expect_value(t, transmute(u32)me2.buttons, u32(3))
+}
+
+// `DRAGGING` is 0x100, OR'ed into the code rather than being one of its own, and it sits below
+// `EVENT_CODE_MASK` - so it used to survive into `code` and leave a drag's move reading as 258.
+@(test)
+test_dragging_flag_is_split_off_the_code :: proc(t: ^testing.T) {
+	target := fake_element(0x3200)
+	over := fake_element(0x3201)
+
+	params := sciter.Mouse_Params {
+		cmd = u32(sciter.Mouse_Events.MOUSE_MOVE) | u32(sciter.Mouse_Events.DRAGGING),
+		target = sciter.Helement(target),
+		dragging = sciter.Helement(over),
+	}
+	me, ok := sciter_app.mouse_event({group = {.MOUSE}, params = &params})
+	testing.expect(t, ok)
+	testing.expect_value(t, me.code, sciter.Mouse_Events.MOUSE_MOVE)
+	testing.expect(t, me.dragging, "the DRAGGING flag was set")
+	testing.expect_value(t, me.dragged, over)
+
+	// An ordinary move carries neither.
+	plain := sciter.Mouse_Params {
+		cmd    = u32(sciter.Mouse_Events.MOUSE_MOVE),
+		target = sciter.Helement(target),
+	}
+	pe, _ := sciter_app.mouse_event({group = {.MOUSE}, params = &plain})
+	testing.expect_value(t, pe.code, sciter.Mouse_Events.MOUSE_MOVE)
+	testing.expect(t, !pe.dragging)
+	testing.expect_value(t, pe.dragged, nil)
 }
 
 @(test)
@@ -388,7 +444,7 @@ test_key_event_maps_the_params :: proc(t: ^testing.T) {
 		cmd       = u32(sciter.Key_Events.CHAR) | u32(sciter.Phase_Mask.HANDLED),
 		target    = sciter.Helement(target),
 		key_code  = 'A', // a character for KEY_CHAR, a virtual key for DOWN / UP
-		alt_state = u32(sciter.Keyboard_States.SHIFT),
+		alt_state = sciter.KEYBOARD_STATE_SHIFT, // both shifts, which is what the header's composite SHIFT meant
 	}
 
 	ke, ok := sciter_app.key_event({group = {.KEY}, params = &params})
@@ -397,8 +453,22 @@ test_key_event_maps_the_params :: proc(t: ^testing.T) {
 	testing.expect_value(t, ke.phase, sciter_app.Event_Phase.Handled)
 	testing.expect_value(t, ke.target, target)
 	testing.expect_value(t, ke.key_code, u32('A'))
-	testing.expect_value(t, u32(ke.modifiers), u32(sciter.Keyboard_States.SHIFT))
+	testing.expect_value(t, ke.modifiers, sciter.KEYBOARD_STATE_SHIFT)
 	testing.expect(t, ke.raw == &params)
+
+	// The combination the header's enum had no value for: one shift and one control, 0x41.
+	mixed := sciter.Key_Params {
+		cmd       = u32(sciter.Key_Events.DOWN),
+		target    = sciter.Helement(target),
+		key_code  = 'Z',
+		alt_state = {.LSHIFT, .LCONTROL},
+	}
+	mk, _ := sciter_app.key_event({group = {.KEY}, params = &mixed})
+	testing.expect(t, .LSHIFT in mk.modifiers)
+	testing.expect(t, .LCONTROL in mk.modifiers)
+	testing.expect(t, sciter.KEYBOARD_STATE_CONTROL & mk.modifiers != {}, "either control counts as control")
+	testing.expect(t, sciter.KEYBOARD_STATE_ALT & mk.modifiers == {}, "no alt")
+	testing.expect_value(t, transmute(u32)mk.modifiers, u32(0x41))
 }
 
 @(test)

@@ -426,6 +426,9 @@ in `bindgen.sjson` — so it survives regeneration. Concretely:
 | `SCITER_CREATE_WINDOW_FLAGS` | `SW_MAIN \| SW_ENABLE_DEBUG` is the common case and reads badly as `u32(...) \| u32(...)` |
 | `ELEMENT_STATE_BITS` | `STATE_LINK`, `STATE_HOVER`, `STATE_ACTIVE`, ... |
 | `SCRIPT_RUNTIME_FEATURES` | `ALLOW_FILE_IO`, `ALLOW_SOCKET_IO`, `ALLOW_EVAL`, `ALLOW_SYSINFO` |
+| `MOUSE_BUTTONS` | `button_state` is every button held, so two at once is 3 and none is 0 — neither a member |
+| `KEYBOARD_STATES` | `alt_state` likewise; `SHIFT`/`CONTROL`/`ALT`/`COMMAND` are the left-or-right pairs, so they become constants |
+| `VALUE_UNIT_TYPE_DATE` | `HAS_DATE`, `HAS_TIME`, `HAS_SECONDS`, `UTC` combine on one timestamp |
 | `OUTPUT_SUBSYTEMS`, `ELEMENT_AREAS`, `SCITER_SCROLL_FLAGS` | same shape |
 
 **`procedure_type_overrides` / `struct_field_overrides`** — parameters and returns that are enums

@@ -222,8 +222,8 @@ main :: proc() {
 		m := sciter.Sciter_X_Msg_Mouse {
 			header = {msg = u32(sciter.Sciter_X_Msg_Code.MOUSE)},
 			event = ev,
-			button = .MAIN_MOUSE_BUTTON,
-			modifiers = sciter.Keyboard_States(0),
+			button = {.MAIN_MOUSE_BUTTON},
+			modifiers = {},
 			pos = {x = W / 2, y = H / 2},
 		}
 		return bool(api.SciterProcX(hwnd, &m.header))

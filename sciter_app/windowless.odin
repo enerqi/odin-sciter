@@ -20,7 +20,7 @@
 //	defer sciter_app.destroy_windowless(&view)
 //
 //	sciter_app.load_html(view.window, DOC, "about:blank")
-//	sciter_app.windowless_heartbeat(&view, 0)
+//	sciter_app.windowless_heartbeat(&view)
 //	sciter_app.paint_windowless(&view)
 //	// view.pixels is now RGBA, width*height*4, yours to upload or write out
 //
@@ -53,7 +53,7 @@
 //     the next `windowless_heartbeat` rather than inside the call. See `windowless_mouse`.
 //   - **Script timers run on the wall clock, not on the heartbeat's timestamp.** `setTimeout`,
 //     `setInterval` and `requestAnimationFrame` do work - but only as real time passes, and passing a
-//     made-up `time_ms` changes nothing. A host that renders frames faster than real time (a build
+//     made-up `elapsed` changes nothing. A host that renders frames faster than real time (a build
 //     machine, a test) sees no timers at all. See `windowless_heartbeat`.
 //   - **`SXM_RESOLUTION` crashes the process**, one message later than the call. There is deliberately
 //     no wrapper for it here - see the note above `create_windowless`.
@@ -61,6 +61,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:time"
 
 // The byte order the engine writes into the surface. The header says "RGBA or BGRA" and does not say
 // which; the SDK's cross-platform demo selects `SDL_PIXELFORMAT_BGRA32` under `#ifdef WINDOWS` and
@@ -307,7 +308,7 @@ paint_windowless :: proc(
 // One turn of the engine's clock - `SXM_HEARTBIT`. This is `heartbeat`'s counterpart for a view with no
 // pump: it drains posted work, runs due timers, and lets a load settle.
 //
-// **`time_ms` is ignored, and the engine uses the wall clock instead.** Measured, which matters because
+// **`elapsed` is ignored, and the engine uses the wall clock instead.** Measured, which matters because
 // the header's parameter invites the opposite belief and the SDK's demo dutifully passes
 // `SDL_GetTicks`:
 //
@@ -321,10 +322,13 @@ paint_windowless :: proc(
 // slower by lying about the timestamp. A host rendering frames off its own clock - a build machine
 // producing an image, a test - gets no timers at all, and should drive animation itself by changing the
 // DOM between frames.
-windowless_heartbeat :: proc(view: ^Windowless_View, time_ms: u32) {
+//
+// `elapsed` is a `time.Duration` for consistency with `set_timer`, and defaults to zero because the
+// engine does not read it - there is nothing a host has to compute in order to call this.
+windowless_heartbeat :: proc(view: ^Windowless_View, elapsed: time.Duration = 0) {
 	message := sciter.Sciter_X_Msg_Heartbit {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.HEARTBIT)},
-		time = time_ms,
+		time = u32(elapsed / time.Millisecond),
 	}
 	sciter.api().SciterProcX(rawptr(view.window), &message.header)
 }
@@ -353,7 +357,7 @@ windowless_key :: proc(
 	view: ^Windowless_View,
 	event: sciter.Key_Events,
 	code: u32,
-	modifiers: sciter.Keyboard_States = sciter.Keyboard_States(0),
+	modifiers: sciter.Keyboard_States = {},
 ) -> bool {
 	message := sciter.Sciter_X_Msg_Key {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.KEY)},
@@ -403,8 +407,8 @@ windowless_mouse :: proc(
 	view: ^Windowless_View,
 	event: sciter.Mouse_Events,
 	pos: [2]i32,
-	button: sciter.Mouse_Buttons = sciter.Mouse_Buttons.MAIN_MOUSE_BUTTON,
-	modifiers: sciter.Keyboard_States = sciter.Keyboard_States(0),
+	button: sciter.Mouse_Buttons = {.MAIN_MOUSE_BUTTON},
+	modifiers: sciter.Keyboard_States = {},
 ) -> bool {
 	message := sciter.Sciter_X_Msg_Mouse {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.MOUSE)},

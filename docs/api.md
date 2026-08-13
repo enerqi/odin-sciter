@@ -187,7 +187,7 @@ do not clear it.
 | `remove_element(el, finalize := true)` | `false` detaches **and takes a reference for you** |
 | `swap_elements(a, b)` | exchanges indexes and parents |
 | `sort_children(el, cmp, user_data, first, last)` | in place; `last` is one past the end |
-| `element_uid` / `element_by_uid` | `element_by_uid` is broken on 6.x — see [`dom.md`](./dom.md#identity) |
+| `element_uid` / `element_by_uid` | trade an `Element_Uid` (`distinct u32`); `element_by_uid` is broken on 6.x — see [`dom.md`](./dom.md#identity) |
 | `eval_element(el, script)` | script with `this` bound to the element |
 | `call_method(el, method, args: ..Value)` | a method on the element's script object, including behavior methods |
 | `call_function(el, name, args: ..Value)` | a *function* visible from the element, `globalThis`'s included — what `call_method` cannot find |
@@ -770,7 +770,7 @@ per call, over `SciterProcX`.
 | `create_windowless(opts: Windowless_Options, allocator) -> (Windowless_View, Error)` | `SXM_CREATE` + `SXM_SIZE`. `opts.pixels` nil allocates the surface; supply one to render into your own memory at your own `stride`. `opts.backend = .OPENGL` with a `glGetProcAddress` in `opts.device` renders on the GPU instead |
 | `resize_windowless(view, width, height, pixels := nil, stride := 0) -> Error` | a new size and surface; the document reflows |
 | `paint_windowless(view, rect := nil, element := nil, fore := true) -> Error` | draws. Nothing else writes pixels and nothing schedules this |
-| `windowless_heartbeat(view, time_ms)` | the engine's clock: drains posted work, settles a load |
+| `windowless_heartbeat(view, elapsed := 0)` | the engine's clock: drains posted work, settles a load. `elapsed` is ignored by the engine |
 | `windowless_mouse(view, event, pos, button, modifiers) -> bool` | delivered to the document; the return is always false |
 | `windowless_key(view, event, code, modifiers) -> bool` | delivered; pair with `set_focus` on the element |
 | `windowless_focus(view, got := true) -> bool` | `SXM_FOCUS` |
