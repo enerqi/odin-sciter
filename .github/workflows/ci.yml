@@ -31,6 +31,15 @@ jobs:
   linux:
     name: linux x64 (engine vendored)
     runs-on: ubuntu-24.04
+    # The engine picks its windowing backend from XDG_SESSION_TYPE, and gets it wrong when the variable
+    # is not set - which is the normal state of a CI runner, a container, or an ssh session. Only the
+    # literal `x11` selects the X11 backend; unset, `wayland` and `tty` all select a GTK4 path that
+    # calls a NULL function pointer in `wing::internal::PollMonitorsGtk4` during `SciterExec(.INIT)`,
+    # before any window exists. Job-level rather than per-step because every step that touches the
+    # engine needs it and a step that quietly does not would fault in a way that looks like nothing to
+    # do with this. Measured and written up in docs/ENGINE.md.
+    env:
+      XDG_SESSION_TYPE: x11
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/toolchain

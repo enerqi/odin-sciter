@@ -78,9 +78,10 @@ inside the engine binary's X input-method handling (`XSetICFocus`), it fires whe
 focus, and disabling XIM avoids it — measured here at 3 crashes out of 3 without, 0 out of 3 with. It
 is not a fault in the bindings: `just example api_map` is the check that catches a real mismatch.
 
-**If it segfaults before any window appears**, that is a different crash and `XMODIFIERS` will not help.
-The engine faults while cleaning up a window it failed to create, which on a headless Linux box usually
-means no usable EGL/GLESv2. `just window-canary` under Xvfb says which — see
+**If it segfaults before any window appears** — on CI, in a container, or over ssh — set
+`XDG_SESSION_TYPE=x11`. The engine picks its windowing backend from that variable, and unset it takes a
+GTK4 path that calls a NULL pointer inside `SciterExec(.INIT)`. `XMODIFIERS` does not affect it.
+`just window-canary` under Xvfb names this and the other pre-window failure — see
 [`docs/getting-started.md`](docs/getting-started.md#when-it-does-not-work).
 
 

@@ -120,9 +120,16 @@ engine binary's X input-method handling (`XSetICFocus`), it fires when the windo
 disabling XIM avoids it — 3 crashes out of 3 without it here, 0 out of 3 with. It is not a fault in
 the bindings.
 
-**It segfaults *inside* `create_window`, before any window appears — and `XMODIFIERS=@im=none` makes no
-difference.** Different crash, same engine code: when the engine cannot create a window it faults while
-cleaning up the one it failed to build (`XDestroyIC`), instead of returning NULL. The usual cause on a
+**It segfaults on a CI runner, in a container, or over ssh — before any window appears.** Set
+`XDG_SESSION_TYPE=x11`. The engine picks its windowing backend from that variable and only the literal
+`x11` selects X11; unset — the normal state in all three of those places — selects a GTK4 path that
+calls a NULL function pointer inside `SciterExec(.INIT)`. It has nothing to do with your renderer, and
+`XMODIFIERS` does not affect it. Details in
+[`ENGINE.md`](./ENGINE.md#xdg_session_type-decides-the-windowing-backend-and-gets-it-wrong-unset).
+
+**It segfaults *inside* `create_window`, and `XDG_SESSION_TYPE` is already `x11`.** A different crash:
+when the engine cannot create a window it faults while cleaning up the one it failed to build
+(`XDestroyIC`), instead of returning NULL. The usual cause on a
 headless Linux box is no usable EGL/GLESv2 — and note that a passing `glxinfo` does not establish that,
 since GLX and EGL are different Mesa paths and the engine uses EGL. Do not guess: run
 `just window-canary` under Xvfb or Xephyr. It traces how far the engine gets (`XCreateWindow`,

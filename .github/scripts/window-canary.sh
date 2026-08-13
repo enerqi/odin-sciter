@@ -3,39 +3,43 @@
 # Can the engine create a window on this machine at all?
 #
 # Ask once, in seconds, before the forty-five minute test job - because the answer "no" is invisible in
-# that job's output. When `wing::window::create` fails, the engine's own cleanup path faults:
+# that job's output. The engine does not report a machine it cannot run on; it faults, and it does so in
+# at least two places that look nothing alike:
 #
-#   #0  XDestroyIC ()                        from libX11.so.6
-#   #1  wing::internal::DestroyWindowX11 ()   from libsciter.so
-#   #2  wing::window::destroy ()
-#   #3  wing::window::create ()
-#   #4  xwing::application::create_frame ()
-#   #5  SciterCreateWindowImp ()
+#   XDG_SESSION_TYPE is not `x11`     `wing::init()` picks the GTK4 backend, and
+#                                     `wing::internal::PollMonitorsGtk4` calls a NULL function pointer
+#                                     during `SciterExec(.INIT)` - before a window is even asked for.
+#                                     Unset is the normal state of CI, a container, or ssh. This is what
+#                                     the runner was hitting.
 #
-# so every windowed test dies with SIGSEGV inside `create_window`, the Odin test runner then hangs
-# rather than reaping the thread, and each example burns the whole EXAMPLE_TEST_TIMEOUT. Twenty-odd
-# examples segfaulting identically reads like a broken binding; it is one missing renderer. Note that
-# this is a *different* crash from the `XSetICFocus` one in README.md, and `XMODIFIERS=@im=none` does
-# not prevent it - that one needs a window, this one happens because there is not going to be one.
+#   `wing::window::create` fails      it unwinds through `wing::window::destroy` into `XDestroyIC` with
+#   (no usable renderer)              an XIC that was never created. The engine faults instead of
+#                                     returning NULL, so it presents as SIGSEGV inside `create_window`.
+#
+# Either way every windowed test dies, the Odin test runner hangs rather than reaping the thread, and
+# each example burns the whole EXAMPLE_TEST_TIMEOUT. Twenty-odd examples segfaulting identically reads
+# like a broken binding and is not one. Neither of these is the `XSetICFocus` crash in README.md, and
+# `XMODIFIERS=@im=none` does not prevent either of them.
 #
 # The canary is `hello_window` because it is the smallest thing that opens a window and it does it on
-# the main thread, where the same failure usually degrades to `SciterCreateWindow failed` and exit 1
+# the main thread, where a renderer failure often degrades to `SciterCreateWindow failed` and exit 1
 # instead of faulting. Either way the exit code answers the question:
 #
 #   124  the timeout fired, so the program was still running, so the window exists   -> pass
 #   1    SciterCreateWindow returned NULL                                            -> no renderer
-#   139  SIGSEGV in the cleanup path above                                           -> no renderer
+#   139  SIGSEGV - read the trace below to see which of the two it was
 #
 # **Do not run this on your own X session.** A Sciter `SW_MAIN` window mode-sets the display to its own
 # frame size on X11, so it will resize your desktop to 720x480. Under Xvfb or Xephyr that is contained,
 # which is where CI runs it.
 #
 # On failure it prints the evidence that says which piece is missing, rather than leaving the next
-# person to add print statements and push again. The backtrace leads, because it is the only item that
-# distinguishes the candidates instead of just listing what is present: a renderer that cannot make a
-# context and an X server missing an extension both end at the same `XDestroyIC` fault. The rest -
-# libsciter.so's dependencies, the EGL vendor ICDs, the X server's extension list, glxinfo, and what
-# Mesa says while it dies - is there to name the missing package once the frame says which kind.
+# person to add print statements and push again. The call trace leads, because it is the only item that
+# tells the two failures apart and rules candidates out rather than merely listing what is present: a
+# `[wing] InitGtk4` line is the environment, an `[egl] …` line that does not come back is the renderer,
+# and a bare SIGSEGV with neither is something new. The rest - libsciter.so's dependencies, the EGL
+# vendor ICDs, the X server's extension list, eglinfo, glxinfo, and what Mesa says while it dies - is
+# there to name the missing package once the trace says which kind of missing it is.
 
 set -uo pipefail
 
@@ -57,7 +61,7 @@ if [ "$code" = 124 ]; then
 	exit 0
 fi
 
-echo "::error::the engine cannot create a window here (canary exited $code) - every windowed test below would fault inside SciterCreateWindow"
+echo "::error::the engine cannot open a window on this machine (canary exited $code) - every windowed test below would fault the same way, in the engine and not in the bindings"
 echo
 
 # The backtrace first, because it is the only line of evidence that says *which* precondition is
@@ -78,6 +82,9 @@ if command -v gdb >/dev/null; then
 		set confirm off
 		set debuginfod enabled off
 		set breakpoint pending on
+		dprintf _ZN4wing8internal7InitX11Ev,"[wing] InitX11  (the backend that works headless)\n"
+		dprintf _ZN4wing8internal8InitGtk4Ev,"[wing] InitGtk4 (XDG_SESSION_TYPE is not 'x11' - this path faults)\n"
+		dprintf _ZN4wing8internal16PollMonitorsGtk4Ev,"[wing] PollMonitorsGtk4\n"
 		dprintf XOpenIM,"[x11] XOpenIM\n"
 		dprintf XCreateIC,"[x11] XCreateIC\n"
 		dprintf XCreateWindow,"[x11] XCreateWindow\n"
@@ -106,6 +113,12 @@ ldd lib/linux/x64/libsciter.so 2>&1 | grep -Ei 'egl|gles|gl\.so|glx|x11|xcb|xi\.
 echo
 echo "--- EGL vendor ICDs libglvnd can dispatch to (empty means libegl1 has no implementation)"
 ls -l /usr/share/glvnd/egl_vendor.d/ 2>&1 || true
+echo
+# The first thing to check, and the cheapest: anything but the literal `x11` sends `wing::init()` into
+# the GTK4 backend, which faults in `PollMonitorsGtk4` before a window is ever asked for.
+echo "--- backend selection"
+echo "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-(unset - the engine will pick GTK4 and fault)}"
+echo "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-(unset)}  DISPLAY=${DISPLAY:-(unset)}"
 echo
 echo "--- what this X server offers (the engine wants XKB, Xi, RANDR, MIT-SHM and a 24-bit visual)"
 if command -v xdpyinfo >/dev/null; then

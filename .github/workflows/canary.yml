@@ -43,6 +43,12 @@ jobs:
   probe:
     name: upstream engine probe
     runs-on: ubuntu-24.04
+    # Same reason as ci.yml: unset XDG_SESSION_TYPE sends the engine down a GTK4 path that faults during
+    # `SciterExec(.INIT)`. Worth keeping identical here - a *new* engine that still needs this is a fact
+    # about the upgrade, and a new engine that has fixed it should be found out deliberately rather than
+    # by this job silently doing it differently.
+    env:
+      XDG_SESSION_TYPE: x11
     steps:
       - uses: actions/checkout@v4
 

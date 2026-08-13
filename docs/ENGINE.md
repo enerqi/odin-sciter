@@ -382,6 +382,48 @@ It is not about ibus, and **it is not about the window manager**: it reproduces 
 window manager running at all. Any `XMODIFIERS` value naming an input method is enough. Until the engine
 is fixed, run with `XMODIFIERS=@im=none`, and expect users with an IME configured to hit it.
 
+## `XDG_SESSION_TYPE` decides the windowing backend, and gets it wrong unset
+
+The first thing to check on any machine where the engine dies before a window appears, and the cause of
+every windowed test failing on a CI runner. `wing::init()` reads `XDG_SESSION_TYPE` and picks a backend
+from it. Only the literal `x11` selects the X11 one. Measured 2026-08-13, same machine, same display,
+nothing else changed:
+
+| `XDG_SESSION_TYPE` | Backend chosen | Result |
+| --- | --- | --- |
+| `x11` | `wing::internal::InitX11` | runs |
+| **unset** | `wing::internal::InitGtk4` | **SIGSEGV** |
+| `wayland` | `wing::internal::InitGtk4` | **SIGSEGV** |
+| `tty` | `wing::internal::InitGtk4` | **SIGSEGV** |
+
+The GTK4 path calls a NULL function pointer straight away:
+
+```
+#0  0x0000000000000000 in ?? ()
+#1  wing::internal::PollMonitorsGtk4 ()   from libsciter.so
+#2  wing::internal::InitGtk4 ()
+#3  wing::init ()
+#4  xwing::application::application ()
+#5  xskia::application::application ()
+#6  xskia::app_factory ()
+#7  xwing::application::factory ()
+#8  SciterExecImp ()                       <- SciterExec(.INIT)
+```
+
+The engine dlopens `libgtk-4.so`, `libglib-2.0.so` and `libgobject-2.0.so` — the *development* symlink
+names, not the runtime sonames (`libgtk-4.so.1`, `libglib-2.0.so.0`) — and `PollMonitorsGtk4` needs
+`g_list_model_get_n_items` and `g_list_model_get_item`, which live in libgio rather than either library
+it names. Whatever the exact miss, the pointer it calls is NULL and nothing checks it. Installing GTK4
+is not the fix; not taking the path is.
+
+**So this crashes in `SciterExec(.INIT)`, before any window is created** — which is worth stating
+separately because a fault inside `SciterCreateWindow` is a renderer problem (next section) and this one
+is not. `eglinfo` on the failing runner reported a complete working X11 EGL stack.
+
+Unset is the *normal* state of a CI runner, a Docker container, and an ssh session, so a host that may
+run in any of those should set it. `XDG_SESSION_TYPE=x11` is one line in a workflow's `env:`, and it is
+what `ci.yml` and `canary.yml` do.
+
 ## The other X11 input-method crash: a window that fails to open
 
 A second, unrelated fault in the same X input-method code, and the reason it is worth stating
