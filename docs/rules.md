@@ -98,9 +98,11 @@ is a resource the document waits on forever. This was measured, not assumed: the
 
 ---
 
-## 4. Allocators: arguments are temporary, results are yours
+## 4. Allocation: the library takes an allocator, you decide the lifetime
 
-The convention throughout, and it is uniform:
+### The convention
+
+Uniform across all 50 procedures that allocate:
 
 - **anything the wrapper builds to hand to the engine** — a UTF-16 copy of your string, a cstring for a
   selector — comes from `context.temp_allocator` and is gone when you next free it
@@ -108,14 +110,119 @@ The convention throughout, and it is uniform:
   `context.allocator` and is always the **last** parameter
 - a string or slice returned that way is **yours to `delete`**
 
-Two specific cases that have caught people:
+Where a proc borrows instead of allocating, its doc comment says "borrowed" and names the lifetime —
+`tag`, the `name` in an attribute-change event, and the keyboard/cursor strings in the host callbacks
+are all borrowed for the duration of the call. No procedure in the package allocates into your
+allocator without taking one, so what follows is entirely your choice to make.
+
+### You own the temp-allocator boundary
+
+There are ~75 uses of `context.temp_allocator` inside the wrapper, and every one of them bumps *your*
+arena: `dom.odin` alone does it 19 times, `window.odin` 10, `host.odin` 9. Any call taking a string,
+a selector or a URL is one of them.
+
+**Nothing in this package ever calls `free_all`**, deliberately — the arena is the caller's and the
+library has no idea where your boundaries are. That means a long-running program that never frees it
+grows forever, one selector at a time, and the growth looks like a leak in the bindings when it is not.
+
+Pick a boundary and put it somewhere unconditional:
+
+```odin
+for sciter_app.run_once() {
+    sciter_app.heartbeat()
+    // ... your per-turn work, DOM reads, whatever ...
+    free_all(context.temp_allocator)   // the boundary
+}
+```
+
+The three that fall out naturally:
+
+| boundary | why |
+| --- | --- |
+| one turn of the pump | the common case for a windowed application; everything scratch dies with the frame |
+| one event handler | a handler that does substantial DOM work, if a frame is too coarse |
+| one served request | `on_load_data` can build a lot of strings, and the answer is copied out before you return |
+
+`free_all` on an arena is a pointer reset, so a boundary costs nothing and having one is what makes the
+temp allocator the right default for scratch in the first place.
+
+### The capture rule: attach from where the object will live
+
+Six entry points store the **whole `runtime.Context`** — `context.allocator` *and*
+`context.temp_allocator` as they were at the moment you called — and restore it inside every later
+callback, because the engine calls back as `proc "system"` where Odin's implicit context does not exist:
+
+| call | what it captures | used by |
+| --- | --- | --- |
+| `attach_handler`, `attach_window_handler` | full context | every `on_event` for the life of the attachment |
+| `set_host_handler` | full context | every host notification, including `on_load_data` |
+| the handler returned from `on_attach_behavior` | full context | that behavior's events |
+| `make_asset` | full context, plus `allocator` for the asset itself | every getter, setter and method call from script |
+| `set_default_debug_output` | full context | the stderr logger (it decodes into a fixed buffer, so this is for `fmt`'s use only) |
+
+**So the scope you attach from decides the allocator for that object's whole life.** Attaching from
+inside a temporary arena — a `defer free_all` block, a scratch scope in a setup routine — binds the
+callbacks to an arena that is about to be reset, and the failure arrives much later, in a callback, as
+memory that was reused underneath it.
+
+Attach from where the object lives: `main`, or an init routine whose context is the process-lifetime
+one. The test suites here do the same thing for the same reason, via
+`context.allocator = runtime.default_allocator()` before creating the process-lifetime window.
+
+Four more places take an allocator and keep it, rather than the whole context:
+`make_asset_class`, `make_asset`, `create_windowless` (the view reallocates its pixel buffer from it on
+every resize) and `init` (the argv the engine holds until `shutdown`).
+
+### Choosing an allocator by lifetime
+
+The package is written so that objects sharing a lifetime can share an allocator; it does not choose
+for you. What each kind of lifetime wants:
+
+**Process-lifetime singletons** — the engine's argv, an `Asset_Class` and its assets, a windowless
+view's surface. The default heap allocator is right. These are allocated once, freed at `shutdown` or
+not at all, and the allocation cost is irrelevant.
+
+**A batch with one lifetime** — this is where the win is, and where a general-purpose allocator is
+worst. A document's `select_all` result plus the text and attributes read from it; a request's
+parameters and headers; a frame's worth of measured strings. All of it dies at the same instant, so
+give the batch its own arena and pass that arena to the calls:
+
+```odin
+import vmem "core:mem/virtual"
+
+arena: vmem.Arena
+_ = vmem.arena_init_growing(&arena)
+batch := vmem.arena_allocator(&arena)
+defer vmem.arena_destroy(&arena)     // one call frees the lot
+
+rows := sciter_app.select_all(root, "tr", batch) or_return
+for row in rows {
+    text := sciter_app.text(row, batch) or_return
+    // ... no individual delete anywhere ...
+}
+```
+
+That replaces one `delete` per string plus one for the slice with a single reset, and it makes the
+lifetime a property of the arena rather than of your discipline. `core:mem/virtual`'s growing arena is
+the natural fit: it reserves address space and commits as it goes, so the batch does not need a size
+estimate up front.
+
+**Scratch inside one scope** — `context.temp_allocator`, with a boundary as above. This is what the
+wrapper itself uses for every argument it builds.
+
+**Never the temp allocator for anything the engine keeps.** The engine holds pointers past the call in
+four places, and every one of them will read the memory after your next `free_all`:
+
+- the argv given to `init` — held until `shutdown`
+- an `Asset_Class`'s passport — the C header says it must "survive last instance of the engine"
+- any handler struct you attach — the engine stores its *address* as the tag
+- the bytes handed to `serve` — borrowed for the duration of the callback, so they must outlive the
+  return, and `data_ready` is the copying alternative when they cannot
+
+### Two specific cases that have caught people
 
 - `sciter.load` returns its `tried` candidate list **on every path, success included**, each string
   separately allocated. `load_engine` is the worked example of freeing it.
-- strings decoded out of the engine are allocated at their exact length. Scratch space used during
-  decoding comes from the temp allocator, so a `free_all(context.temp_allocator)` in your frame loop is
-  worth having.
-
-Where a proc borrows instead of allocating, its doc comment says "borrowed" and names the lifetime —
-`tag`, the `name` in an attribute-change event, and the keyboard/cursor strings in the host callbacks
-are all borrowed for the duration of the call.
+- strings decoded out of the engine are allocated at their exact length, in the allocator you passed.
+  The oversized scratch used while decoding comes from the temp allocator, which is another reason the
+  boundary above matters.

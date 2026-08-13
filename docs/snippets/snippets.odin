@@ -16,6 +16,7 @@ import "../../sciter_app"
 import "base:runtime"
 import "core:fmt"
 import "core:math"
+import vmem "core:mem/virtual"
 import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
@@ -1040,4 +1041,33 @@ behavior_detach_block :: proc(event: sciter_app.Event, widget: rawptr) {
 			free(widget)
 		}
 	}
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// rules.md, the temp-allocator boundary
+
+pump_with_a_boundary_block :: proc() {
+	for sciter_app.run_once() {
+		sciter_app.heartbeat()
+		// ... your per-turn work, DOM reads, whatever ...
+		free_all(context.temp_allocator)
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// rules.md, one arena for a batch that shares a lifetime
+
+batch_arena_block :: proc(root: sciter_app.Element) -> sciter_app.Error {
+	arena: vmem.Arena
+	_ = vmem.arena_init_growing(&arena)
+	batch := vmem.arena_allocator(&arena)
+	defer vmem.arena_destroy(&arena) // one call frees the lot
+
+	rows := sciter_app.select_all(root, "tr", batch) or_return
+	for row in rows {
+		text := sciter_app.text(row, batch) or_return
+		_ = text // ... no individual delete anywhere ...
+	}
+	return nil
 }
