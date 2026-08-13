@@ -84,6 +84,20 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x1024x24" glxinfo -B
           xvfb-run -a -s "-screen 0 1280x1024x24" bash -c 'echo "DISPLAY=$DISPLAY"; xdpyinfo | head -12'
 
+      # The precondition for everything below, asked separately because a failure of it is unreadable
+      # inside the test job. If the engine cannot create a window here, `wing::window::create` fails,
+      # its cleanup path faults in `XDestroyIC`, and every windowed test dies with SIGSEGV at
+      # `create_window` while the test runner hangs until EXAMPLE_TEST_TIMEOUT - forty-five minutes of
+      # identical segfaults that read like a broken binding and are one missing renderer. Twenty
+      # seconds, and it prints the EGL diagnosis when it fails. Not continue-on-error: nothing after
+      # this can pass if it does not.
+      - name: Can the engine create a window here?
+        env:
+          XMODIFIERS: '@im=none'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just window-canary
+
       # Xvfb because the windowed tests gate themselves on DISPLAY/WAYLAND_DISPLAY and would otherwise
       # skip ~two thirds of the suite. The screen is given explicitly because Xvfb's default depth is
       # not guaranteed to be 24, and an 8-bit screen is a rendering failure that looks like an engine

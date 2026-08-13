@@ -382,6 +382,46 @@ It is not about ibus, and **it is not about the window manager**: it reproduces 
 window manager running at all. Any `XMODIFIERS` value naming an input method is enough. Until the engine
 is fixed, run with `XMODIFIERS=@im=none`, and expect users with an IME configured to hit it.
 
+## The other X11 input-method crash: a window that fails to open
+
+A second, unrelated fault in the same X input-method code, and the reason it is worth stating
+separately is that **`XMODIFIERS=@im=none` does not prevent it** — the crash is on the teardown side, so
+turning the input method off does not keep the engine out of it.
+
+```
+#0  XDestroyIC ()                          from libX11.so.6
+#1  wing::internal::DestroyWindowX11 ()      from libsciter.so
+#2  wing::window::destroy ()
+#3  wing::window::create ()
+#4  xwing::application::create_frame ()
+#5  xskia::application::create_frame ()
+#6  SciterCreateWindowImp ()
+```
+
+`wing::window::create` fails, unwinds by calling `destroy()` on the half-built window, and that walks
+into `XDestroyIC` with an `XIC` field that was never set. So *any* reason a window cannot be created
+presents as a SIGSEGV inside `SciterCreateWindow` rather than the NULL return the API documents.
+
+Measured 2026-08-13, reproduced by hiding the EGL vendor ICD from libglvnd
+(`__EGL_VENDOR_LIBRARY_DIRS=/an/empty/dir`) so that `eglInitialize` has nothing to dispatch to:
+
+| `SET_GFX_LAYER` | EGL ICD present | Result |
+| --- | --- | --- |
+| default | yes | window created |
+| `.SKIA_RASTER` | yes | window created |
+| default | **no** | **SIGSEGV in `XDestroyIC`** (not every run — the field is garbage, not reliably a fault) |
+| `.SKIA_RASTER` | **no** | `SciterCreateWindow` returns NULL, exit code 1 |
+
+Two things follow. **`.SKIA_RASTER` is not an escape from EGL**: Skia's raster backend still cannot get
+a window on a machine with no working EGL, it only fails politely instead of faulting. And a host that
+wants a diagnosable failure rather than a crash on a GL-less machine should set `.SKIA_RASTER` before
+creating its first window, get the NULL, and report it.
+
+For a test suite this is the difference between one legible failure and twenty identical segfaults: the
+Odin test runner catches the signal and then hangs rather than reaping the thread, so every windowed
+example burns its whole timeout. `.github/scripts/window-canary.sh` (`just window-canary`) asks the
+question once, before the suite, and prints the renderer diagnosis when the answer is no.
+
 ## Windows, when it is vendored
 
 Nothing here has been run on Windows. The same page can be filled in with:

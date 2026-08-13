@@ -78,6 +78,11 @@ inside the engine binary's X input-method handling (`XSetICFocus`), it fires whe
 focus, and disabling XIM avoids it — measured here at 3 crashes out of 3 without, 0 out of 3 with. It
 is not a fault in the bindings: `just example api_map` is the check that catches a real mismatch.
 
+**If it segfaults before any window appears**, that is a different crash and `XMODIFIERS` will not help.
+The engine faults while cleaning up a window it failed to create, and on Linux the reason is nearly
+always a machine with no working EGL/GLESv2 — see
+[`docs/getting-started.md`](docs/getting-started.md#when-it-does-not-work).
+
 
 ## How it works, in one section
 

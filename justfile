@@ -726,6 +726,20 @@ parity *args:
 stats *args:
 	.github/scripts/stats.sh {{args}}
 
+
+# The precondition every windowed test has and none of them states. A machine with no working EGL/GLES
+# cannot create a Sciter window, and the engine's failure path faults rather than returning - so the
+# suite reports twenty-odd identical segfaults inside `create_window` and takes the full
+# EXAMPLE_TEST_TIMEOUT per example to do it. This asks the question once, in seconds, and prints the
+# renderer diagnosis when the answer is no. Read the script's header before running it: an `SW_MAIN`
+# window mode-sets the X display to its own size, so this belongs under Xvfb or Xephyr, not on your
+# desktop session.
+# ---
+# [under Xvfb only] can the engine create a window on this machine?
+[unix]
+window-canary: mktarget_dirs
+	.github/scripts/window-canary.sh
+
 # The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS
 # day to day, so an example that stops type checking there is invisible until someone has the machine.
 #

@@ -141,6 +141,19 @@ jobs:
         continue-on-error: true
         run: just check
 
+      # Same gate as ci.yml, and worth more here: "the new engine cannot create a window" is exactly
+      # the kind of regression this probe exists to catch, and without this it arrives as forty-five
+      # minutes of identical segfaults in the step below rather than as a line in the summary.
+      - name: Can the engine create a window here?
+        id: canary
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        env:
+          XMODIFIERS: '@im=none'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just window-canary
+
       - name: Run the example tests
         id: tests
         if: steps.tags.outputs.new == 'true'
@@ -169,6 +182,7 @@ jobs:
             echo "| \`just bindgen\` | $(status '${{ steps.bindgen.outcome }}') |"
             echo "| \`just api-map-verify\` | $(status '${{ steps.apimap.outcome }}') |"
             echo "| \`just check\` | $(status '${{ steps.check.outcome }}') |"
+            echo "| \`just window-canary\` | $(status '${{ steps.canary.outcome }}') |"
             echo "| \`just example-tests\` | $(status '${{ steps.tests.outcome }}') |"
             echo
             echo "### Generated bindings diff"
@@ -189,6 +203,7 @@ jobs:
           if [ '${{ steps.bindgen.outcome }}' = 'success' ] \
             && [ '${{ steps.apimap.outcome }}' = 'success' ] \
             && [ '${{ steps.check.outcome }}' = 'success' ] \
+            && [ '${{ steps.canary.outcome }}' = 'success' ] \
             && [ '${{ steps.tests.outcome }}' = 'success' ]; then
             echo "clean=true" >> "$GITHUB_OUTPUT"
           else
