@@ -41,8 +41,14 @@ Box :: enum u32 {
 //
 // `.Root` and `.View` are both anchored outside the element - they differ by a fixed offset, where the
 // root element sits inside the window - so scrolling an ancestor moves what they report, by the same
-// amount. `.Container` is measured from the container's own content origin and does not move when that
-// container scrolls.
+// amount. **Measured, that offset is zero on this engine**: every element tried answered identically
+// for the two, `<html>` at (0,0) and elements inside a scrolled container included. So the two are
+// interchangeable in practice on 6.0.4.9, and the reason to prefer one is which the call you are
+// feeding documents - `element_at`, `send_mouse` and `show_popup_at` are all specified against the
+// window, which is `.View`.
+//
+// `.Container` is measured from the container's own content origin and does not move when that
+// container scrolls; that one genuinely differs, as does `.Self`.
 //
 // `.Self` is how to ask for a size and ignore a position: the content box comes back at (0, 0), and an
 // outer box comes back with negative x and y, which is how to read a padding or border width.

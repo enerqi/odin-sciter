@@ -430,9 +430,18 @@ show_popup :: proc(popup: Element, anchor: Element, placement := Popup_Placement
 	return dom_err(sciter.api().SciterShowPopup(sciter.Helement(popup), sciter.Helement(anchor), u32(placement)))
 }
 
-// Shows `popup` at a point in the window's coordinates - the ones `location(el, .Border, .Root)`
-// reports. A mouse event's `pos` is relative to the element it was delivered to, so showing a menu
-// where the pointer is means adding that element's `.Root` origin to it.
+// Shows `popup` at a point in the window's coordinates. The header is specific about which: "popup
+// element position, relative to origin of Sciter window" - so this is the `.View` space, the same one
+// `element_at` and `send_mouse` use, not the document's `.Root`.
+//
+// The distinction is invisible on this engine. Measured against 6.0.4.9: `location(el, .Border, .Root)`
+// and `location(el, .Border, .View)` returned identical rectangles for every element tried, `<html>`
+// included and inside a scrolled container included - the delta was (0,0) throughout. `.Container` and
+// `.Self` really do differ; `.Root` and `.View` did not. Either spelling therefore works today, and
+// `.View` is the one to write because it is the one the C API documents.
+//
+// A mouse event's `pos` is relative to the element it was delivered to, so showing a menu where the
+// pointer is means adding that element's `.View` origin to it.
 show_popup_at :: proc(popup: Element, pos: [2]i32, placement := Popup_Placement.Top_Left) -> Error {
 	return dom_err(sciter.api().SciterShowPopupAt(sciter.Helement(popup), {x = pos.x, y = pos.y}, u32(placement)))
 }
