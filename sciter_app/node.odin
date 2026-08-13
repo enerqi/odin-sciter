@@ -98,15 +98,23 @@ node_from_value :: proc(v: ^Value) -> (node: Node, err: Error) {
 // against two element children, measured. That difference is the first thing the node view surprises
 // people with, and indexing with `node_child` on the assumption that children are elements is how it
 // bites.
-node_child_count :: proc(node: Node) -> (n: int, err: Error) {
+// A position among a node's children, counting text and comment nodes as well as elements. `distinct`
+// from `Child_Index` because they are two numberings of the same parent and the difference is exactly
+// what the comment above warns about: handing one of these to `child` finds the wrong element, or none.
+//
+// There is no conversion between the two - the counts differ per parent, so going from one to the other
+// means walking the children, not casting.
+Node_Index :: distinct int
+
+node_child_count :: proc(node: Node) -> (n: Node_Index, err: Error) {
 	count: u32
 	dom_err(sciter.api().SciterNodeChildrenCount(sciter.Hnode(node), &count)) or_return
-	return int(count), nil
+	return Node_Index(count), nil
 }
 
 // The nth child. Unlike the rest of the walk, an index past the end is `.INVALID_PARAMETER` rather
 // than `.Not_Found` - it is a mistake, not the end of anything.
-node_child :: proc(node: Node, n: int) -> (child: Node, err: Error) {
+node_child :: proc(node: Node, n: Node_Index) -> (child: Node, err: Error) {
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterNodeNthChild(sciter.Hnode(node), u32(n), &hn)) or_return
 	return found_node(hn)

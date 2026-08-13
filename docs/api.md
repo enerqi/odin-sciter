@@ -162,8 +162,8 @@ do not clear it.
 | `select_all(el, selector, allocator) -> ([]Element, Error)` | document order; `delete` the slice |
 | `select_parent(el, selector, depth := 0) -> (Element, Error)` | `closest()`: nearest ancestor **or self**; `depth` counts from the element, 0 is unlimited |
 | `element_at(window, pos: [2]i32) -> (Element, Error)` | hit testing: the topmost element at a point in the window's client area. Off the document is `.Not_Found` |
-| `child_count` / `child` / `parent` | traversal, elements only |
-| `element_index(el) -> (int, Error)` | position among the parent's *elements*; text nodes do not shift it |
+| `child_count` / `child` / `parent` | traversal, elements only; indices are `Child_Index` |
+| `element_index(el) -> (Child_Index, Error)` | position among the parent's *elements*; text nodes do not shift it |
 | `tag(el) -> (string, Error)` | borrowed — do not free |
 | `text` / `set_text` | text content |
 | `html(el, outer := false)` / `set_html(el, html, where_ := .SIH_REPLACE_CONTENT)` | markup |
@@ -303,7 +303,7 @@ The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`.
 | `node_from_element` / `node_to_element` | crossing between the two views; the latter fails on a text node |
 | `node_type` | `.ELEMENT`, `.TEXT`, `.COMMENT` |
 | `node_first_child` / `node_last_child` / `node_next_sibling` / `node_prev_sibling` | `.Not_Found` ends the walk |
-| `node_child` / `node_child_count` / `node_parent` | `node_parent` returns an `Element` |
+| `node_child` / `node_child_count` / `node_parent` | indices are `Node_Index`, `distinct` from `Child_Index` — text and comment nodes count here and do not there; `node_parent` returns an `Element` |
 | `node_text` / `node_set_text` | the text a `.TEXT` or `.COMMENT` node carries |
 | `make_text_node` / `make_comment_node` | detached, and yours until inserted |
 | `node_insert(node, where_, what)` | `.BEFORE`, `.AFTER`, `.APPEND`, `.PREPEND` |

@@ -635,17 +635,42 @@ extension-run: extension
 example-test name="eval" *args: mktarget_dirs
 	odin test examples/{{name}}.odin -file -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
 
+# Runs every example's tests and keeps going, rather than stopping at the first failure: one example
+# faulting is a fact about that example, and finding out which of the other twenty-three also fault
+# should not cost twenty-three more pushes. The summary at the end is the report; the exit code is
+# still non-zero if anything failed.
+#
+# EXAMPLE_TEST_TIMEOUT (seconds, default none) puts a ceiling on each example. A windowed test on a
+# display that cannot render can block on the message pump forever, and without this the whole run
+# hangs until CI's own six-hour limit rather than telling you which example stopped. 124 in the
+# summary is that timeout firing; anything else is the example's own exit code. The budget covers
+# compilation too - `odin test` builds before it runs.
+# ---
 # run every example's tests
 example-tests:
 	#!/usr/bin/env bash
-	set -euo pipefail
+	set -uo pipefail
+	limit="${EXAMPLE_TEST_TIMEOUT:-0}"
+	failed=()
 	for f in examples/*.odin; do
 	    name=$(basename "$f" .odin)
-	    if grep -q '@(test)' "$f"; then
-	        echo "--- $name"
+	    grep -q '@(test)' "$f" || continue
+	    echo "--- $name"
+	    if [ "$limit" != "0" ]; then
+	        timeout --kill-after=10s "$limit" just example-test "$name"
+	    else
 	        just example-test "$name"
 	    fi
+	    code=$?
+	    [ "$code" -eq 0 ] || failed+=("$name(exit $code)")
 	done
+	if [ "${#failed[@]}" -ne 0 ]; then
+	    echo
+	    echo "FAILED: ${failed[*]}"
+	    exit 1
+	fi
+	echo
+	echo "ok: every example's tests passed"
 
 # build and run an example, e.g. `just example hello_window`
 example name="hello_window" *args: mktarget_dirs

@@ -321,7 +321,7 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 		ld := (^sciter.Scn_Load_Data)(pns)
 		request := Load_Request {
 			uri  = string_from_utf16_cstring(ld.uri, context.temp_allocator),
-			type = sciter.Sciter_Resource_Type(ld.dataType),
+			type = ld.dataType,
 			raw  = ld,
 		}
 		return u32(handler.on_load_data(handler, &request))
@@ -333,7 +333,7 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 		dl := (^sciter.Scn_Data_Loaded)(pns)
 		loaded := Data_Loaded {
 			uri    = string_from_utf16_cstring(dl.uri, context.temp_allocator),
-			type   = sciter.Sciter_Resource_Type(dl.dataType),
+			type   = dl.dataType,
 			status = u32(dl.status),
 			raw    = dl,
 		}

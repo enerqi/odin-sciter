@@ -1170,12 +1170,12 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 	at_zero, _ := sciter_app.child(list, 0)
 	testing.expect_value(t, at_zero, first)
 
-	// Past the end is not an error - it lands at the end. `max(int)` is the interesting one: handed
-	// to the engine as written it segfaults rather than appending, so `insert_element` clamps to the
-	// child count and this is the regression test for that.
+	// Past the end is not an error - it lands at the end. The largest possible index is the interesting
+	// one: handed to the engine as written it segfaults rather than appending, so `insert_element`
+	// clamps to the child count and this is the regression test for that.
 	tail, _ := sciter_app.make_element("li", "way past")
 	defer sciter_app.unuse_element(tail)
-	testing.expect_value(t, sciter_app.insert_element(tail, list, max(int)), nil)
+	testing.expect_value(t, sciter_app.insert_element(tail, list, max(sciter_app.Child_Index)), nil)
 
 	after, _ := sciter_app.child_count(list)
 	testing.expect_value(t, after, before + 2)
@@ -1939,7 +1939,7 @@ test_element_index_counts_elements_only :: proc(t: ^testing.T) {
 	for item, i in items {
 		index, err := sciter_app.element_index(item)
 		testing.expect_value(t, err, nil)
-		testing.expect_value(t, index, i)
+		testing.expect_value(t, index, sciter_app.Child_Index(i))
 	}
 
 	// A text node in front of them does not shift the numbering, which is what makes the index safe

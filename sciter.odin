@@ -1257,10 +1257,10 @@ Mouse_Params :: struct {
 	pos_view:      Point, // position of cursor, view relative
 	button_state:  Mouse_Buttons, // MOUSE_BUTTONS
 	alt_state:     Keyboard_States, // KEYBOARD_STATES
-	cursor_type:   Uint, // CURSOR_TYPE to set, see CURSOR_TYPE
+	cursor_type:   Cursor_Type, // CURSOR_TYPE to set, see CURSOR_TYPE
 	is_on_icon:    Bool32, // mouse is over icon (foreground-image, foreground-repeat:no-repeat)
 	dragging:      Helement, // element that is being dragged over, this field is not NULL if (cmd & DRAGGING) != 0
-	dragging_mode: Uint, // see DRAGGING_TYPE.
+	dragging_mode: Dragging_Type, // see DRAGGING_TYPE.
 }
 
 Cursor_Type :: enum u32 {
@@ -1369,7 +1369,7 @@ Scroll_Params :: struct {
 	target:   Helement, // target element
 	pos:      Int, // scroll position if SCROLL_POS
 	vertical: Bool32, // true if from vertical scrollbar
-	source:   Uint, // SCROLL_SOURCE
+	source:   Scroll_Source, // SCROLL_SOURCE
 	reason:   Uint, // key or scrollbar part
 }
 
@@ -1442,7 +1442,7 @@ Exchange_Params :: struct {
 	source:   Helement, // source element (can be null if D&D from external window)
 	pos:      Point, // position of cursor, element relative
 	pos_view: Point, // position of cursor, view relative
-	mode:     Uint, // DD_MODE
+	mode:     Dd_Modes, // DD_MODE
 	data:     Sciter_Value, // packaged drag data
 }
 
@@ -1628,7 +1628,7 @@ Data_Arrived_Params :: struct {
 	initiator: Helement, // element intiator of SciterRequestElementData request,
 	data:      Bytes, // data buffer
 	dataSize:  Uint, // size of data
-	dataType:  Uint, // data type passed "as is" from SciterRequestElementData
+	dataType:  Sciter_Resource_Type, // data type passed "as is" from SciterRequestElementData
 	status:    Uint, // status = 0 (dataSize == 0) - unknown error.
 
 	// status = 100..505 - http response status, Note: 200 - OK!
@@ -1900,7 +1900,7 @@ Scn_Load_Data :: struct {
 	uri:         Wide_String, /**< [in] Zero terminated string, fully qualified uri, for example "http://server/folder/file.ext".*/
 	outData:     Bytes, /**< [in,out] pointer to loaded data to return. if data exists in the cache then this field contain pointer to it*/
 	outDataSize: Uint, /**< [in,out] loaded data size to return.*/
-	dataType:    Uint, /**< [in] SciterResourceType */
+	dataType:    Sciter_Resource_Type, /**< [in] SciterResourceType */
 	requestId:   Hrequest, /**< [in] request handle that can be used with sciter-x-request API */
 	principal:   Helement,
 	initiator:   Helement,
@@ -1917,7 +1917,7 @@ Scn_Data_Loaded :: struct {
 	uri:       Wide_String, /**< [in] zero terminated string, fully qualified uri, for example "http://server/folder/file.ext".*/
 	data:      Bytes, /**< [in] pointer to loaded data.*/
 	dataSize:  Uint, /**< [in] loaded data size (in bytes).*/
-	dataType:  Uint, /**< [in] SciterResourceType */
+	dataType:  Sciter_Resource_Type, /**< [in] SciterResourceType */
 	status:    Uint, /**< [in]
                                          status = 0 (dataSize == 0) - unknown error.
                                          status = 100..505 - http response status, Note: 200 - OK!
@@ -2492,14 +2492,14 @@ _Isciter_Api :: struct {
 	SciterRequestElementData:         proc "system" (
 		he: Helement,
 		url: Wide_String,
-		dataType: Uint,
+		dataType: Sciter_Resource_Type,
 		initiator: Helement,
 	) -> Scdom_Result,
 	SciterHttpRequest:                proc "system" (
 		he: Helement,
 		url: Wide_String,
-		dataType: Uint,
-		requestType: Uint,
+		dataType: Sciter_Resource_Type,
+		requestType: Request_Type,
 		requestParams: ^Request_Param,
 		nParams: Uint,
 	) -> Scdom_Result, // element to deliver data

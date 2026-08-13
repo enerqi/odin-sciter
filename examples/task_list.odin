@@ -191,7 +191,10 @@ render :: proc(app: ^App) -> sciter_app.Error {
 	// The selection is a CSS state rather than a class, so the stylesheet can say `li:current` and
 	// nothing has to remember to take the old one off.
 	if app.selected >= 0 && app.selected < len(app.tasks) {
-		if row, err := sciter_app.child(list, app.selected); err == nil {
+		// `selected` indexes `app.tasks`, not the DOM. The two line up only because `set_html` above
+		// just wrote one `<li>` per task in order - hence the explicit conversion rather than one type
+		// silently standing in for the other.
+		if row, err := sciter_app.child(list, sciter_app.Child_Index(app.selected)); err == nil {
 			sciter_app.set_element_state(row, {.CURRENT}) or_return
 			sciter_app.scroll_to_view(row)
 		}

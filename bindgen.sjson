@@ -201,6 +201,13 @@ procedure_type_overrides = {
 	// --- events ---------------------------------------------------------------------------------
 	"_ISciterAPI.SciterWindowAttachEventHandler.subscription" = "Event_Groups"
 
+	// The loader's two entry points. `dataType` is echoed straight back to the requester in
+	// DATA_ARRIVED_PARAMS.dataType, which is typed to match above, so leaving these as UINT would make
+	// the round trip need a cast at one end and not the other.
+	"_ISciterAPI.SciterRequestElementData.dataType" = "Sciter_Resource_Type"
+	"_ISciterAPI.SciterHttpRequest.dataType"        = "Sciter_Resource_Type"
+	"_ISciterAPI.SciterHttpRequest.requestType"     = "Request_Type"
+
 	// The handler side of the same mask. On a normal call the engine passes exactly one group; when it
 	// is asking a handler what it wants to receive it passes SUBSCRIPTIONS_REQUEST, and the handler
 	// writes a mask back through `prms`. Both are Event_Groups values.
@@ -449,6 +456,29 @@ struct_field_overrides = {
 	// "every modifier down", likewise, on both structs that carry one.
 	"MOUSE_PARAMS.alt_state" = "Keyboard_States"
 	"KEY_PARAMS.alt_state"   = "Keyboard_States"
+
+	// The rest of the event structs' UINT-wearing-an-enum fields. Every one below is unconditional -
+	// the header names exactly one enum and it holds for every value of the surrounding `cmd`, which is
+	// what separates them from the conditional ones left alone further down. Each replaces a cast that
+	// `sciter_app` was doing by hand.
+	"MOUSE_PARAMS.cursor_type"    = "Cursor_Type"
+	"MOUSE_PARAMS.dragging_mode"  = "Dragging_Type"
+	"SCROLL_PARAMS.source"        = "Scroll_Source"
+	"EXCHANGE_PARAMS.mode"        = "Dd_Modes"
+	"DATA_ARRIVED_PARAMS.dataType" = "Sciter_Resource_Type"
+	"SCN_LOAD_DATA.dataType"       = "Sciter_Resource_Type"
+	"SCN_DATA_LOADED.dataType"     = "Sciter_Resource_Type"
+
+	// Left as UINT on purpose, all for the same reason the `cmd` fields are - which enum they hold is
+	// decided by something else in the struct:
+	//
+	//   SCROLL_PARAMS.reason      - a key code when `source` is KEYBOARD, a SCROLLBAR_PART when it is
+	//                               SCROLLBAR, and nothing at all otherwise.
+	//   FOCUS_PARAMS.cause        - a FOCUS_CMD_TYPE only for FOCUS_ADVANCE_REQUEST.
+	//   SCN_SET_CURSOR.cursorId   - a CURSOR_TYPE only when `cursorUrl` is NULL.
+	//   KEY_PARAMS.key_code       - a virtual key for DOWN/UP, a character for CHAR. Not an enum either
+	//                               way; there is no upstream list to name it against.
+	//   BEHAVIOR_EVENT_PARAMS.reason - a CLICK_REASON or an EDIT_CHANGED_REASON, chosen by `cmd`.
 
 	// The `cmd` fields are deliberately NOT typed. Every one of them is an event code with the
 	// propagation phase ORed in - `MOUSE_DOWN | SINKING` is not a MOUSE_EVENTS value - and the mouse

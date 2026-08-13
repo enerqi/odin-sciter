@@ -109,7 +109,11 @@ i, _      := sciter_app.element_index(el)  // position among the parent's elemen
 ```
 
 `element_index` counts elements only — a text node in front of an element does not shift it — which is
-the same numbering `child` and `insert_element` use.
+the same numbering `child` and `insert_element` use. That numbering is a `Child_Index`, a `distinct int`,
+and the node view's is a `Node_Index`: two counts of the same parent that do not agree, so the compiler
+refuses to let one stand in for the other. Ranges, arithmetic and comparison work as on any integer —
+`for i in 0 ..< child_count(el)` infers the type — and only mixing one with an unrelated `int` needs a
+cast, which is exactly the boundary worth seeing.
 
 These walk *elements*, which is what an application wants nearly all of the time. Text and comment
 nodes are `Node`, a separate handle type with its own set of calls — see [Nodes](#nodes) below.

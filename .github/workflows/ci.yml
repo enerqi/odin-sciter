@@ -51,32 +51,54 @@ jobs:
       - name: Type check and build everything
         run: just check
 
+      # Is there a working renderer at all? The engine draws through EGL/GLESv2, so on a runner with no
+      # GPU everything below depends on llvmpipe being reachable. Printed before the tests rather than
+      # inferred from their wreckage: a segfault inside the first windowed test looks identical whether
+      # the cause is the bindings or an EGL that never initialised.
+      - name: Probe the display stack
+        continue-on-error: true
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          set -uo pipefail
+          xvfb-run -a -s "-screen 0 1280x1024x24" glxinfo -B
+          xvfb-run -a -s "-screen 0 1280x1024x24" bash -c 'echo "DISPLAY=$DISPLAY"; xdpyinfo | head -12'
+
       # Xvfb because the windowed tests gate themselves on DISPLAY/WAYLAND_DISPLAY and would otherwise
-      # skip ~two thirds of the suite. XMODIFIERS=@im=none because this engine build segfaults in
-      # XSetICFocus when a window takes focus and an X input method is present - see README.md.
-      # LIBGL_ALWAYS_SOFTWARE because the runner has no GPU and the windowless_gl example wants a
-      # desktop GL context, which llvmpipe provides.
+      # skip ~two thirds of the suite. The screen is given explicitly because Xvfb's default depth is
+      # not guaranteed to be 24, and an 8-bit screen is a rendering failure that looks like an engine
+      # bug. XMODIFIERS=@im=none because this engine build segfaults in XSetICFocus when a window takes
+      # focus and an X input method is present - see README.md. LIBGL_ALWAYS_SOFTWARE and
+      # GALLIUM_DRIVER because the runner has no GPU: the first covers the GL path, the second is the
+      # one that applies to EGL, which is what the engine actually uses.
       #
-      # The retry is deliberate and narrow: the element-timer tests in events.odin are timing
-      # sensitive and flake on a loaded machine, which a shared CI runner always is. A suite that
-      # passes on the second run is reported as a warning rather than hidden - if this fires often,
-      # the fix is in the tests, not here.
+      # EXAMPLE_TEST_TIMEOUT bounds each example rather than the job: a windowed test on a display that
+      # cannot render blocks on the message pump, and a job-level timeout would tell you only that
+      # something hung. `exit 124` in the recipe's summary is that ceiling firing.
+      #
+      # No blanket retry: the recipe now runs every example and reports which ones failed, so one red
+      # run is a complete picture. If the timing-sensitive element-timer tests in events.odin turn out
+      # to flake here the way they do on a loaded desktop, that is a reason to fix the tests, not to
+      # run the suite twice.
       - name: Run the example tests
+        timeout-minutes: 45
         env:
           XMODIFIERS: '@im=none'
           LIBGL_ALWAYS_SOFTWARE: '1'
-        run: |
-          set -uo pipefail
-          if xvfb-run -a just example-tests; then exit 0; fi
-          echo "::warning::example-tests failed once, retrying - see the timing-sensitive timer tests in events.odin"
-          xvfb-run -a just example-tests
+          GALLIUM_DRIVER: llvmpipe
+          EXAMPLE_TEST_TIMEOUT: '420'
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just example-tests
 
       # Value refcounting is the code most worth running under a sanitizer, and per the justfile's own
       # notes Linux ASan catches heap errors that Windows ASan does not - so this runs here or nowhere.
       - name: Value refcounting under ASan
+        timeout-minutes: 20
         env:
           XMODIFIERS: '@im=none'
-        run: xvfb-run -a just test_sanitize eval
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just test_sanitize eval
 
   cross-check:
     name: cross target type check (windows, macos)

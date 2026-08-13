@@ -145,10 +145,13 @@ jobs:
         id: tests
         if: steps.tags.outputs.new == 'true'
         continue-on-error: true
+        timeout-minutes: 45
         env:
           XMODIFIERS: '@im=none'
           LIBGL_ALWAYS_SOFTWARE: '1'
-        run: xvfb-run -a just example-tests
+          GALLIUM_DRIVER: llvmpipe
+          EXAMPLE_TEST_TIMEOUT: '420'
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just example-tests
 
       - name: Summarise
         id: summary

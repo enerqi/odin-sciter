@@ -271,7 +271,7 @@ exchange_event :: proc(event: Event) -> (xe: Exchange_Event, ok: bool) {
 			source = Element(p.source),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
 			view = {i32(p.pos_view.x), i32(p.pos_view.y)},
-			mode = sciter.Dd_Modes(p.mode),
+			mode = p.mode,
 			data = &p.data,
 			raw = p,
 		},
@@ -399,7 +399,7 @@ scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
 			target = Element(p.target),
 			pos = p.pos,
 			vertical = bool(p.vertical),
-			source = sciter.Scroll_Source(p.source),
+			source = p.source,
 			reason = p.reason,
 			raw = p,
 		},
@@ -500,7 +500,7 @@ request_element_data :: proc(
 		sciter.api().SciterRequestElementData(
 			sciter.Helement(element),
 			raw_data(w),
-			u32(data_type),
+			data_type,
 			sciter.Helement(initiator),
 		),
 	)
@@ -560,8 +560,8 @@ http_request :: proc(
 		sciter.api().SciterHttpRequest(
 			sciter.Helement(element),
 			raw_data(w),
-			u32(data_type),
-			u32(request_type),
+			data_type,
+			request_type,
 			raw_data(encoded),
 			u32(len(encoded)),
 		),
@@ -607,7 +607,7 @@ data_arrived_event :: proc(event: Event, allocator := context.allocator) -> (da:
 	return Data_Arrived {
 			initiator = Element(p.initiator),
 			data = data,
-			type = sciter.Sciter_Resource_Type(p.dataType),
+			type = p.dataType,
 			status = p.status,
 			uri = string_from_utf16_cstring(p.uri, allocator),
 			raw = p,

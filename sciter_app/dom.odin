@@ -126,13 +126,22 @@ element_at :: proc(window: Window, pos: [2]i32) -> (element: Element, err: Error
 // ---------------------------------------------------------------------------------------------------
 // Traversal
 
-child_count :: proc(element: Element) -> (n: int, err: Error) {
+// A position among an element's **element** children. The node view counts text and comment nodes as
+// well, so the same `<ul>` has two element children and five node children - see `Node_Index`, which is
+// `distinct` from this one precisely so the two numberings cannot be swapped by accident. Converting
+// between them means walking, not casting.
+//
+// It is an ordinary integer otherwise: `for i in 0 ..< child_count(el)` infers the type, `n - 1` and
+// `i > 0` work, and only mixing one with an unrelated `int` needs a cast.
+Child_Index :: distinct int
+
+child_count :: proc(element: Element) -> (n: Child_Index, err: Error) {
 	count: u32
 	dom_err(sciter.api().SciterGetChildrenCount(sciter.Helement(element), &count)) or_return
-	return int(count), nil
+	return Child_Index(count), nil
 }
 
-child :: proc(element: Element, n: int) -> (child: Element, err: Error) {
+child :: proc(element: Element, n: Child_Index) -> (child: Element, err: Error) {
 	he: sciter.Helement
 	dom_err(sciter.api().SciterGetNthChild(sciter.Helement(element), u32(n), &he)) or_return
 	if he == nil {
@@ -154,10 +163,10 @@ parent :: proc(element: Element) -> (parent: Element, err: Error) {
 // The element's position among its parent's children, counting **elements only** - a text node before
 // it does not shift the index. That is the same numbering `child` and `insert_element` use, so it is
 // the number to hand back to either of them.
-element_index :: proc(element: Element) -> (index: int, err: Error) {
+element_index :: proc(element: Element) -> (index: Child_Index, err: Error) {
 	n: u32
 	dom_err(sciter.api().SciterGetElementIndex(sciter.Helement(element), &n)) or_return
-	return int(n), nil
+	return Child_Index(n), nil
 }
 
 // The element's tag name - "div", "button". Borrowed from the engine, valid for the element's lifetime.
@@ -554,7 +563,7 @@ clone_element :: proc(element: Element) -> (copy: Element, err: Error) {
 // Inserting an element that already has a parent is a **move** - the engine disconnects it first.
 // Nothing else is needed to move an element around, and re-creating it would lose its state and its
 // attached behaviors.
-insert_element :: proc(element: Element, parent: Element, index := -1) -> Error {
+insert_element :: proc(element: Element, parent: Element, index := Child_Index(-1)) -> Error {
 	// The index is clamped to the child count rather than handed over as given. The C API documents an
 	// index past the end as an append, and a moderate one behaves that way - but a very large one
 	// (`max(u32)`, the obvious spelling of "at the end") segfaults inside the engine rather than
@@ -605,8 +614,8 @@ sort_children :: proc(
 	element: Element,
 	cmp: Element_Comparator,
 	user_data: rawptr = nil,
-	first := 0,
-	last := -1,
+	first := Child_Index(0),
+	last := Child_Index(-1),
 ) -> Error {
 	if cmp == nil {
 		return sciter.Scdom_Result.INVALID_PARAMETER

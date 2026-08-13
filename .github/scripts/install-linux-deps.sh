@@ -18,6 +18,12 @@
 #     and the software rasteriser behind them. Missing, `sciter.load()` fails with a dlopen error
 #     listing every path it tried.
 #
+#     `libegl1` alone is NOT enough and the distinction bites: it is libglvnd's *dispatcher*, which
+#     loads whichever vendor ICD is installed and has no renderer of its own. The implementation is
+#     `libegl-mesa0`, and the software rasteriser it dispatches to is in `libgl1-mesa-dri`. Without the
+#     ICD, `eglInitialize` fails and the engine faults during window creation rather than reporting
+#     anything - which on a headless runner presents as a segfault in the first windowed test.
+#
 #   fonts
 #     The engine measures text through fontconfig. An image with no fonts installed does not fail
 #     loudly; it makes text metrics assertions come back with wrong numbers, which reads like a
@@ -32,8 +38,9 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
 	libx11-dev libxcursor-dev libxfixes-dev libxrandr-dev libxi-dev \
 	libegl-dev \
-	xvfb libegl1 libgl1-mesa-dri libglx-mesa0 \
-	libfontconfig1 libfreetype6 fonts-dejavu-core
+	xvfb libegl1 libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 \
+	libfontconfig1 libfreetype6 fonts-dejavu-core \
+	mesa-utils x11-utils
 
 # `libgles2` is the current name of the GLESv2 runtime; older images call it `libgles2-mesa`.
 sudo apt-get install -y --no-install-recommends libgles2 \
@@ -41,5 +48,10 @@ sudo apt-get install -y --no-install-recommends libgles2 \
 
 command -v clang >/dev/null || sudo apt-get install -y --no-install-recommends clang
 
-# Print what the engine resolves to, so a future "it did not load" has the evidence in the log already.
+# Evidence, printed while it is cheap rather than after a confusing failure:
+#   - what the engine's own dependencies resolve to
+#   - which EGL vendor ICDs libglvnd can see. An empty directory here means `libegl1` has nothing to
+#     dispatch to, which is the difference between "no GPU" (fine, llvmpipe) and "no EGL at all".
 ldd lib/linux/x64/libsciter.so
+echo "--- EGL vendor ICDs:"
+ls -l /usr/share/glvnd/egl_vendor.d/ 2>&1 || true

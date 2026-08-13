@@ -1922,7 +1922,7 @@ test_app :: proc(t: ^testing.T) -> (app: ^App, host: ^Host, ok: bool) {
 }
 
 @(private = "file")
-rows_in_document :: proc(app: ^App) -> int {
+rows_in_document :: proc(app: ^App) -> sciter_app.Child_Index {
 	root, err := sciter_app.root(app.window)
 	if err != nil {return -1}
 	rows, rerr := sciter_app.select_first(root, "#rows")
@@ -2098,7 +2098,7 @@ test_only_the_visible_rows_reach_the_document :: proc(t: ^testing.T) {
 	in_document := rows_in_document(app)
 	testing.expect(t, in_document > 0, "something should have been rendered")
 	testing.expect(t, in_document < 100, "but not ten thousand of them")
-	testing.expect_value(t, in_document, app.rendered)
+	testing.expect_value(t, in_document, sciter_app.Child_Index(app.rendered))
 }
 
 // Scrolling renders a different window of the same model, and the ids in the document move with it.
@@ -2515,7 +2515,7 @@ test_a_new_action_throws_away_the_redo_stack :: proc(t: ^testing.T) {
 // rows the drag started on are destroyed and rebuilt in between.
 
 @(private = "file")
-row_element :: proc(app: ^App, n: int) -> sciter_app.Element {
+row_element :: proc(app: ^App, n: sciter_app.Child_Index) -> sciter_app.Element {
 	root, _ := sciter_app.root(app.window)
 	rows, err := sciter_app.select_first(root, "#rows")
 	if err != nil {return nil}
@@ -2734,7 +2734,9 @@ test_the_search_worker_delivers_its_answer_through_post_callback :: proc(t: ^tes
 	testing.expect_value(t, app.view.filter, "valve-roof")
 
 	// And the document followed it: `render` ran on the same turn the answer was applied.
-	testing.expect_value(t, rows_in_document(app), app.rendered)
+	// A DOM child count against a model count - equal by construction, so the conversion is
+	// explicit rather than implied.
+	testing.expect_value(t, rows_in_document(app), sciter_app.Child_Index(app.rendered))
 	testing.expect(t, app.rendered <= len(expected) + OVERSCAN * 2)
 
 	// The scan was measured, which is the number the status bar reports and the one `VDOM.md` wanted.

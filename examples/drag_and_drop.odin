@@ -190,7 +190,7 @@ test_exchange_event_decodes_its_parameters :: proc(t: ^testing.T) {
 		source = sciter.Helement(uintptr(0x2000)),
 		pos = {x = 12, y = 34},
 		pos_view = {x = 112, y = 134},
-		mode = u32(sciter.Dd_Modes.COPY),
+		mode = .COPY,
 	}
 
 	xe, ok := sciter_app.exchange_event({group = {.EXCHANGE}, params = &params})

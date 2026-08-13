@@ -332,6 +332,17 @@ checked by `just check`.
   signatures), and the headers' `KEYBOARD_STATE_SHIFT` / `_CONTROL` / `_ALT` / `_COMMAND` become
   multi-bit constants, being the left-or-right pairs rather than keys of their own. Applied in
   `bindgen.sjson`, so regeneration keeps it.
+- **The remaining unconditional "enum wearing a UINT" event fields are typed**: `MOUSE_PARAMS`'
+  `cursor_type` and `dragging_mode`, `SCROLL_PARAMS::source`, `EXCHANGE_PARAMS::mode`, and the three
+  `dataType` fields, plus `SciterRequestElementData` / `SciterHttpRequest`'s type parameters. Fields
+  whose enum is chosen by a *sibling* field - `SCROLL_PARAMS::reason`, `FOCUS_PARAMS::cause`,
+  `SCN_SET_CURSOR::cursorId`, every `cmd` - stay `UINT` on purpose, and `bindgen.sjson` says why.
+- **Element-child and node-child indices are different numberings of the same parent**, and now
+  different types: `Child_Index` counts elements only, `Node_Index` counts text and comment nodes too -
+  measured, five node children against two element children for a `<ul>` written across several lines.
+  Handing one to the other's getter used to compile and quietly return the wrong node; it is a compile
+  error now. Range loops, arithmetic and comparison are unchanged, so the whole codebase needed five
+  conversions, every one of them at a real model-to-DOM boundary.
 - **`MOUSE_EVENTS::DRAGGING` (0x100) is OR'ed into the event code**, and it sits below the phase bits,
   so masking the code with `0x7FFF` is not enough to recover it: a drag's `MOUSE_MOVE` arrives as 258.
   `Mouse_Event` splits it out as `dragging` / `dragged`.
