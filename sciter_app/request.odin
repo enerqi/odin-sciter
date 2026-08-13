@@ -25,6 +25,7 @@ package sciter_app
 import sciter ".."
 import "base:runtime"
 import "core:mem"
+import "core:time"
 
 // The engine's HREQUEST. Distinct so it cannot be passed where a `Window` or an `Element` belongs.
 //
@@ -320,12 +321,33 @@ request_proxy_port :: proc(request: Request) -> (port: u32, err: Error) {
 
 // When the request started and ended, in engine milliseconds. `ended` is 0 until it completes, so
 // `ended - started` is only a duration once `request_status` reports something other than `.PENDING`.
+//
+// These are **timestamps on the engine's own clock, not durations** - which is why they stay bare
+// integers rather than becoming `time.Duration`s. Their epoch is the engine's business and nothing here
+// relates it to a wall clock; the only meaningful thing to do with them is subtract, and `request_time`
+// below does that.
 request_times :: proc(request: Request) -> (started, ended: u32, err: Error) {
 	if request == nil {
 		return 0, 0, sciter.Request_Result.BAD_PARAM
 	}
 	request_err(request_api().RequestGetTimes(sciter.Hrequest(request), &started, &ended)) or_return
 	return started, ended, nil
+}
+
+// How long the request took - the difference between the two timestamps above, as a `time.Duration`.
+//
+// `done` is false while the request is still running, because `ended` is 0 until it completes and the
+// subtraction would be meaningless (and would underflow). A finished request that the engine never
+// timed answers zero with `done` true, which is what a load the host served from memory looks like.
+request_time :: proc(request: Request) -> (elapsed: time.Duration, done: bool, err: Error) {
+	started, ended := request_times(request) or_return
+	if ended == 0 {
+		return 0, false, nil
+	}
+	if ended < started {
+		return 0, true, nil
+	}
+	return time.Duration(ended - started) * time.Millisecond, true, nil
 }
 
 // How far the request has got, and the status code it carries - `.PENDING` and 0 for one that has not
@@ -381,6 +403,18 @@ request_requestor :: proc(request: Request) -> (element: Element, err: Error) {
 // header of its own** once the request is answered, so a count taken after `serve_request` is one more
 // than the number of `set_response_header` calls.
 
+// One `Request` carries three independently numbered lists - its parameters, its request headers and
+// its response headers - and the C API indexes all three with a bare `UINT`. They are rarely the same
+// length and never the same contents, so an index taken from one and handed to another reads a real
+// entry from the wrong list and reports success: the failure is wrong data, not an error.
+//
+// Hence three types. Nothing else changes - `for i in 0 ..< request_header_count(rq)` infers the right
+// one, and the `request_parameters` / `request_headers` / `response_headers` accessors below hand back
+// a whole slice and need no index at all, which is still the easier way to read any of them.
+Parameter_Index :: distinct int
+Request_Header_Index :: distinct int
+Response_Header_Index :: distinct int
+
 // How many parameters the request carries.
 //
 // **A query string in the URL is not one of them.** A document asking for `t.css?theme=dark` produces
@@ -388,20 +422,21 @@ request_requestor :: proc(request: Request) -> (element: Element, err: Error) {
 // zero - splitting it is the host's job. What does arrive here is what `http_request` was given, and
 // for a URL the host answers the engine leaves the URL alone and passes the parameters through as
 // parameters, for `.Get` as well as `.Post`. Values are unescaped on the way in.
-request_parameter_count :: proc(request: Request) -> (n: int, err: Error) {
-	return count_of(request, request_api().RequestGetNumberOfParameters)
+request_parameter_count :: proc(request: Request) -> (n: Parameter_Index, err: Error) {
+	count := count_of(request, request_api().RequestGetNumberOfParameters) or_return
+	return Parameter_Index(count), nil
 }
 
 request_parameter :: proc(
 	request: Request,
-	index: int,
+	index: Parameter_Index,
 	allocator := context.allocator,
 ) -> (
 	pair: Name_Value,
 	err: Error,
 ) {
 	api := request_api()
-	return pair_of(request, index, api.RequestGetNthParameterName, api.RequestGetNthParameterValue, allocator)
+	return pair_of(request, int(index), api.RequestGetNthParameterName, api.RequestGetNthParameterValue, allocator)
 }
 
 // The request's parameters - what a `POST` or a URL query carried. Free with `delete_name_values`.
@@ -416,20 +451,21 @@ request_parameters :: proc(request: Request, allocator := context.allocator) -> 
 	)
 }
 
-request_header_count :: proc(request: Request) -> (n: int, err: Error) {
-	return count_of(request, request_api().RequestGetNumberOfRqHeaders)
+request_header_count :: proc(request: Request) -> (n: Request_Header_Index, err: Error) {
+	count := count_of(request, request_api().RequestGetNumberOfRqHeaders) or_return
+	return Request_Header_Index(count), nil
 }
 
 request_header :: proc(
 	request: Request,
-	index: int,
+	index: Request_Header_Index,
 	allocator := context.allocator,
 ) -> (
 	pair: Name_Value,
 	err: Error,
 ) {
 	api := request_api()
-	return pair_of(request, index, api.RequestGetNthRqHeaderName, api.RequestGetNthRqHeaderValue, allocator)
+	return pair_of(request, int(index), api.RequestGetNthRqHeaderName, api.RequestGetNthRqHeaderValue, allocator)
 }
 
 // The request headers. A load request the host is answering starts with none of its own; anything set
@@ -445,20 +481,21 @@ request_headers :: proc(request: Request, allocator := context.allocator) -> (he
 	)
 }
 
-response_header_count :: proc(request: Request) -> (n: int, err: Error) {
-	return count_of(request, request_api().RequestGetNumberOfRspHeaders)
+response_header_count :: proc(request: Request) -> (n: Response_Header_Index, err: Error) {
+	count := count_of(request, request_api().RequestGetNumberOfRspHeaders) or_return
+	return Response_Header_Index(count), nil
 }
 
 response_header :: proc(
 	request: Request,
-	index: int,
+	index: Response_Header_Index,
 	allocator := context.allocator,
 ) -> (
 	pair: Name_Value,
 	err: Error,
 ) {
 	api := request_api()
-	return pair_of(request, index, api.RequestGetNthRspHeaderName, api.RequestGetNthRspHeaderValue, allocator)
+	return pair_of(request, int(index), api.RequestGetNthRspHeaderName, api.RequestGetNthRspHeaderValue, allocator)
 }
 
 // The response headers, including any set with `set_response_header`. Free with `delete_name_values`.

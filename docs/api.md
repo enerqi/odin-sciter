@@ -550,8 +550,11 @@ offset 0, slots in declaration order, `this` in the first argument's register) b
 
 ## Graphics — `graphics.odin`
 
-`graphics_caps() -> (u32, bool)` reports what the renderer can do as the raw capability word — there is
-no enum for its bits upstream. The vendored Linux build answers `1`.
+`graphics_caps() -> (Graphics_Caps, bool)` reports how the system's graphics rate. **It is an ordinal
+scale, not a bitmask** — `sciter-x-def.h` documents exactly three values, `.None` / `.Software` /
+`.Hardware` — but it is worded in terms of Direct2D, which predates this engine's Skia backend and does
+not exist off Windows. The vendored Linux build answers `.Software`. Read it, print it in a bug report;
+don't branch on it off Windows without checking what it reports there.
 
 The engine's own 2D renderer, in a second function table. Full guide:
 [`graphics.md`](./graphics.md).
@@ -742,10 +745,13 @@ Lifetime: `use_request` / `unuse_request`, and `take_request` which is `use_requ
 A handle is the engine's to recycle the moment the callback returns unless a reference is taken.
 
 Reading: `request_url`, `request_content_url`, `request_method` (`"GET"`), `request_data_type`,
-`request_mime`, `request_times`, `request_status` → `(state, status)`, `request_data`,
-`request_requestor`, `request_proxy_host`, `request_proxy_port`, and the three name/value lists —
-`request_parameters`, `request_headers`, `response_headers`, each with `_count` and indexed forms, all
-returning `[]Name_Value` to free with `delete_name_values`.
+`request_mime`, `request_times` (engine-clock timestamps) and `request_time` → `(elapsed, done)` for
+the duration between them, `request_status` → `(state, status)`, `request_data`, `request_requestor`,
+`request_proxy_host`, `request_proxy_port`, and the three name/value lists — `request_parameters`,
+`request_headers`, `response_headers`, each with `_count` and indexed forms, all returning
+`[]Name_Value` to free with `delete_name_values`. The three lists are numbered independently, so their
+indices are three distinct types — `Parameter_Index`, `Request_Header_Index`, `Response_Header_Index` —
+and one cannot be handed to another's getter.
 
 Two measured behaviours worth knowing: deferring works for what the document consumes on arrival
 (images, fonts, media) but **not** for `<script src>`, which is fetched and never run if the answer

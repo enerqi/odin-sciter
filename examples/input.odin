@@ -806,5 +806,7 @@ test_graphics_caps :: proc(t: ^testing.T) {
 	}
 	caps, ok := sciter_app.graphics_caps()
 	testing.expect(t, ok, "the engine reported its graphics capabilities")
-	testing.expect(t, caps != 0, "the vendored build answers 1")
+	// Documented as an ordinal scale, not a bitmask - see `Graphics_Caps`. The vendored Linux build
+	// answers `.Software`, which is the middle of the three.
+	testing.expect_value(t, caps, sciter_app.Graphics_Caps.Software)
 }

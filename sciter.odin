@@ -332,7 +332,7 @@ Value_Result :: enum i32 {
 }
 
 Value :: struct {
-	t: Uint,
+	t: Value_Type,
 	u: Uint,
 	d: Uint64,
 }
@@ -1462,10 +1462,12 @@ Draw_Params :: struct {
 	reserved: Uint, // for DRAW_BACKGROUND/DRAW_FOREGROUND - it is a border box
 }
 
-Content_Change_Bits :: enum u32 {
-	ADDED   = 1,
-	REMOVED = 2,
-} // for CONTENT_CHANGED reason
+Content_Change_Bit :: enum u32 {
+	ADDED   = 0,
+	REMOVED = 1,
+}
+
+Content_Change_Bits :: bit_set[Content_Change_Bit;u32] // for CONTENT_CHANGED reason
 
 Behavior_Events :: enum u32 {
 	BUTTON_CLICK                 = 0, // click on button

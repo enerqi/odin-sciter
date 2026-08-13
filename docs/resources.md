@@ -170,7 +170,9 @@ Use `.DELAYED` + `data_ready_async` for a whole-buffer answer on the engine's th
 ### What the request knows
 
 `request_url`, `request_method`, `request_data_type`, `request_status` → `(state, status)`,
-`request_times`, `request_data`, `request_headers` / `response_headers` / `request_parameters`, and
+`request_times` and `request_time` (the duration between them), `request_data`, `request_headers` /
+`response_headers` / `request_parameters` — three independently numbered lists, hence three distinct
+index types — and
 `request_requestor` — which reports the element the resource is **for**, not the one that named it: a
 stylesheet pulled in by `<link>` in the head reports `html`.
 

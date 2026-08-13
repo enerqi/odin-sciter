@@ -343,6 +343,28 @@ checked by `just check`.
   Handing one to the other's getter used to compile and quietly return the wrong node; it is a compile
   error now. Range loops, arithmetic and comparison are unchanged, so the whole codebase needed five
   conversions, every one of them at a real model-to-DOM boundary.
+- **`SciterGraphicsCaps` is an ordinal scale, not a capability bitmask.** `sciter-x-def.h` documents it
+  as 0 = no compatible graphics, 1 = compatible but Direct2D uses the WARP software driver, 2 = Direct2D
+  hardware backend - so `Graphics_Caps` is an enum of those three. The wording predates this engine's
+  Skia backend and names an API that does not exist off Windows, and what the number means elsewhere is
+  not stated upstream; the vendored Linux build answers `.Software`. An earlier note here saying the
+  headers documented nothing about it was wrong.
+- **A request's parameters, request headers and response headers are three independently numbered
+  lists**, and the C API indexes all three with a bare `UINT`. `Parameter_Index`,
+  `Request_Header_Index` and `Response_Header_Index` keep them apart, because an index from the wrong
+  list reads a real entry and reports success - wrong data rather than an error.
+- **`request_time`** returns the duration between the two `request_times` timestamps as a
+  `time.Duration`, with a `done` flag that is false while `ended` is still 0. The timestamps themselves
+  stay bare integers: they are on the engine's own clock with an epoch nothing here relates to a wall
+  clock, so only the difference means anything.
+- **`CONTENT_CHANGE_BITS` is a mask too** - the header says `CONTENT_CHANGED`'s reason "is combination
+  of CONTENT_CHANGE_BITS", so content both added and removed in one change is 3, which is not a member.
+  A `bit_set` now. Nothing cast it before, because it arrives in `BEHAVIOR_EVENT_PARAMS::reason` and
+  that stays untyped; this is the shape corrected before something relies on it.
+- **`VALUE::t` is a `Value_Type`** rather than a `UINT`. Measured across every constructor here - int,
+  float, bool, string, array, map, undefined, error string - `t` is exactly the type each time, 0 is
+  `T_UNDEFINED` and a real member, and no flag bits appear; the qualifiers all live in `u`, which is why
+  that one stays a `UINT`.
 - **`MOUSE_EVENTS::DRAGGING` (0x100) is OR'ed into the event code**, and it sits below the phase bits,
   so masking the code with `0x7FFF` is not enough to recover it: a drag's `MOUSE_MOVE` arrives as 258.
   `Mouse_Event` splits it out as `dragging` / `dragged`.

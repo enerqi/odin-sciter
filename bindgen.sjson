@@ -145,6 +145,13 @@ bit_setify = {
 	// three of them at once. Note this one is *not* reachable through a typed slot, because ValueType's
 	// pUnits stays a ^Uint (see the note further down); it is the shape that matters.
 	"VALUE_UNIT_TYPE_DATE" = "Value_Unit_Date"
+
+	// CONTENT_CHANGE_BITS, which the header spells out: CONTENT_CHANGED's reason "is combination of
+	// CONTENT_CHANGE_BITS". Content both added and removed in one change is 3, which is not a member -
+	// the same defect MOUSE_BUTTONS had. Nothing casts it today because it arrives in
+	// BEHAVIOR_EVENT_PARAMS::reason, which stays untyped, so this is the shape being made correct
+	// before something does.
+	"CONTENT_CHANGE_BITS" = "Content_Change_Bit"
 }
 
 // NOT bit_setified, though docs/PLAN.md section 7 lists them - both would generate values that compile
@@ -468,6 +475,12 @@ struct_field_overrides = {
 	"DATA_ARRIVED_PARAMS.dataType" = "Sciter_Resource_Type"
 	"SCN_LOAD_DATA.dataType"       = "Sciter_Resource_Type"
 	"SCN_DATA_LOADED.dataType"     = "Sciter_Resource_Type"
+
+	// VALUE::t is unconditionally a VALUE_TYPE. Measured across every constructor this package has -
+	// int, float, bool, string, array, map, undefined and an error string - `t` was exactly the type
+	// each time, with 0 = T_UNDEFINED a real member and no flag bits anywhere; every qualifier lives in
+	// `u` instead. `u` therefore stays a UINT, for the reason spelled out at ValueType.pUnits below.
+	"VALUE.t" = "Value_Type"
 
 	// Left as UINT on purpose, all for the same reason the `cmd` fields are - which enum they hold is
 	// decided by something else in the struct:

@@ -66,14 +66,38 @@ gfx_err :: proc(r: sciter.Graphin_Result) -> Error {
 	return nil if r == .OK else r
 }
 
-// What the engine's renderer can do on this machine, as the raw capability word the C API reports -
-// there is no enum for its bits in the headers, so it is left as a number.
+// How the system's graphics rate for the engine's renderer.
 //
-// The vendored Linux build answers `1`. It is worth reading before assuming a feature exists rather
-// than after a call has already failed, and worth printing in a bug report.
-graphics_caps :: proc() -> (caps: u32, ok: bool) {
-	ok = bool(sciter.api().SciterGraphicsCaps(&caps))
-	return
+// **Not a bitmask, despite the C name `pcaps` and the `UINT` it comes back in.** `sciter-x-def.h`
+// documents it as an ordinal scale of exactly three values, which is what this enum is:
+//
+//	0 - no compatible graphics found;
+//	1 - compatible graphics found but Direct2D will use WARP driver (software emulation);
+//	2 - Direct2D will use hardware backend (best performance);
+//
+// Read that wording with its age in mind: it is written in terms of **Direct2D**, which predates this
+// engine's Skia backend and does not exist on Linux or macOS at all. What the number means off Windows
+// is not stated anywhere upstream. The vendored Linux build answers `.Software`, which is at least
+// consistent with Sciter 6 defaulting to Skia's raster backend until a GPU layer is asked for - but
+// that is a plausible reading of one measurement, not a documented guarantee.
+//
+// So: worth reading before assuming a feature exists, and worth printing in a bug report. Not worth
+// branching on off Windows without checking what it actually reports there.
+Graphics_Caps :: enum u32 {
+	None     = 0, // no compatible graphics found
+	Software = 1, // compatible, but rendering in software
+	Hardware = 2, // hardware backend, best performance
+}
+
+// `ok` is the C call's own "was the pointer good" answer, false only if the engine could not report.
+//
+// A value outside the three documented ones is passed through as-is rather than being folded into
+// `.None`: the engine is the authority on its own scale, and the SCROLL_EVENTS code the vendored header
+// is missing (see `sciter_app/events.odin`) is the standing reminder that these lists can lag.
+graphics_caps :: proc() -> (caps: Graphics_Caps, ok: bool) {
+	raw: u32
+	ok = bool(sciter.api().SciterGraphicsCaps(&raw))
+	return Graphics_Caps(raw), ok
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -244,6 +244,8 @@ test_nil_request_is_bad_param :: proc(t: ^testing.T) {
 	testing.expect_value(t, type_err, bad)
 	_, _, times_err := sciter_app.request_times(nil)
 	testing.expect_value(t, times_err, bad)
+	_, _, time_err := sciter_app.request_time(nil)
+	testing.expect_value(t, time_err, bad)
 	_, _, status_err := sciter_app.request_status(nil)
 	testing.expect_value(t, status_err, bad)
 	_, data_err := sciter_app.request_data(nil)
@@ -288,7 +290,7 @@ Snapshot :: struct {
 	state_after:    sciter.Request_State,
 	status_after:   u32,
 	data_after:     string,
-	header_count:   int,
+	header_count:   sciter_app.Request_Header_Index,
 	requestor_tag:  string, // borrowed from the engine
 
 	// The rest of the getters, read at the same two moments.
@@ -297,8 +299,8 @@ Snapshot :: struct {
 	mime_after:     string,
 	proxy_host:     string,
 	proxy_port:     u32,
-	param_count:    int,
-	response_count: int,
+	param_count:    sciter_app.Parameter_Index,
+	response_count: sciter_app.Response_Header_Index,
 	responses:      []Name_Value,
 }
 
@@ -314,7 +316,7 @@ Api_Call :: struct {
 	url:          string,
 	method:       string, // borrowed
 	params:       []Name_Value,
-	param_count:  int,
+	param_count:  sciter_app.Parameter_Index,
 	out_of_range: sciter_app.Error,
 }
 
@@ -694,7 +696,7 @@ test_the_indexed_and_whole_list_header_getters_agree :: proc(t: ^testing.T) {
 	all, aerr := sciter_app.request_headers(rq)
 	testing.expect_value(t, aerr, nil)
 	defer sciter_app.delete_name_values(all)
-	testing.expect_value(t, len(all), request_count)
+	testing.expect_value(t, sciter_app.Request_Header_Index(len(all)), request_count)
 
 	first, ferr := sciter_app.request_header(rq, 0, context.temp_allocator)
 	testing.expect_value(t, ferr, nil)
@@ -710,6 +712,18 @@ test_the_indexed_and_whole_list_header_getters_agree :: proc(t: ^testing.T) {
 	testing.expect_value(t, oerr, nil)
 	testing.expect_value(t, one.name, "X-Three")
 	testing.expect_value(t, one.value, "3")
+
+	// Timing. The request is still open here - `answer_deferred` runs on the way out - so `ended` is 0
+	// and `request_time` says so rather than underflowing the subtraction.
+	started, ended, terr := sciter_app.request_times(rq)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, ended, u32(0))
+	_ = started
+
+	elapsed, done, eerr := sciter_app.request_time(rq)
+	testing.expect_value(t, eerr, nil)
+	testing.expect(t, !done, "still pending, so there is no duration yet")
+	testing.expect_value(t, elapsed, time.Duration(0))
 
 	responses, rserr := sciter_app.response_headers(rq)
 	testing.expect_value(t, rserr, nil)
