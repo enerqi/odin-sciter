@@ -402,6 +402,21 @@ turning the input method off does not keep the engine out of it.
 into `XDestroyIC` with an `XIC` field that was never set. So *any* reason a window cannot be created
 presents as a SIGSEGV inside `SciterCreateWindow` rather than the NULL return the API documents.
 
+Tracing the calls the engine makes on the way there — `dprintf` on each, which is what
+`window-canary.sh` does — shows why the field is never set:
+
+```
+[x11] XCreateWindow
+[x11] XOpenIM
+[egl] eglGetDisplay          <- the last call that returns; creation fails from here
+                                (no XCreateIC, so window->ic is whatever the allocation held)
+```
+
+`XOpenIM` is called unconditionally; `XCreateIC` is not reached, because the GL setup that follows it
+fails first. `destroy()` then frees the input context that was never created. Worth noticing that
+`XMODIFIERS=@im=none` — the workaround for the *other* crash — makes `XCreateIC` less likely to have
+run, so it does nothing for this one and may make it more reliable rather than less.
+
 Measured 2026-08-13, reproduced by hiding the EGL vendor ICD from libglvnd
 (`__EGL_VENDOR_LIBRARY_DIRS=/an/empty/dir`) so that `eglInitialize` has nothing to dispatch to:
 

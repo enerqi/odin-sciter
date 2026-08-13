@@ -29,6 +29,13 @@
 #     loudly; it makes text metrics assertions come back with wrong numbers, which reads like a
 #     binding bug. Cheapest possible insurance.
 #
+#   diagnostics (xvfb, mesa-utils, mesa-utils-extra, x11-utils, gdb)
+#     Not needed to build or run anything - needed to say *why* when a windowed test dies. A failed
+#     window creation faults inside the engine's cleanup path rather than returning, so the symptom is
+#     a bare SIGSEGV and the cause has to be established from outside: `glxinfo` (GLX), `eglinfo`
+#     (EGL - a different Mesa path, and the one the engine uses), `xdpyinfo` (what the X server
+#     offers) and a `gdb` backtrace. `.github/scripts/window-canary.sh` runs all four on failure.
+#
 # clang is Odin's linker driver on Linux and is normally already on the image; installed only if absent.
 
 set -euo pipefail
@@ -40,7 +47,7 @@ sudo apt-get install -y --no-install-recommends \
 	libegl-dev \
 	xvfb libegl1 libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 \
 	libfontconfig1 libfreetype6 fonts-dejavu-core \
-	mesa-utils x11-utils
+	mesa-utils mesa-utils-extra x11-utils gdb
 
 # `libgles2` is the current name of the GLESv2 runtime; older images call it `libgles2-mesa`.
 sudo apt-get install -y --no-install-recommends libgles2 \

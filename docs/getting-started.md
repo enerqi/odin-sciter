@@ -122,11 +122,13 @@ the bindings.
 
 **It segfaults *inside* `create_window`, before any window appears — and `XMODIFIERS=@im=none` makes no
 difference.** Different crash, same engine code: when the engine cannot create a window it faults while
-cleaning up the one it failed to build (`XDestroyIC`), instead of returning NULL. On Linux the reason
-is almost always that there is no working EGL/GLESv2 — a VM or container with no GPU and no software
-rasteriser installed. Confirm it with `just window-canary` under Xvfb, which prints what the renderer
-resolves to; on a headless machine, `apt install libegl-mesa0 libgl1-mesa-dri libgles2` is usually the
-whole fix. Details in [`ENGINE.md`](./ENGINE.md#the-other-x11-input-method-crash-a-window-that-fails-to-open).
+cleaning up the one it failed to build (`XDestroyIC`), instead of returning NULL. The usual cause on a
+headless Linux box is no usable EGL/GLESv2 — and note that a passing `glxinfo` does not establish that,
+since GLX and EGL are different Mesa paths and the engine uses EGL. Do not guess: run
+`just window-canary` under Xvfb or Xephyr. It traces how far the engine gets (`XCreateWindow`,
+`XOpenIM`, `eglGetDisplay`, …), prints a backtrace, and dumps `eglinfo`, `glxinfo` and the X server's
+extension list, which between them name the missing package. Details in
+[`ENGINE.md`](./ENGINE.md#the-other-x11-input-method-crash-a-window-that-fails-to-open).
 
 **A blank window, or unstyled content.** Almost always a resource that did not load. Install the debug
 output (above), and check whether relative URLs have a base to resolve against — `load_html` with no

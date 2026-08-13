@@ -79,8 +79,8 @@ focus, and disabling XIM avoids it — measured here at 3 crashes out of 3 witho
 is not a fault in the bindings: `just example api_map` is the check that catches a real mismatch.
 
 **If it segfaults before any window appears**, that is a different crash and `XMODIFIERS` will not help.
-The engine faults while cleaning up a window it failed to create, and on Linux the reason is nearly
-always a machine with no working EGL/GLESv2 — see
+The engine faults while cleaning up a window it failed to create, which on a headless Linux box usually
+means no usable EGL/GLESv2. `just window-canary` under Xvfb says which — see
 [`docs/getting-started.md`](docs/getting-started.md#when-it-does-not-work).
 
 
