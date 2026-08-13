@@ -46,11 +46,11 @@
 //
 // ## The limits, measured
 //
-//   - **Input works, with one hole.** Mouse and keyboard messages both reach the document - handlers
-//     run, `:hover` follows the pointer, a click is synthesised from a press and a release - but the
-//     *intrinsic behaviors* do not act on the mouse: a click will not focus an `<input>`, press a
-//     `<button>` or toggle a checkbox. Drive those through the element instead (`set_focus`,
-//     `do_click`, `send_mouse`). See `windowless_mouse`.
+//   - **Input works, fully.** Mouse and keyboard messages both reach the document - handlers run,
+//     `:hover` follows the pointer, a click is synthesised from a press and a release - and the
+//     intrinsic behaviors act on it too: a click presses a `<button>`, toggles a checkbox and gives an
+//     `<input>` the caret. The one subtlety is that a behavior's event is *posted*, so it arrives on
+//     the next `windowless_heartbeat` rather than inside the call. See `windowless_mouse`.
 //   - **Script timers run on the wall clock, not on the heartbeat's timestamp.** `setTimeout`,
 //     `setInterval` and `requestAnimationFrame` do work - but only as real time passes, and passing a
 //     made-up `time_ms` changes nothing. A host that renders frames faster than real time (a build
@@ -343,10 +343,9 @@ windowless_focus :: proc(view: ^Windowless_View, got := true) -> bool {
 
 // A key event - `SXM_KEY`. `code` is a virtual key for `.DOWN` / `.UP` and a character for `.CHAR`.
 //
-// **This works, and that is worth saying because the mouse does not.** Measured: `.DOWN` on a focused
-// `<input>` reaches a script `keydown` handler, and `.CHAR` inserts the character. So a windowless view
-// can be typed into - text fields, shortcuts, a whole keyboard-driven UI - while `windowless_mouse` is
-// dead. Set the focus first, with `set_focus` on the element and `windowless_focus` on the view.
+// Measured: `.DOWN` on a focused `<input>` reaches a script `keydown` handler, and `.CHAR` inserts the
+// character. The view needs the focus (`windowless_focus`) and the element needs it too - either from
+// `set_focus`, or from a click, because **a `windowless_mouse` click focuses an editor by itself**.
 //
 // The return is the engine's "was it handled", and it is not a reliable success signal: a `.DOWN`
 // measured as delivered (the script handler ran) still answered false.
@@ -385,14 +384,21 @@ windowless_key :: proc(
 //     styling works.
 //   - **The return value is always false**, including for events that were delivered and handled. It is
 //     not a success signal; ignore it.
+//   - **The intrinsic behaviors respond too.** A click presses a `<button>` and its script `click`
+//     handler runs, toggles a checkbox's `:checked`, and gives an `<input>` the caret so
+//     `windowless_key` types into it with no `set_focus` at all. A windowless pane is a fully
+//     interactive UI, not a picture of one.
+//   - **A behavior's event is *posted*, so it arrives on the next heartbeat.** Measured: straight after
+//     the `.MOUSE_UP` the button's handler has not run; after one `windowless_heartbeat` it has. A host
+//     that reads the result inside the same turn sees nothing and concludes the click was ignored.
 //
-// **What does not respond is the intrinsic behaviors.** Measured: clicking an `<input>` does not give
-// it the caret, clicking a `<button>` fires no `click` on the button, and clicking a checkbox does not
-// toggle it - while a plain `<div>` in the same document hears everything. So the DOM event path is
-// live and the native widgets' own input handling is not. For those, drive the element directly:
-// `set_focus` before `windowless_key` for a text field (measured working - see `windowless_key`),
-// `do_click` for a button, `send_mouse` on the element for anything else. Those go through the element
-// chain rather than through the view.
+// That last pair is a correction: this file used to say the intrinsic behaviors ignored the mouse
+// entirely. They do not. The document that measured it positioned its `<button>` and `<input>` with
+// `position: absolute`, and an inline-level widget taken out of flow lays out **1x1** in this engine -
+// so the clicks landed on `<body>`, the same shape of mistake as the earlier "the mouse never works"
+// retraction. `display: block` gives them a box; `docs/html-css-js.md` has both collapse rules.
+// Driving the element directly - `set_focus`, `do_click`, `send_mouse` - still works and is the right
+// call when there is no pointer in the picture at all.
 windowless_mouse :: proc(
 	view: ^Windowless_View,
 	event: sciter.Mouse_Events,

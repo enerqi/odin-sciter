@@ -852,6 +852,75 @@ test_location_origins :: proc(t: ^testing.T) {
 	testing.expect(t, from_view != from_root, "the view origin is not the root origin")
 }
 
+// Two collapse rules for out-of-flow elements, both of which have cost this repository a false engine
+// defect - because an element with no box is not under the pointer, and every click lands on `<body>`.
+// `docs/html-css-js.md` carries them in full; this pins them, so an engine that starts honouring the
+// CSS shows up as a failure here rather than as a mystery in the input code.
+//
+//  1. a percentage *height* on an absolutely positioned element resolves to 1px (the width is fine);
+//  2. an inline-level widget - `<button>`, `<input>` - positioned absolutely collapses to 1x1 entirely,
+//     and `display: block` is the fix.
+@(test)
+test_out_of_flow_elements_collapse :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	POSITIONED :: `<html><head><style>
+	  html, body { margin:0; padding:0; width:100%; height:100%; }
+	  #pct    { position:absolute; left:0; top:0; width:100%; height:100%; }
+	  #px     { position:absolute; left:0; top:0; width:100%; height:30px; }
+	  #btn    { position:absolute; left:20px; top:80px; width:120px; height:30px; }
+	  #btn2   { display:block; position:absolute; left:20px; top:80px; width:120px; height:30px; }
+	  #stage  { flow:stack; width:*; height:*; }
+	  #over   { width:*; height:*; }
+	</style></head><body>
+	  <div id="pct">percentage height</div>
+	  <div id="px">pixel height</div>
+	  <button id="btn">collapsed</button>
+	  <button id="btn2">block</button>
+	  <div id="stage"><div id="over">stacked overlay</div></div>
+	</body></html>`
+
+	testing.expect_value(t, sciter_app.load_html(window, POSITIONED), nil)
+	for _ in 0 ..< 10 {
+		sciter_app.run_once()
+	}
+	root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+
+	box :: proc(root: sciter_app.Element, selector: string) -> sciter_app.Rect {
+		el, err := sciter_app.select_first(root, selector)
+		if err != nil {return {}}
+		r, _ := sciter_app.location(el, .Border, .View)
+		return r
+	}
+
+	// Rule 1: the percentage width resolves and the percentage height does not.
+	pct := box(root, "#pct")
+	testing.expect(t, pct.width > 100, "a percentage width resolves")
+	testing.expectf(t, pct.height == 1, "a percentage height should collapse to 1, got %d", pct.height)
+
+	// A pixel height in the same position is honoured, so it is the percentage that fails.
+	px := box(root, "#px")
+	testing.expect(t, px.width > 100 && px.height > 20, "a pixel height on the same element is fine")
+
+	// Rule 2: the widget has no box at all until `display: block` puts it back.
+	collapsed := box(root, "#btn")
+	testing.expectf(
+		t,
+		collapsed.width == 1 && collapsed.height == 1,
+		"a positioned <button> should collapse to 1x1, got %dx%d",
+		collapsed.width,
+		collapsed.height,
+	)
+	blocked := box(root, "#btn2")
+	testing.expect(t, blocked.width > 100 && blocked.height > 20, "display:block restores the box")
+
+	// And `flow: stack` is the substitute that produces a full-size overlay with neither rule in play.
+	overlay := box(root, "#over")
+	testing.expect(t, overlay.width > 100 && overlay.height > 100, "a stacked child fills its container")
+}
+
 @(test)
 test_intrinsic_widths_bracket_the_wrapping :: proc(t: ^testing.T) {
 	window, ok := test_window(t)

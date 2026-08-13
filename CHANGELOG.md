@@ -91,7 +91,7 @@ tag `6.0.4.9-bis`.
 
 ### Examples
 
-Twenty-five, each a single self-contained file with its explanation in the header comment:
+Twenty-nine, each a single self-contained file with its explanation in the header comment:
 `hello_window`, `api_map`, `load_file`, `eval`, `call_odin_from_js` (a native functor and a SOM asset),
 `dom_walk`, `events`, `behavior`, `input`, `task_list` (a whole small application, script-free),
 `workbench` (a harder one - ten thousand rows virtualised, editable and live, with type-ahead search
@@ -103,8 +103,16 @@ streamed into a `<video>` element), `named_behavior` (widgets a stylesheet asks 
 `custom_loader`, `request_loader`, `archive`, `single_binary`, `inspector`,
 `windowless` (no window at all - the engine renders into a buffer the host owns, for a pane inside
 somebody else's renderer), `windowless_gl` (the same on the GPU: Sciter's own Skia pipeline drawing
-straight into the host's OpenGL texture, with an offscreen EGL context), and `extension` (Odin as a
-native extension the engine loads).
+straight into the host's OpenGL texture, with an offscreen EGL context),
+`integration` (a Sciter pane inside a window this repository owns and draws - raw Xlib, the host's own
+frame buffer and event loop, the pane composited in and fully interactive; the SDK's
+`demos/integration`), `script_bridge` (the capabilities with no host API at all - clipboard, dialogs,
+`@sys`, `@env` - driven by asking the document, with the clipboard's NUL and CF_HTML traps pinned),
+`native_child` (the inverse of `integration`: a native X11 window *inside* a Sciter window, tracking an
+element's box - which works because the engine's `HWINDOW` is an X11 window id on Linux),
+`extension` (Odin as a native extension the engine loads), and `sqlite_extension` (the same mechanism at
+the size of a real library binding: `SQLite`, `DB` and `Recordset` over the system's own `libsqlite3`,
+opened with `dynlib` so there is no header, no link flag and no development package).
 
 `api_map` is the one to run after any engine change: it walks every slot and resolves each pointer back
 to the symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `VirtualQuery` on
@@ -112,7 +120,7 @@ Windows.
 
 ### Tests
 
-342 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
+362 `@(test)` procs living beside the code they cover. The headless ones — `Value` round-trips and
 refcounting, native functors, UTF-16 conversion, the four `value_parse` dialects and the error string a
 failure comes back as, container enumeration and its early stop, atom round-trips, archive lookup, the
 event parameter accessors and the event-code/phase split, the embedded engine's cache naming and
@@ -291,15 +299,37 @@ checked by `just check`.
 - **`SXM_RESOLUTION` crashes one message later**, in `html::iwindow::setup_window_frame` on a view that
   has no native window frame. There is deliberately no wrapper for it; a windowless view runs at the
   engine's default DPI.
-- **The intrinsic behaviors ignore windowless mouse input.** Ordinary elements receive `mousedown`,
-  `mouseup`, the synthesised `click` and `:hover`, but a click will not focus an `<input>`, press a
-  `<button>` or toggle a checkbox. Drive those through the element - `set_focus`, `do_click`,
-  `send_mouse`. (An earlier note here said windowless mouse input did not work at all; that was
-  measured against a page whose click target was `position:absolute` with a percentage height, which
-  Sciter lays out one pixel tall, so every event landed on `<body>`. Retracted in `EMBEDDING.md`.)
-- **A percentage height on an absolutely positioned element lays out as 1px.** The width resolves, the
-  height does not, and an element one pixel tall receives no events - which is how the finding above
-  came to be wrong. See `docs/html-css-js.md`.
+- **A SOM method's `params` caps how many arguments *script* may pass.** A member declared `params = 1`
+  and called as `obj.method(a, b, c)` receives only `a`; the rest are dropped with no error anywhere.
+  Declaring more than a caller passes is harmless. Found through `sqlite_extension.odin`, where it
+  presented as every bound database parameter arriving as NULL. (The host-side rule is the opposite -
+  `asset_call` requires *at least* `params`, because the engine's thunks segfault on a short list.)
+- **`HWINDOW` is an X11 window id on Linux**, not an opaque handle. The type is `void*` and the value is
+  the engine's own window: `XGetWindowAttributes` succeeds on it, a native child created with it as
+  parent maps and stays viewable across the engine's repaints. Not a defect - a capability, and the one
+  `native_child.odin` rests on.
+- **Clipboard strings come back with a trailing NUL inside them**, on the text flavour as much as the
+  HTML one, so `"hello\x00" != "hello"` and a host comparing what it wrote with what it read fails for
+  a reason that does not show in a log. HTML additionally comes back wrapped in
+  `<html><!--StartFragment-->…<!--EndFragment--></html>`. `script_bridge.odin` trims both.
+- **`eval` cannot import a module.** `eval("await import(\"@sys\")")` fails to *parse* - the expression
+  evaluator has no top-level await and no dynamic import - so `@sys`, `@env`, `@sciter` and `@storage`
+  are unreachable from `eval` at any privilege level. A `<script type="module">` that hangs them on
+  `globalThis` is the way in; see `docs/JS-RUNTIME.md`.
+- **A behavior's event is posted, so it arrives on the next windowless heartbeat**, not inside the
+  `windowless_mouse` call that caused it. Measured: straight after the `.MOUSE_UP` a `<button>`'s
+  `click` handler has not run; after one `windowless_heartbeat` it has. (Two earlier notes here were
+  wrong and are retracted: windowless mouse input works, *and* the intrinsic behaviors act on it - a
+  click presses a button, toggles a checkbox and focuses an editor. Both measurements used pages whose
+  widgets were `position:absolute`, which this engine collapses - see the next entry - so every event
+  landed on `<body>`.)
+- **Out-of-flow elements collapse, two ways.** A **percentage height** on an absolutely positioned
+  element lays out as 1px (the width resolves), and an **inline-level widget** - `<button>`,
+  `<input>` - positioned absolutely lays out 1x1 entirely, whatever size the CSS asks for;
+  `display: block` restores it. A `<div>`, a `<span>` and a `<select>` in the same position are fine,
+  and `position: fixed` behaves like `absolute`. An element with no box receives no events, which is
+  how three separate findings in this file came to be wrong. `flow: stack` is the alternative that
+  works. See `docs/html-css-js.md`.
 - **`.FULL_SCREEN` changes the monitor's display mode and nothing puts it back.** A 300x200 window taken
   full screen on X11 dropped a 1920x1200 panel to 320x180, and it stayed there after the process exited.
 - **`SciterDataReady` works from inside a load callback and nowhere else.** Called after the callback

@@ -97,6 +97,19 @@ general rule — `<video>`'s asset publishes `renderingSite`, which script canno
 | `terminal` | `<terminal>` | `.PLAINTEXT` | `terminal` | `rows` `columns` `caretRow` `caretColumn` | `write/1` `read/3` `resize/2` `clear/0` `moveCaret/2` |
 | `video` | `<video>` | — | `video` | not measurable here | not measurable here |
 
+**`frame` is the other one worth calling out.** `loadHtml` / `loadFile` put a document into a
+`<frame>` from Odin, and the `document` property comes back as a Value that `element_from_value`
+unwraps into the framed document's `<html>` element — so the host can `select_first` and `set_text`
+inside a sub-document it loaded. Selectors do not cross the boundary in the other direction: from the
+outer document's root, an id inside the frame is `.Not_Found`.
+
+**`pager` is the surprise in that table.** `SDK-PARITY.md` lists printing among the capabilities with
+no host API, and as a *dialog* that is still true — but the pager behavior's asset is host-callable, and
+`loadHtml` followed by `savePDF` produced a real 1-page PDF **from Odin, with no window and no script
+involved**. Two argument shapes to know, both measured: `loadHtml(html, baseUrl, name)` treats a
+non-empty `name` as a file to open (pass `""`), and `savePDF` takes an *options map* first —
+`{filePath:"…"}` — not a path string.
+
 `video` is the one row that could not be measured: `behavior:video` needs libVLC at runtime and fails
 silently without it, leaving the element at `control_type` `.NO` with no asset. Its interface is real —
 `video.odin` drives `renderingSite` through the C++ vtable — see [`ENGINE.md`](./ENGINE.md).

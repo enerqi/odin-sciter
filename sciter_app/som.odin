@@ -73,8 +73,15 @@ Asset_Property :: struct {
 	set:  Asset_Setter,
 }
 
-// One method. `params` is what the engine reports as its arity; it does not enforce it, and `args` can
-// arrive shorter or longer.
+// One method. **`params` is a cap on how many arguments script may pass**, not a hint: measured on
+// 6.0.4.9, a method declared `params = 1` and called as `obj.method(a, b, c)` receives *only* `a`, and
+// the rest are dropped with no error anywhere. Declaring more than a caller passes is harmless - `args`
+// arrives at the length the caller actually used - so a variadic method should declare the most it will
+// ever accept. `examples/sqlite_extension.odin` is where this was found, and it presented as every
+// bound database parameter silently becoming NULL.
+//
+// The host-side call path is the other way round: `asset_call` requires *at least* `params` arguments,
+// because the engine's own thunks segfault on a short list. See `asset_call`.
 Asset_Method :: struct {
 	name:   string,
 	params: int,

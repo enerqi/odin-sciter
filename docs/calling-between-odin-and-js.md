@@ -448,6 +448,62 @@ The rules, all measured against the engine:
 `element_asset(el, "edit")` is the other half: the asset an element's *behavior* publishes, which is
 what the intrinsic controls expose themselves through.
 
+## Capabilities that only script can reach
+
+Nine of the things an application needs have **no slot in `ISciterAPI` at all**. Each row below was
+checked by grepping `external/sciter/include/sciter-x-api.h` for the term, not inferred from the
+absence of an example — see
+[`SDK-PARITY.md`](./SDK-PARITY.md#capabilities-with-no-host-api-at-all). That is an architectural fact
+about Sciter rather than a gap in these bindings: **the host API is a document and rendering API, and
+the application services live in the script runtime.**
+
+The route is the same for all of them — ask the document — and
+[`script_bridge.odin`](../examples/script_bridge.odin) is the worked example.
+
+### The pattern
+
+1. **A `<script type="module">` stashes what `eval` cannot reach.** `Clipboard`, `Zip`, `Audio`,
+   `Graphics` and `Window` are globals, and `eval` sees them. `@sys`, `@env`, `@sciter` and `@storage`
+   are *modules*, and `eval("await import(\"@sys\")")` fails to **parse** — the expression evaluator
+   has no top-level await and no dynamic import, so no amount of `set_script_features` helps. A module
+   script in the document imports them and hangs them on `globalThis`.
+2. **Call a named function, not a fragment.** `call(window, "name", args…)` passes real `Value`s and
+   returns one, so nothing is stringified going in or parsed coming out.
+3. **Read the answer as data** — `value_get`, `value_at`, `value_to_bytes`.
+
+```odin
+// Odin builds the argument, script performs the capability, Odin reads the result.
+payload, _ := sciter_app.value_parse(`{name:"odin", counts:[1,2,3]}`)
+defer sciter_app.value_clear(&payload)
+
+data: sciter_app.Value                              // a map is what a Value becomes when you set a key
+defer sciter_app.value_clear(&data)
+sciter_app.value_set(&data, "json", &payload)
+
+ok, _ := sciter_app.call(window, "clipboardPut", data)
+```
+
+### Which script call performs which capability
+
+| Capability | The script call | Notes measured here |
+| --- | --- | --- |
+| **Clipboard** | `Clipboard.writeText` / `readText` / `write` / `read` / `has(type)` | Works from a **windowless view** — no window needed. `text`, `html`, `json`, `link`, `file`, `image` flavours. **Every string read back carries a trailing NUL**, and HTML also comes back wrapped in `<html><!--StartFragment-->…<!--EndFragment--></html>` |
+| **File open/save dialogs** | `Window.this.selectFile({mode:"open"\|"save", filter, extension})`, `selectFolder()` | Present even on a windowless view. Modal, so a host cannot test it without a human |
+| **Printing** | `behavior:pager` on a `<frame type=pager>` | **Also reachable without script**: the pager's SOM asset is host-callable — `loadHtml` / `savePDF` produced a real PDF from Odin with no window and no script. See [`BEHAVIORS.md`](./BEHAVIORS.md) |
+| **Menus** | `<menu class=popup>` plus `element.popup(menuElement, …)` | The placement half **is** bound — `show_popup` / `show_popup_at` |
+| **Tray icon** | `Window.this.trayIcon({image, text})` | Untested here; needs a desktop with a tray |
+| **Audio** | `Audio` global | Present as a global; not exercised |
+| **Zip** | `Zip.openFile` / `openData` from `@sciter` | Distinct from `SciterOpenArchive`, which *is* bound — see `archive.odin`. `@sciter` also carries `compress` / `decompress` |
+| **Storage** | `await import("@storage")` → `open(path)` | The NoSQL store. Module, so it needs the stash |
+| **Gestures** | script event handlers | No host API, no wrapper |
+| **System facts** | `@env` — `PLATFORM`, `home()`, `path()`, `userName()`, `launch()`, `exec()` — and `@sys` — `fs`, `spawn`, `tmpdir()`, `uname()` | Both are modules, so both need the stash. **`@sys` is gated and `@env` is not**: without `.FILE_IO` in `set_script_features` the `@sys` import still succeeds but the module exports only `Error` — `tmpdir` is "not a function" and `fs` is undefined. `@env` answered fully with no features set at all |
+
+`set_script_features` is the host deciding what the document may do, and it is the one thing a script
+bridge may need arranged before anything else works — but only for `@sys`. Measured on 6.0.4.9 with no
+features set: `Clipboard`, `Zip`, `Audio`, `BJSON`, `fetch`, `Intl`, `URL`, `@env`, `@sciter`,
+`@markdown`, `@yaml`, `@debug` and `@storage` are all present and working. The gate is narrower than it
+looks.
+
 ## Common mistakes
 
 | Symptom | Cause |
@@ -461,3 +517,5 @@ what the intrinsic controls expose themselves through.
 | UI freezes when a button is clicked | blocking work inside a native functor, on the engine's thread |
 | `value_parse` "succeeded" but gave a string | it failed — check the `.Parse_Failed` error, or `value_is_error` |
 | A global asset is `undefined` in script | it was published after the document loaded; publish first |
+| `eval("await import(\"@sys\")")` fails with `expecting ')'` | `eval` has no dynamic import — stash modules on `globalThis` from a `<script type="module">` |
+| Clipboard text compares unequal to what you wrote | it came back with a trailing NUL — trim it |

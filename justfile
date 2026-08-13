@@ -511,8 +511,8 @@ check: mktarget_dirs
 	odin check sciter_app -no-entry-point
 	odin check docs/snippets -no-entry-point
 	for f in examples/*.odin; do
-	    if [ "$f" = "examples/extension.odin" ]; then
-	        # Not an application: a native extension, so it has no `main` and builds as a shared library.
+	    if [ "$f" = "examples/extension.odin" ] || [ "$f" = "examples/sqlite_extension.odin" ]; then
+	        # Not applications: native extensions, so they have no `main` and build as shared libraries.
 	        odin build "$f" -file -build-mode:shared -out:{{ target_path("debug", "odin-ext" + shared_ext) }}
 	    else
 	        odin build "$f" -file -out:{{ target_path("debug", "check.exe") }}
@@ -563,9 +563,34 @@ pack:
 # The name matters: `loadLibrary("odin-ext")` looks for `odin-ext.so` (no `lib` prefix) beside the
 # host executable, so `-out:` sets it exactly.
 # ---
-# build the native extension -> target/debug/odin-ext.so
-extension: mktarget_dirs
-	odin build examples/extension.odin -file -build-mode:shared -out:{{ target_path("debug", "odin-ext" + shared_ext) }}
+# `just extension` builds examples/extension.odin as odin-ext.so; `just extension sqlite_extension
+# odin-sqlite` builds the SQLite binding. The library name is what script's `loadLibrary` is given.
+# ---
+# build a native extension -> target/debug/<lib>.so
+extension name="extension" lib="odin-ext": mktarget_dirs
+	odin build examples/{{name}}.odin -file -build-mode:shared -out:{{ target_path("debug", lib + shared_ext) }}
+
+# build the SQLite extension and run it under the SDK's scapp
+extension-sqlite: (extension "sqlite_extension" "odin-sqlite")
+	#!/usr/bin/env bash
+	set -euo pipefail
+	sdk="${SCITER_SDK:-}"
+	if [ -z "$sdk" ]; then
+	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
+	    exit 1
+	fi
+	scapp="$sdk/bin/{{ scapp_platform }}/scapp{{ exe_ext }}"
+	if [ ! -x "$scapp" ]; then
+	    echo "no scapp at $scapp" >&2
+	    exit 1
+	fi
+	app="target/debug/sqlite-app"
+	rm -rf "$app" && mkdir -p "$app"
+	cp "$scapp" "$app/"
+	cp {{ target_path("debug", "odin-sqlite" + shared_ext) }} "$app/"
+	cp examples/assets/sqlite/index.htm "$app/"
+	echo "running $app/scapp{{ exe_ext }}"
+	cd "$app" && ./scapp{{ exe_ext }} index.htm
 
 # Assembles a throwaway app folder - scapp, the extension and its document together, which is the
 # layout `loadLibrary` requires - and runs it. Nothing in the SDK checkout is modified.

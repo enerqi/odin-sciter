@@ -58,10 +58,10 @@ The comparison that decides whether the bindings are complete.
 | `demos/inspector` | Source of the inspector tool itself | `inspector.odin` attaches to the shipped tool | Covered for our purpose; we do not reimplement the tool |
 | `demos/sciter-component` | A DLL component with `exports.def` | [`extension.odin`](../examples/extension.odin) | **Adjacent** — ours is `SciterLibraryInit` + `sciter.loadLibrary`, which is the mechanism the SDK documents for `scapp`/Quark |
 | `demos.lite/lite-bitmap`, `lite-sdl`, `lite-sciter` | Windowless rendering into a bitmap or an SDL surface | [`windowless`](../examples/windowless.odin), [`windowless_gl`](../examples/windowless_gl.odin), [`spike/windowless`](../spike/windowless/main.odin), [`EMBEDDING.md`](./EMBEDDING.md) | **Covered** — `SL_TARGET_BITMAP` and `SL_TARGET_OPENGL` both render; `SL_TARGET_OPENGLES` is refused by this build, and one engine defect stands (`SXM_RESOLUTION`) |
-| `demos/integration` | A Sciter view inside an existing native window | — | **Gap** |
+| `demos/integration` | A Sciter view inside an existing native window | [`integration.odin`](../examples/integration.odin) | **Covered** — an X11 window this repository owns and draws, with the pane composited in and its input translated |
 | `samples.c` | C modules against `jsbridge.h`, `import`ed from script | — | **Gap, and not buildable here**: `jsbridge.h` is absent from the entire checkout |
-| `sciter-sqlite` | A native extension exposing a C library to script | `extension.odin`, much smaller | **Gap in scale, not in mechanism** |
-| `sciter-webview` | A native behavior embedding the OS webview as an element | — | **Gap** |
+| `sciter-sqlite` | A native extension exposing a C library to script | [`sqlite_extension.odin`](../examples/sqlite_extension.odin) | **Covered** — the same three SOM classes over the system `libsqlite3`, loaded with `dynlib` |
+| `sciter-webview` | A native behavior embedding the OS webview as an element | [`native_child.odin`](../examples/native_child.odin) | **Mechanism covered, browser not** — a native window inside a Sciter layout works; upstream's own Linux backend cannot reparent either. See stage 5 |
 | `demos/window-mixin`, `windows-directx`, `sciter-mfc`, `demos.d2d` | Win32 / MFC / Direct2D / DirectX hosts | — | **N/A on Linux**; revisit with [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) |
 
 ### What we have that upstream does not
@@ -74,7 +74,7 @@ SDK.
 
 Upstream ships a *script-side* test sample (`samples.sciter/unit-test`) and **no host-side tests**: the
 only C test sources in the whole checkout belong to the copy of SDL vendored inside `demos.lite`. This
-repository carries **342 `@(test)` assertions across 20 files** (`grep -c '@(test)'`), plus
+repository carries **362 `@(test)` assertions across 24 files** (`grep -c '@(test)'`), plus
 `just example-tests`.
 
 **Read: on the cross-platform host API, this repository is at or ahead of the SDK's own C/C++ samples.**
@@ -87,7 +87,7 @@ was checked by grepping `external/sciter/include/sciter-x-api.h` for the term:
 | Capability | Occurrences in `sciter-x-api.h` | Reachable from Odin how |
 | --- | --- | --- |
 | Clipboard | 0 | script only — `Clipboard` global |
-| Printing | 0 | script only — `behavior:pager` + `Window.print` |
+| Printing | 0 | **partly bound after all** — `behavior:pager`'s SOM asset is host-callable, and `loadHtml` + `savePDF` produced a real PDF from Odin with no script. `Window.print` does not exist. See [`BEHAVIORS.md`](./BEHAVIORS.md) |
 | Tray icon | 0 | script only |
 | File open/save dialogs | 0 | script only — `Window.this.selectFile` |
 | Audio | 0 | script only — `@sys` / `Audio` |
@@ -100,9 +100,11 @@ was checked by grepping `external/sciter/include/sciter-x-api.h` for the term:
 
 So for **45 of the 64** `samples.sciter` directories — the bucket enumerated
 [below](#script-only--no-host-api-exists) — "parity" cannot mean "bind it". It means *drive the script
-that does it* — which is what [`eval.odin`](../examples/eval.odin) and
-[`call_odin_from_js.odin`](../examples/call_odin_from_js.odin) are for, and what
-[`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) documents.
+that does it* — which is what [`script_bridge.odin`](../examples/script_bridge.odin) is,
+[`eval.odin`](../examples/eval.odin) and [`call_odin_from_js.odin`](../examples/call_odin_from_js.odin)
+are the mechanics of, and what
+[`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md#capabilities-that-only-script-can-reach)
+tabulates capability by capability.
 
 That is a real architectural fact about Sciter and it belongs in a decision about this repository's
 scope: **the host API is a document and rendering API, not an application-services API.**
@@ -140,13 +142,25 @@ Reachable only by loading the document and letting it run, or by `eval`. Porting
 possible and not desirable; **reading them is still how you learn what Sciter documents are supposed to
 look like.**
 
-### Worth trying from the host, not yet tried
+### Worth trying from the host — **tried, 2026-08-13**
 
-- **`popup`** — `SciterShowPopup` is bound and wrapped but only incidentally exercised in `dom_walk`. A
-  context menu driven from Odin is a small, honest example.
-- **`global-events`** — `Window.post` is script-side, but `SciterFireEvent` / `SciterPostEvent` are
-  bound. Whether the two meet in the middle is unmeasured.
-- **`frame-host`** — the closest script-side analogue to `demos/integration`.
+All three answered, and all three work:
+
+- **`popup`** — a context menu driven entirely from Odin. On a *shown* window `show_popup(menu, anchor,
+  .Bottom)` gives the menu `:popup` and the anchor `:owns-popup`, the menu gets a real box (81 × 71
+  here) and `element_at` on its centre hit-tests to the `<li>` inside it; `hide_popup` clears both
+  states, and `show_popup_at` places it at a point instead. (The half-working case is a window that has
+  never been shown — already a known issue in `CHANGELOG.md`.)
+- **`global-events`** — **the two do meet in the middle.** `fire_event` with a `.CUSTOM` code and a
+  name reaches script's own handlers: an element's `.on("odin-says")`, then `document.on`, then
+  `Window.this.on`, in that order, carrying the payload as `e.data`. Posting rather than sending
+  delivers the same three on a later turn of the pump. So a host can raise an application event and the
+  document hears it with no glue on either side.
+- **`frame-host`** — a host can own a sub-document. `frame.loadHtml` through the frame behavior's asset
+  loads it, `frame.url` reads it back, and **`frame.document` unwraps to a real `Element`** with
+  `element_from_value` — from which `select_first` and `set_text` work normally inside the framed
+  document. What does *not* happen is selectors crossing the boundary: `select_first("#inner")` from
+  the outer document's root is `.Not_Found`, which is the correct isolation and the thing to know.
 
 ## The `docs/md` sweep
 
@@ -157,7 +171,7 @@ look like.**
 | `behaviors` | 40 | [`BEHAVIORS.md`](./BEHAVIORS.md), [`html-css-js.md`](./html-css-js.md), `behavior.odin`, `named_behavior.odin` | **Swept, 2026-08-12.** All 39 documented behaviors measured from Odin: what each one's `control_type` is, which 18 publish a callable native interface, every property with whether it is writable, every method with its required arity |
 | `DOM` | 19 | [`dom.md`](./dom.md), [`api.md`](./api.md) | Good |
 | `css` | 15 | `html-css-js.md` | Good on the layout story (`flow:`, flex units, no grid); thinner on `style-sets`, `image-map`, `marker-and-shadow`, vector `path:` images |
-| `JS.runtime` | 15 | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) | **Mostly uncovered** — `Asset`, `Audio`, `BJSON`, `Clipboard`, `Fetch`, `Intl`, `URL`, `Zip`, `@env`, `@sys`, `@markdown`, `@yaml`. All script-side, all things a real app uses |
+| `JS.runtime` | 15 | [`JS-RUNTIME.md`](./JS-RUNTIME.md), [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) | **Covered, 2026-08-12** — every module and global enumerated from the live runtime, each with the host-side counterpart to prefer, plus the list of things that are not there at all |
 | `reactor` | 12 | [`reactor.md`](./reactor.md) | Good |
 | `graphics` | 9 | [`graphics.md`](./graphics.md), `graphics_gallery.odin` | Good — the gallery covers `Brush`, `Path`, `Image`, `Text` |
 | `HTML` | 5 | `html-css-js.md` | Good |
@@ -170,19 +184,22 @@ look like.**
 1. ~~**The 40 intrinsic behaviors.**~~ **Closed** by [`BEHAVIORS.md`](./BEHAVIORS.md). The door turned
    out not to be `SciterCallBehaviorMethod` — whose method ids are a fixed set — but the SOM asset each
    behavior publishes. Stage 1 below records what the probe found.
-2. **Embedding into an existing native window** (`demos/integration`). Started —
-   [`EMBEDDING.md`](./EMBEDDING.md) — and it immediately produced engine defects, which is the usual
-   sign that an area is worth the time. Now the largest open gap.
+2. ~~**Embedding into an existing native window**~~ (`demos/integration`). **Closed** by
+   [`integration.odin`](../examples/integration.odin) — and it was the area that produced the most, as
+   this kind of work usually is: one real engine defect (`SXM_RESOLUTION`), one build limitation
+   (`SL_TARGET_OPENGLES`), and *three retractions* of findings this repository had written up against
+   the engine and which turned out to be its own CSS.
 3. ~~**GPU windowless targets**~~ — `SL_TARGET_OPENGL` is done
    ([`windowless_gl.odin`](../examples/windowless_gl.odin)); `SL_TARGET_OPENGLES` is refused by this
    build and the DX variants need the Windows machine.
-4. **`JS.runtime`** — not bindable, but the thing every real application uses, and undocumented here.
-   Now the largest documentation gap.
-5. **C modules via `jsbridge.h`** — blocked: the header is not in the checkout.
+4. ~~**`JS.runtime`**~~ — **Closed** by [`JS-RUNTIME.md`](./JS-RUNTIME.md): every module and global
+   enumerated from the live runtime, with the host-side counterpart to prefer for each.
+5. **C modules via `jsbridge.h`** — blocked: the header is not in the checkout. The only item on this
+   list still open, and it is not openable from here.
 
 ## A plan to close them
 
-**Status: stage 1 done (2026-08-12), stages 2–5 open.** This is written so the work can be picked up
+**Status: stages 1–4 done, stage 5 all but its blocked item (2026-08-13).** This is written so the work can be picked up
 cold rather than re-derived. Every stage is independently useful and independently
 abandonable, which is the same shape [`VDOM.md`](./VDOM.md#if-it-is-built-build-it-in-this-order) uses
 and for the same reason: the value is front-loaded, so stopping after stage 1 is a good outcome.
@@ -222,25 +239,39 @@ sweep is the deliverable and the example is the illustration; if it runs long, c
 the table* — applied. The table plus four tests in `behavior.odin` carry what the example would have
 shown.
 
-### Stage 2 — finish the windowless story
+### Stage 2 — finish the windowless story — **done**, [`integration.odin`](../examples/integration.odin)
 
 [`EMBEDDING.md`](./EMBEDDING.md) renders, scripts, takes a mouse and a key, and runs on the GPU. Two
 pieces are left, and the third is struck out because it is done:
 
-1. **Report the defects upstream.** `SXM_RESOLUTION` faulting on the next idle drain, with the
-   backtrace already captured, and `SL_TARGET_OPENGLES` answering `FALSE` from `SXM_PAINT`. The engine
+1. **Report the defects upstream.** **Written up and ready to file** —
+   [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md) carries ten of them, each with a reproduction and,
+   where the backtrace was captured, the function that faults. Nothing has been *filed*: this
+   repository has no account on that tracker, so the last step belongs to somebody who does. The engine
    is not forkable, so upstream is the only route — see
    [`ALTERNATIVES.md`](./ALTERNATIVES.md#vendor-risk-and-bus-factor) for why that asymmetry matters.
-   (The third defect, "`SXM_MOUSE` is never handled", was **retracted**: it was this repository's own
-   test document, and windowless input works.)
 2. ~~**A GPU target.**~~ Done — [`windowless_gl.odin`](../examples/windowless_gl.odin) renders through
    `SL_TARGET_OPENGL` into a framebuffer the host owns.
-3. **A real example, not a spike.** A Sciter pane composited into a frame this repository draws —
-   which is the `demos/integration` equivalent, and the thing
+3. ~~**A real example, not a spike.**~~ Done — [`integration.odin`](../examples/integration.odin): a
+   Sciter pane composited into a frame this repository draws, in a window it owns, driven by its own
+   X11 event loop. About a hundred lines of raw Xlib, no toolkit. It is the `demos/integration`
+   equivalent and the evidence for what
    [`ALTERNATIVES.md`](./ALTERNATIVES.md#the-other-direction-sciter-inside-an-immediate-mode-app)
-   claims is possible. This is now the whole of the stage.
+   claims.
 
-### Stage 3 — the script-bridge pattern for host-less capabilities
+**The probe cancelled the stage's own premise, which is why it was worth running.** The plan said to
+hold this piece until the input defect was answered, because "a pane that cannot be clicked is a demo
+with a hole in it". There is no hole: the intrinsic behaviors *do* act on windowless mouse input — a
+click presses a button, toggles a checkbox and focuses an editor. The two measurements that said
+otherwise had their widgets at `position: absolute`, which collapses an inline-level `<button>` or
+`<input>` to 1×1 in this engine. That retraction, the second of its kind from the same cause, is in
+[`html-css-js.md`](./html-css-js.md#absolutely-positioned-elements-collapse--two-separate-rules-both-measured),
+and `dom_walk.odin` now pins both collapse rules so it cannot happen a fourth time.
+
+The one real rule left is smaller and was hiding underneath: **a behavior's event is posted**, so it
+arrives on the next `windowless_heartbeat` rather than inside the call that caused it.
+
+### Stage 3 — the script-bridge pattern for host-less capabilities — **done**, [`script_bridge.odin`](../examples/script_bridge.odin)
 
 Clipboard, printing, file dialogs, tray icon, menus, audio, gestures, zip, storage — nine capabilities,
 zero API slots, per [the table above](#capabilities-with-no-host-api-at-all).
@@ -251,11 +282,25 @@ result back" — plus a table in
 [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) mapping each capability to the
 script call that performs it.
 
-Pick the one capability for the example on which is most annoying to get wrong rather than which is
-easiest: a save dialog returning a path, or clipboard round-tripping non-text, both of which have a
-failure mode more interesting than "it printed".
+Done as written: **one** example, and the capability chosen was clipboard round-tripping non-text —
+the save dialog is modal and cannot be tested without a human. It earned its place. JSON survives a
+round trip exactly; **HTML does not**, coming back wrapped in
+`<html><!--StartFragment-->…<!--EndFragment--></html>` **with a trailing NUL inside the string** — and
+the NUL is on the *text* flavour too, so a host comparing what it wrote with what it read fails for a
+reason it cannot see in a log.
 
-### Stage 4 — a `JS.runtime` reference
+Two findings the probe added to the plan's picture:
+
+- **`eval` cannot import a module.** `eval("await import(\"@sys\")")` fails to *parse*, so `@sys`,
+  `@env`, `@sciter` and `@storage` are unreachable from `eval` at any privilege level. A
+  `<script type="module">` that hangs them on `globalThis` is the bridge, and it is part 1 of the
+  pattern in the example.
+- **The permission gate is much narrower than expected.** With no `set_script_features` at all,
+  `Clipboard`, `Zip`, `Audio`, `BJSON`, `fetch`, `Intl`, `URL`, `@env`, `@sciter`, `@markdown`,
+  `@yaml`, `@debug` and `@storage` all work. Only `@sys` is gated, and it fails by exporting nothing
+  but `Error` rather than by refusing.
+
+### Stage 4 — a `JS.runtime` reference — **done**, [`JS-RUNTIME.md`](./JS-RUNTIME.md)
 
 Documentation only, no code, no engine risk. Fifteen modules — `Asset`, `Audio`, `BJSON`, `Clipboard`,
 `Fetch`, `Intl`, `URL`, `Zip`, `@env`, `@sys`, `@markdown`, `@yaml`, `@debug` — none bindable, all used
@@ -266,14 +311,39 @@ have a host-side counterpart that should be preferred (`Fetch` versus the reques
 `SciterOpenArchive`, `@sys` versus doing it in Odin). That last column is the part that does not exist
 anywhere upstream and is the reason to write it at all.
 
-### Stage 5 — the long tail
+Written from the live objects rather than from upstream's pages — `Object.keys` on every module,
+`typeof` on every global — which turned up a short list of things that are *not* there and read as
+missing features: `performance` is undefined, `@fs` is not a module (the file API is `@sys.fs`),
+`Storage` and `env` are modules rather than globals, and `Window.this.print` does not exist because
+printing is `behavior:pager`.
 
-Only if stages 1–4 are done and still felt worth extending.
+### Stage 5 — the long tail — **two of three done (2026-08-13)**
 
-- **A `sciter-webview` equivalent** — a native behavior embedding the OS webview as an element. The
-  inverse of stage 2, and the answer to "can a Sciter app show a real web page".
-- **An extension at `sciter-sqlite` scale** — `extension.odin` proves the mechanism; nothing proves it
-  at the size of a real library binding.
+- **A `sciter-webview` equivalent** — **the embedding half is done and the browser half is not portable
+  here.** [`native_child.odin`](../examples/native_child.odin) puts a native window *inside* a Sciter
+  window, tracking an element's box, and it rests on a measurement that is not in any header:
+  **`HWINDOW` is an X11 window id on Linux**, not an opaque handle — `XGetWindowAttributes` on it
+  succeeds, a child created with it as parent maps, and the engine's own repaints leave the child
+  alone. That is the whole mechanism `sciter-webview` needs.
+
+  What is missing is WebKit, and the reason is upstream's: its own GTK backend
+  (`sciter-webview/webview/sciter_webkitgtk.cpp`) implements `set_parent_window()` as
+  `{ return false; }` and opens a *detached* top-level window on Linux, so even the SDK's binding does
+  not embed a browser in a Sciter layout there. A GTK webview also wants its own main loop. On Windows
+  and macOS the same file would hand the window handle to WebView2 or WKWebView — which belongs to
+  [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) and a machine that can run it.
+
+- **An extension at `sciter-sqlite` scale** — **done**,
+  [`sqlite_extension.odin`](../examples/sqlite_extension.odin). The same three SOM classes upstream's
+  C++ binding publishes — `SQLite`, `DB`, `Recordset` — over the system's own `libsqlite3`, opened with
+  `dynlib` so there is no header, no link flag and no development package. Seven tests, including one
+  that loads the built `.so` through `sciter.loadLibrary` and runs a query from script.
+
+  It found a rule that had gone unnoticed through every smaller asset: **a passport's `params` caps how
+  many arguments script may pass.** A method declared `params = 1` and called as `db.exec(sql, a, b)`
+  receives only `sql`, silently — which presented as every bound database parameter arriving as NULL
+  and rows of nulls coming back. `som.odin` and [`api.md`](./api.md) now say so.
+
 - **C modules via `jsbridge.h`** — **blocked**, and worth stating rather than silently skipping: the
   header is absent from the SDK checkout, so upstream's own `samples.c` cannot be built from it either.
   Reopen only if a later SDK ships the header.

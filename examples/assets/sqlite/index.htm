@@ -1,0 +1,67 @@
+<html>
+<head>
+  <title>odin-sciter: sqlite extension</title>
+  <style>
+    html { background: #1e1e2e; color: #cdd6f4; font: 16px system; }
+    body { padding: 2em; margin: 0; }
+    h1   { color: #89b4fa; margin-top: 0; }
+    pre  { background: #313244; padding: 1em; border-radius: 4px; font: 14px monospace; }
+    code { background: #313244; padding: 0 .3em; border-radius: 3px; }
+    .bad { color: #f38ba8; }
+  </style>
+</head>
+<body>
+  <h1>sqlite, from Odin</h1>
+  <p>
+    Running under the SDK's <code>scapp</code>: no Odin <code>main</code> in this process. Everything
+    below came out of <code>odin-sqlite.so</code>, which binds the system's own
+    <code>libsqlite3</code> and publishes three SOM classes &mdash; <code>SQLite</code>,
+    <code>DB</code> and <code>Recordset</code>.
+  </p>
+  <pre id="out">loading…</pre>
+
+  <script type="module">
+    import * as sciter from "@sciter";
+
+    const lines = [];
+    try {
+      const SQLite = sciter.loadLibrary("odin-sqlite").SQLite;
+      lines.push("SQLite.version      -> " + SQLite.version);
+
+      const db = SQLite.open(":memory:");
+      lines.push("SQLite.open(:memory:) -> " + db);
+
+      db.exec("create table people(id integer primary key, name text, height real)");
+      db.exec("insert into people(name, height) values(?, ?)", "ada", 1.7);
+      db.exec("insert into people(name, height) values(?, ?)", "grace", 1.62);
+      lines.push("db.lastRowId()      -> " + db.lastRowId());
+      lines.push("db.changes()        -> " + db.changes());
+
+      // A query answers with a Recordset, already sitting on its first row.
+      const rs = db.exec("select id, name, height from people order by id");
+      lines.push("rs.length           -> " + rs.length);
+      lines.push("column names        -> " + [rs.name(0), rs.name(1), rs.name(2)].join(", "));
+      while (rs.isValid) {
+        lines.push("  row               -> " + [rs.field(0), rs.field(1), rs.field(2)].join(" | "));
+        rs.next();
+      }
+
+      // Errors arrive as thrown exceptions carrying SQLite's own message.
+      try {
+        db.exec("select * from no_such_table");
+        lines.push("bad statement       -> (no error, which would be wrong)");
+      } catch (e) {
+        lines.push("bad statement       -> throws: " + e);
+      }
+
+      db.close();
+      lines.push("db.close()          -> done");
+    } catch (e) {
+      lines.push("FAILED: " + e);
+    }
+    document.$("#out").innerText = lines.join("\n");
+    // Also to stdout, so `just extension-sqlite` can be checked without looking at the window.
+    for (const line of lines) console.log(line);
+  </script>
+</body>
+</html>

@@ -32,13 +32,15 @@
 //     nothing.
 //   - **`on_invalidate_rect` is the repaint signal.** Nothing paints itself and nothing schedules a
 //     frame; the host handler's invalidate notification is what says a paint is due.
-//   - **Input works - and the note saying it did not was a stylesheet bug.** Both `SXM_MOUSE` and
-//     `SXM_KEY` reach the document: handlers run, `:hover` follows the pointer, and a click is
-//     synthesised from a press and a release. `docs/EMBEDDING.md` said the mouse was dead because the
-//     page it was tested with caught clicks on an absolutely positioned overlay with a percentage
-//     height, which Sciter lays out **one pixel tall** - so every event landed on `<body>`. The
-//     remaining hole is real and narrower: the *intrinsic behaviors* ignore the mouse, so a click does
-//     not focus an `<input>` or press a `<button>`. Drive those through the element.
+//   - **Input works, fully - and both notes saying it did not were the same stylesheet bug.** Both
+//     `SXM_MOUSE` and `SXM_KEY` reach the document: handlers run, `:hover` follows the pointer, a click
+//     is synthesised from a press and a release, and the *intrinsic behaviors respond too* - a button
+//     presses, a checkbox toggles, and a click gives an `<input>` the caret so keys land in it. Both
+//     earlier claims to the contrary came from test pages that positioned their widgets with
+//     `position: absolute` - which collapses an inline-level `<button>` or `<input>` to **1x1** in this
+//     engine, and a percentage height to **1px** - so every click landed on `<body>`. See
+//     `docs/html-css-js.md`. The one real subtlety left: a behavior's event is *posted*, so it arrives
+//     on the next heartbeat rather than inside the call.
 //   - **The clock is the wall clock.** `SXM_HEARTBIT` carries a timestamp and the engine ignores it:
 //     script timers fire as real time passes and cannot be driven faster by lying about it, so a host
 //     rendering frames faster than real time gets none. One real engine defect is pinned below too -
@@ -474,15 +476,16 @@ test_the_mouse_reaches_the_document :: proc(t: ^testing.T) {
 	testing.expect(t, .HOVER in state, "the element under the pointer should be hovered")
 }
 
-// **The hole that is real**, and much narrower than "the mouse does not work": the intrinsic behaviors
-// ignore it. A `<button>` that a plain `<div>`'s handlers would have heard does not fire its own click,
-// an `<input>` does not take the caret, and a checkbox does not toggle - while the same document's
-// ordinary elements receive everything.
+// **The intrinsic behaviors respond to the windowless mouse**, and this test used to assert the exact
+// opposite. It was wrong for the same reason the "the mouse never works" note was wrong: its widgets
+// were `position: absolute`, and an inline-level `<button>` or `<input>` taken out of flow lays out
+// **1x1** in this engine, so every click landed on `<body>`. Same call, same engine, boxes with a real
+// size - and a click presses the button, toggles the checkbox, and gives the field the caret.
 //
-// A characterization test: if a later engine wires the behaviors up, it fails and the finding gets
-// rewritten. The way round it is in the second half - drive the element rather than the view.
+// The second trap is in here too: a behavior's event is **posted**, so it has not been delivered when
+// `windowless_mouse` returns. One heartbeat is what makes it observable.
 @(test)
-test_intrinsic_behaviors_ignore_the_windowless_mouse :: proc(t: ^testing.T) {
+test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) {
 	if !have_display() {
 		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
 		return
@@ -496,13 +499,17 @@ test_intrinsic_behaviors_ignore_the_windowless_mouse :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	if err != nil {return}
 
+	// In normal flow with real sizes. `position: absolute` here is what made the original version of
+	// this test measure the opposite of the truth.
 	WIDGETS :: `<html><head><style>
 	  html, body { margin:0; padding:0; width:100%; height:100%; background:#1e1e2e; }
-	  #field { position:absolute; left:20px; top:20px; width:200px; height:30px; }
-	  #btn { position:absolute; left:20px; top:80px; width:120px; height:30px; }
+	  #field { display:block; width:200px; height:30px; }
+	  #btn { display:block; width:120px; height:30px; margin-top:20px; }
+	  #check { display:block; margin-top:20px; }
 	</style></head><body>
 	  <input id="field" type="text" value="" />
 	  <button id="btn">press me</button>
+	  <input id="check" type="checkbox" />
 	  <script type="text/javascript">
 	    globalThis.presses = 0;
 	    document.getElementById("btn").addEventListener("click", function(){ globalThis.presses += 1; });
@@ -522,30 +529,47 @@ test_intrinsic_behaviors_ignore_the_windowless_mouse :: proc(t: ^testing.T) {
 		frame(view, time_ms)
 	}
 
-	// The text field does not take the caret from a click.
-	field, ferr := sciter_app.select_first(root, "#field")
-	testing.expect_value(t, ferr, nil)
-	click(&view, {60, 35}, 100)
-	state, serr := sciter_app.element_state(field)
-	testing.expect_value(t, serr, nil)
-	testing.expect(t, .FOCUS not_in state, "an intrinsic edit taking focus from a click would be new")
+	// Ask the engine where things are rather than assuming the CSS was honoured - which is the lesson
+	// the original version of this test failed to apply to itself.
+	center :: proc(root: sciter_app.Element, selector: string) -> [2]i32 {
+		el, err := sciter_app.select_first(root, selector)
+		if err != nil {return {-1, -1}}
+		r, lerr := sciter_app.location(el, .Border, .View)
+		if lerr != nil {return {-1, -1}}
+		return {r.x + r.width / 2, r.y + r.height / 2}
+	}
 
-	// The button does not fire its click.
-	click(&view, {80, 95}, 200)
+	// The button fires its own click...
+	click(&view, center(root, "#btn"), 100)
 	presses, perr := sciter_app.eval(view.window, "globalThis.presses")
 	testing.expect_value(t, perr, nil)
 	defer sciter_app.value_clear(&presses)
 	n, _ := sciter_app.value_to_int(&presses)
-	testing.expectf(t, n == 0, "the button fired %d times - the engine may have wired the behaviors up", n)
+	testing.expect_value(t, n, i32(1))
 
-	// **And the way round both**, which is what an application actually does: drive the element rather
-	// than the view. `set_focus` makes the field take keys, and `do_click` presses the button for real.
-	testing.expect_value(t, sciter_app.set_focus(field), nil)
+	// ...the checkbox toggles...
+	check, cerr := sciter_app.select_first(root, "#check")
+	testing.expect_value(t, cerr, nil)
+	before, _ := sciter_app.element_state(check)
+	testing.expect(t, .CHECKED not_in before, "it starts unchecked")
+	click(&view, center(root, "#check"), 200)
+	checked, kerr := sciter_app.element_state(check)
+	testing.expect_value(t, kerr, nil)
+	testing.expect(t, .CHECKED in checked, "a click through the view should toggle a checkbox")
+
+	// ...and a click gives the field the caret, so it takes keys with no `set_focus` at all.
+	field, ferr := sciter_app.select_first(root, "#field")
+	testing.expect_value(t, ferr, nil)
 	testing.expect(t, sciter_app.windowless_focus(&view))
+	click(&view, center(root, "#field"), 300)
+	state, serr := sciter_app.element_state(field)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, .FOCUS in state, "a click should focus an intrinsic edit")
+
 	for c in "typed" {
 		sciter_app.windowless_key(&view, .CHAR, u32(c))
 	}
-	frame(&view, 300)
+	frame(&view, 400)
 
 	value, verr := sciter_app.element_value(field)
 	testing.expect_value(t, verr, nil)
@@ -553,17 +577,73 @@ test_intrinsic_behaviors_ignore_the_windowless_mouse :: proc(t: ^testing.T) {
 	text, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 	testing.expect_value(t, text, "typed")
 
+	// Driving the element directly still works, and is what a host with no pointer uses.
 	button, berr := sciter_app.select_first(root, "#btn")
 	testing.expect_value(t, berr, nil)
 	_, clickerr := sciter_app.do_click(button)
 	testing.expect_value(t, clickerr, nil)
-	frame(&view, 400)
+	frame(&view, 500)
 
 	after, aerr := sciter_app.eval(view.window, "globalThis.presses")
 	testing.expect_value(t, aerr, nil)
 	defer sciter_app.value_clear(&after)
 	m, _ := sciter_app.value_to_int(&after)
-	testing.expectf(t, m == 1, "do_click should press the button; it fired %d times", m)
+	testing.expect_value(t, m, i32(2))
+}
+
+// The delivery rule underneath the test above: a behavior's event is **posted**, so nothing has
+// happened when `windowless_mouse` returns and one heartbeat is what makes it observable. A host that
+// checks inside the same turn concludes the click was ignored - which is half of how this file came to
+// document the opposite of the truth.
+@(test)
+test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		return
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	context.allocator = runtime.default_allocator()
+
+	view, err := sciter_app.create_windowless({width = 300, height = 200})
+	testing.expect_value(t, err, nil)
+	if err != nil {return}
+
+	DOC_BTN :: `<html><head><style>
+	  html, body { margin:0; padding:0; width:100%; height:100%; background:#1e1e2e; }
+	  #btn { display:block; width:120px; height:30px; }
+	</style></head><body>
+	  <button id="btn">press me</button>
+	  <script type="text/javascript">
+	    globalThis.presses = 0;
+	    document.getElementById("btn").addEventListener("click", function(){ globalThis.presses += 1; });
+	  </script>
+	</body></html>`
+
+	testing.expect_value(t, sciter_app.load_html(view.window, DOC_BTN, "about:blank"), nil)
+	for i in 0 ..< 10 {
+		testing.expect_value(t, frame(&view, u32(i) * 16), nil)
+	}
+	root, _ := sciter_app.root(view.window)
+	btn, _ := sciter_app.select_first(root, "#btn")
+	box, _ := sciter_app.location(btn, .Border, .View)
+	at := [2]i32{box.x + box.width / 2, box.y + box.height / 2}
+
+	presses :: proc(view: ^sciter_app.Windowless_View) -> i32 {
+		v, err := sciter_app.eval(view.window, "globalThis.presses")
+		if err != nil {return -1}
+		defer sciter_app.value_clear(&v)
+		n, _ := sciter_app.value_to_int(&v)
+		return n
+	}
+
+	sciter_app.windowless_mouse(&view, .MOUSE_DOWN, at)
+	sciter_app.windowless_mouse(&view, .MOUSE_UP, at)
+	testing.expect_value(t, presses(&view), i32(0)) // posted, not delivered
+
+	sciter_app.windowless_heartbeat(&view, 100)
+	testing.expect_value(t, presses(&view), i32(1)) // one beat is enough
 }
 
 // **Script timers run on the wall clock, and `SXM_HEARTBIT`'s timestamp is ignored.** This test was

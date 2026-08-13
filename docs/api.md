@@ -484,6 +484,11 @@ props, methods := sciter_app.asset_members(edit, context.temp_allocator)
 // methods -> ["selectAll", "selectRange", "removeText", "insertText", "appendText"]
 ```
 
+**A method's `params` cuts both ways.** On the *script* side it is a cap: a member declared
+`params = 1` and called as `obj.method(a, b, c)` receives only `a`, and the extras vanish with no error
+— measured, and it presented as every bound parameter in a database call arriving as NULL. Declare the
+most a method will ever take. On the *host* side it is a floor, for the reason below.
+
 **Arity is a memory-safety rule, not a convention.** The engine's thunks read their arguments
 positionally and ignore `argc`, so a method declared with one parameter called with none faults inside
 the engine. `asset_call` refuses with `.Wrong_Arity` instead of making the call; passing *more* than
@@ -779,8 +784,9 @@ signal that a repaint is due.
 Five measured rules, all with a test in [`examples/windowless.odin`](../examples/windowless.odin):
 **it still needs a display** (no `DISPLAY` segfaults `SXM_CREATE`); **do not call `init`**; **one
 destroy ends windowless mode for the process** — swap documents instead; **script timers run on the
-wall clock**, so a host rendering faster than real time sees none; and **the intrinsic behaviors ignore
-the mouse**, though ordinary elements receive it.
+wall clock**, so a host rendering faster than real time sees none; and **input is complete** — the
+intrinsic behaviors act on the mouse too, with the caveat that a behavior's event is *posted* and so
+arrives on the next heartbeat rather than inside the call.
 
 The **`.OPENGL` backend** ([`examples/windowless_gl.odin`](../examples/windowless_gl.odin)) draws into
 the framebuffer bound to the host's GL context — a texture, if that is what is bound. Its own rules:

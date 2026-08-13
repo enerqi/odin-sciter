@@ -89,25 +89,58 @@ gallery   { flow: grid(1* 1* 1*); }   /* three equal columns */
 Porting instinct: `display:flex; flex-direction:row` becomes `flow:horizontal`, and `flex:1` becomes
 `size:*` or `width:*`.
 
-### A percentage height on an absolutely positioned element collapses to 1px
+### Absolutely positioned elements collapse — two separate rules, both measured
 
-Measured on 6.0.4.9, and it cost a false engine-defect report before it was found:
+The most expensive pair of facts in this repository. Between them they have produced **three** false
+findings, two written up as engine defects, because an element with no box is not under the pointer and
+every click lands on `<body>` instead.
+
+**Rule 1 — a percentage *height* on an absolutely positioned element resolves to 1px.**
 
 ```css
-#overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+#overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }   /* 479 × 1 */
+#half    { position: absolute; left: 0; top: 0; width: 120px; height: 100%; }  /* 121 × 1 */
+#wide    { position: absolute; left: 0; top: 0; width: 100%; height: 30px; }   /* 479 × 31 ✓ */
 ```
 
-lays out **401 × 1**, not 401 × 261. The width resolves; the height does not. The same rule with
-`height: 156px` also collapses; only an element in normal flow with a pixel height gets the box the CSS
-asks for.
+The width resolves; the height does not. A pixel height is fine. So the full-size transparent overlay a
+browser page would use to catch clicks is one pixel tall here, and receives nothing.
 
-It matters more than a wrong-looking box, because an element one pixel tall is not under the pointer:
-the full-size transparent overlay that a browser page would use to catch clicks receives nothing, and
-every event lands on `<body>` instead. That is exactly what happened in
-[`spike/windowless/main.odin`](../spike/windowless/main.odin), and it was written up as "the engine
-never delivers mouse events in windowless mode" until the box was measured — see
-[`EMBEDDING.md`](./EMBEDDING.md). **When an element does not receive events, ask `location(el, .Border,
-.View)` what shape the engine thinks it is** before concluding anything about the event system.
+**Rule 2 — an inline-level *widget* taken out of flow collapses to 1 × 1.** `<button>` and `<input>`
+are `display: inline-block` by default, and positioning one absolutely leaves it with no box at all,
+whatever size the CSS asks for:
+
+```css
+#btn   { position: absolute; left: 20px; top: 80px; width: 120px; height: 30px; }              /* 1 × 1 */
+#btn2  { display: block; position: absolute; left: 20px; top: 80px; width: 120px; height: 30px; } /* 149 × 39 ✓ */
+```
+
+`display: block` is the fix. Measured on `<button>` and `<input type=text>`; a `<div>`, a `<span>` and
+a `<select>` in the same position all get their boxes, so this is about the default display of those
+two rather than about `position` in general. `position: fixed` behaves the same way as `absolute`
+throughout.
+
+**The general-purpose alternative is `flow: stack`**, which the SDK's own CSS documentation calls "a
+simpler and faster alternative to position:absolute". The container stacks its children on top of one
+another; each child positions itself with margins and sizes itself with flex units, and *percentage
+heights are not involved*:
+
+```css
+#stage   { flow: stack; width: *; height: *; }
+#overlay { width: *; height: *; z-index: 2; }                    /* 479 × 379 — a real click catcher */
+#panel   { width: 120px; height: 30px; margin: 80px * * 20px; }  /* 20px from the left, 80px down */
+```
+
+The three findings these rules cost:
+
+- `spike/windowless/main.odin` → "the engine never delivers mouse events in windowless mode" —
+  retracted (rule 1), see [`EMBEDDING.md`](./EMBEDDING.md).
+- `examples/windowless.odin` → "the intrinsic behaviors ignore the windowless mouse" — retracted
+  (rule 2); a click presses a button, toggles a checkbox and focuses an editor.
+- the same test's "an `<input>` does not take the caret from a click" — same cause, same retraction.
+
+**When an element does not receive events, ask `location(el, .Border, .View)` what shape the engine
+thinks it is** before concluding anything about the event system.
 
 ### Sciter-only CSS worth knowing
 

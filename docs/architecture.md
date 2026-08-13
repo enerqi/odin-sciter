@@ -88,7 +88,11 @@ describes that.
 
 Sciter 6 is `libsciter.so` and renders through its own EGL/GLESv2 backend. `ldd` lists sixteen
 entries — libuuid, fontconfig, freetype, GLESv2, EGL, libstdc++, expat, zlib, bz2, png16, brotli — and
-no GTK, no X11 or Wayland client libraries. `HWINDOW` is a plain `void*`.
+no GTK, no X11 or Wayland client libraries. `HWINDOW` is a plain `void*` **as a type** — but the value
+is not opaque: on Linux/X11 it is the engine's own **X11 window id**. `XGetWindowAttributes` on it
+succeeds, and a host can make that window the parent of its own native child, which is how
+[`native_child.odin`](../examples/native_child.odin) puts a native view inside a Sciter layout. Measured
+on 6.0.4.9.
 
 The lifecycle is the engine's own, on all three platforms:
 

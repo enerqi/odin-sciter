@@ -8,10 +8,13 @@ draw loop. See [`ALTERNATIVES.md`](./ALTERNATIVES.md#immediate-mode-in-detail) f
 the other ways to get a page into a native app.
 
 **The mode is supported by this package**: `sciter_app/windowless.odin` wraps every `SXM_*` message, and
-[`examples/windowless.odin`](../examples/windowless.odin) is a worked embedding with eleven tests -
-including one that renders a view straight into a rectangle of a larger image the host owns. Everything
-else in the package works on a view unchanged, because the view's `window` field is an ordinary
-`Window`:
+[`examples/windowless.odin`](../examples/windowless.odin) is a worked embedding with twelve tests -
+including one that renders a view straight into a rectangle of a larger image the host owns.
+[`examples/integration.odin`](../examples/integration.odin) is the whole arrangement end to end: a pane
+inside a window this repository owns and draws, with its own X11 event loop, and it is **fully
+interactive** — buttons press, checkboxes toggle, a click focuses a field and typing lands in it.
+Everything else in the package works on a view unchanged, because the view's `window` field is an
+ordinary `Window`:
 
 ```odin
 view, _ := sciter_app.create_windowless({width = 320, height = 240})
@@ -201,21 +204,24 @@ What is measured now, against elements with a real box (`examples/windowless.odi
 - `SXM_KEY` works too: `.DOWN` reaches a script `keydown` handler and `.CHAR` inserts the character into
   a focused field.
 
-### The remaining input hole: intrinsic behaviors ignore the mouse
+### ~~The remaining input hole: intrinsic behaviors ignore the mouse~~ — **retracted 2026-08-12**
 
-Real, and much narrower than the retracted claim. In the same document, with the same clicks:
+This section claimed that a click would not press a `<button>`, toggle a checkbox or give an `<input>`
+the caret. It does all three. The measurement behind the claim had its widgets at `position: absolute`,
+and **an inline-level `<button>` or `<input>` taken out of flow lays out 1 × 1 in this engine** — so
+the clicks landed on `<body>`. That is the same class of mistake as the retracted "the mouse is never
+delivered" note above, one rule along: see
+[`html-css-js.md`](./html-css-js.md#absolutely-positioned-elements-collapse--two-separate-rules-both-measured).
 
-- clicking an `<input>` does **not** give it the caret,
-- clicking a `<button>` fires **no** `click` on the button,
-- clicking a checkbox does **not** toggle it,
+What is true, and is the thing that made the wrong answer look right:
 
-while a plain `<div>` beside them hears everything. The DOM event path is live; the native widgets' own
-input handling is not. Drive those through the element instead — `set_focus` before sending keys,
-`do_click` for a button, `send_mouse` on the element for anything else. All three are measured working
-on a windowless view.
+- **A behavior's event is posted, not delivered inline.** Straight after the `.MOUSE_UP` the button's
+  `click` handler has not run; after one `windowless_heartbeat` it has. A host that checks inside the
+  same turn sees nothing happen.
 
-**Consequence.** This is an interactive embedding for anything whose behaviour you write yourself, and a
-display embedding for anything that leans on Sciter's built-in widgets.
+**Consequence.** A windowless pane is a fully interactive embedding, widgets included. Driving elements
+directly — `set_focus`, `do_click`, `send_mouse` — still works and is what a host with no pointer of
+its own uses.
 
 ### It still needs a display
 
@@ -256,9 +262,40 @@ match — the desktop drops to 320×180. It is a display-wide mode-set, not a wi
 xrandr --output eDP-1 --mode 1920x1200 --rate 60
 ```
 
-## Related: Sciter hosting a real webview
+## The inverse: a native window inside a Sciter window
 
-The inverse arrangement, and the SDK ships it: `sciter-webview/behavior_webview.cpp` is a native behavior
-that embeds the OS webview as an element inside a Sciter document. Not measured here — noted because
-"put a real browser pane in the app" and "put the app's UI in a Sciter pane" are different questions with
-different answers.
+Measured, and it works — [`examples/native_child.odin`](../examples/native_child.odin) is the worked
+version. The measurement it rests on is not in any header:
+
+**`HWINDOW` is an X11 window id on Linux.** The type is `void*` and `sciter_app.Window` carries it as
+one, but the *value* is the engine's own window: `XGetWindowAttributes` on it succeeds (measured:
+handle `0x2E00007`, real size, `map_state` viewable). So the engine's window is an ordinary X11 parent.
+
+```odin
+window, _ := sciter_app.create_window({width = 900, height = 600})
+parent := x11.Window(uintptr(rawptr(window)))          // the engine's own X11 window
+child := x11.CreateSimpleWindow(display, parent, x, y, w, h, 0, black, black)
+```
+
+Three rules, each with a test in that file:
+
+- **Ask the DOM where the box is.** `location(el, .Border, .View)` is in the window's coordinates, which
+  is what `XMoveResizeWindow` takes. Nothing notifies the host when layout moves, so compare the
+  rectangle each turn of the pump.
+- **The engine leaves the child alone.** Sciter paints into its own window with Skia; the child stays
+  mapped and viewable across `update_window` and every repaint after it.
+- **CSS cannot hide it.** `display: none` on the placeholder removes the *document's* box and does
+  nothing to the native window — the host has to unmap it. Nor can `z-index` put an element over it:
+  X11 stacking decides, so the placeholder must be reserved space rather than decoration.
+
+### Why this is not a webview
+
+The SDK ships `sciter-webview/behavior_webview.cpp`, a native behavior that embeds the OS webview as an
+element. The mechanism above is exactly what it needs, and on Windows and macOS this window handle is
+what would be handed to WebView2 or WKWebView.
+
+On Linux it stops at upstream: `sciter-webview/webview/sciter_webkitgtk.cpp` implements
+`set_parent_window()` as `{ return false; }` and opens a **detached top-level GTK window** instead, so
+even the SDK's own binding does not put a browser inside a Sciter layout there. A GTK webview also wants
+its own main loop. "Put a real browser pane in the app" and "put the app's UI in a Sciter pane" remain
+different questions with different answers — but the second half of the first one is answered above.

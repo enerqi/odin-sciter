@@ -144,6 +144,10 @@ Run one with `just example NAME`.
 | `inspector` | Attaching the SDK's DevTools-style inspector to a running window |
 | `windowless` | **No window at all** — the engine renders into a buffer you own, for a pane inside someone else's renderer. See [`EMBEDDING.md`](docs/EMBEDDING.md) |
 | `windowless_gl` | The same on the **GPU** — Sciter's Skia pipeline drawing straight into your OpenGL texture (Linux/EGL) |
+| `integration` | **A Sciter pane inside a window this program owns** — raw Xlib, the host's own frame and event loop, the pane composited in and fully interactive. The SDK's `demos/integration`, in Odin |
+| `native_child` | **The inverse of `integration`** — a native X11 window living *inside* a Sciter window, tracking an element's box. Sciter's `HWINDOW` is an X11 window id, which is what makes it possible |
+| `sqlite_extension` | **A real library bound and published to script** — `SQLite`, `DB` and `Recordset` over the system `libsqlite3`, as a loadable extension. `just extension sqlite_extension odin-sqlite` |
+| `script_bridge` | **Capabilities Odin cannot bind, driven anyway** — clipboard, dialogs, `@sys`, `@env`: ask the document. See [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md#capabilities-that-only-script-can-reach) |
 | `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
 
 Tests live inside the examples, next to the code they cover:
@@ -356,6 +360,7 @@ this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing 
 | [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
 | [`BEHAVIORS.md`](docs/BEHAVIORS.md) | the engine's 39 intrinsic behaviors from the host side — which publish a callable interface, their properties and methods, and the arity rule that is a segfault if you get it wrong |
+| [`JS-RUNTIME.md`](docs/JS-RUNTIME.md) | what the script runtime carries beyond browser JavaScript, and which of it a host should use instead of doing the job in Odin |
 | [`EMBEDDING.md`](docs/EMBEDDING.md) | the windowless mode — rendering into a buffer or texture you own, so Sciter can be a pane inside someone else's frame loop |
 | [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
 | [`WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) | what is already done for the Windows port, and the list to work through on the machine |
@@ -372,6 +377,8 @@ checked by `just check` — documentation drifts silently otherwise.
   part that went wrong
 - [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
   desktop UI, what it gives up, and what to watch
+- [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) — ten engine defects written up ready to file,
+  and the three that turned out to be this repository's own mistakes
 - [`docs/SDK-PARITY.md`](docs/SDK-PARITY.md) — how these examples, tests and guides line up against
   everything the SDK ships, and which of its 64 script samples have no host API to bind at all
 - [`docs/VDOM.md`](docs/VDOM.md) — a design note for a retained-diff layer over the DOM: what it would
