@@ -1,0 +1,15 @@
+sciter-x-api.h SciterAttachHwndToElement
+sciter-x-api.h SciterClassName
+sciter-x-api.h SciterEGLGetProcAddress
+sciter-x-api.h SciterEGLSendEvent
+sciter-x-api.h SciterGetElementHwnd
+sciter-x-api.h SciterGetElementNamespace
+sciter-x-api.h SciterGetElementTypeCB
+sciter-x-api.h SciterGetObject
+sciter-x-api.h SciterGetViewExpando
+sciter-x-api.h SciterProc
+sciter-x-api.h SciterProcND
+sciter-x-api.h SciterSelectElements
+sciter-x-api.h SciterSelectParent
+sciter-x-graphics.h gCreate
+sciter-x-graphics.h gGetNativeDC
