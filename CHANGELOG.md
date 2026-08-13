@@ -157,6 +157,35 @@ removal and document replacement so nothing leaks - skip themselves without a di
 Drag-and-drop is covered by decoding tests only: no test can stage a system drag, so
 the event sequence was established by driving a real X11 drag by hand (see `RESEARCH-METHOD.md`).
 
+### Continuous integration
+
+Three workflows in `.github/workflows/`, and between them they automate the mechanical half of
+`docs/UPGRADING.md`'s nine-step upgrade procedure.
+
+- **`ci`** — on Linux, the engine's runtime dependencies installed and the suite run under Xvfb with
+  `XMODIFIERS=@im=none`: `just api-map-verify`, `just check`, `just example-tests`, and `Value`
+  refcounting under ASan. Plus `just cross-check` — `odin check` for `windows_amd64` and
+  `darwin_amd64` over both packages, the doc snippets and every portable example, which is the part
+  that rots silently when nothing builds for those targets day to day. The `windows-2022` and
+  `macos-14` jobs are written and dormant: they skip with a notice while no engine binary is vendored
+  for the platform, and committing one turns them on.
+- **`bindgen`** — regenerates `sciter.odin` from the vendored headers with a pinned odin-c-bindgen and
+  fails if the result differs from what is committed, which is `PLAN.md` §5's byte-identical claim
+  turned into a test.
+- **`canary`** — weekly, the one that is not a regression gate. It asks GitLab for the newest SDK tag,
+  and if it is not the pinned one, swaps that engine's headers and Linux binary into a scratch tree,
+  regenerates, and runs the checks against it — committing nothing and moving no pin. A reordered
+  `ISciterAPI`, a changed `SCITER_API_VERSION`, or a `flatten_headers.py` patch that stopped matching
+  therefore arrives as an issue with a diffstat rather than as a surprise mid-upgrade.
+
+`api_map` prints its table and leaves the judging to a human, which is right for a diagnostic and
+useless as a gate, so `.github/scripts/check-api-map.sh` applies the rules its header comment states —
+189 slots, `ISciterAPI` version 10, every non-null slot resolving to its own name plus the engine's
+`Imp` suffix (with the three real exceptions: the two `Get…API` slots and the C++-mangled
+`SciterEGLGetProcAddress`), and the platform's null list unchanged. On Windows, where `sciter.dll`
+exports one symbol and there is nothing to resolve, the rule falls back to module containment, which is
+the weaker check the example already documented.
+
 ### Documentation
 
 Eleven guides in `docs/`, plus `PLAN.md` (findings and decisions), `RESEARCH-METHOD.md` (how each was

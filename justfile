@@ -651,6 +651,52 @@ example-tests:
 example name="hello_window" *args: mktarget_dirs
 	odin run examples/{{name}}.odin -file -debug -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
+# `just example api_map` prints the table and leaves the judging to a human, which is right for a
+# diagnostic and wrong for a gate: docs/UPGRADING.md calls the slot check "the step the whole procedure
+# exists for", and a step whose pass/fail lives in someone's eyes cannot run in CI. This pipes the
+# output through .github/scripts/check-api-map.sh, which applies the rules the example's header states
+# - 189 slots, ISciterAPI version 10, every non-null slot resolving to its own name plus `Imp`, and the
+# platform's known null list unchanged. Run it after any engine bump, and edit the script's expectations
+# as the record of what the new engine changed.
+# ---
+# run api_map and assert its table (slots, version, symbols, null list)
+api-map-verify: mktarget_dirs
+	#!/usr/bin/env bash
+	set -euo pipefail
+	just example api_map | .github/scripts/check-api-map.sh
+
+# The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS
+# day to day, so an example that stops type checking there is invisible until someone has the machine.
+#
+# Three examples are excluded, each for a stated reason rather than because they failed:
+#
+#   integration, native_child  raw Xlib. They are the two halves of "a Sciter view and a native window
+#                              in each other's frame", and on Linux that means X11 - `vendor:x11/xlib`
+#                              declares nothing off Linux. The Windows equivalents would be different
+#                              programs, not the same program compiled elsewhere.
+#   single_binary              embeds the engine with #load, and only lib/linux/x64/libsciter.so is
+#                              vendored. Its `when` has a deliberate #panic saying so. Extend that
+#                              `when` when a platform's binary is vendored - step 8 of
+#                              docs/WINDOWS-CHECKLIST.md.
+# ---
+# type check both packages, the snippets and every portable example for windows_amd64 and darwin_amd64
+cross-check:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	skip="integration native_child single_binary"
+	for target in windows_amd64 darwin_amd64; do
+	    echo "--- $target"
+	    odin check . -no-entry-point -target:$target
+	    odin check sciter_app -no-entry-point -target:$target
+	    odin check docs/snippets -no-entry-point -target:$target
+	    for f in examples/*.odin; do
+	        name=$(basename "$f" .odin)
+	        case " $skip " in *" $name "*) continue ;; esac
+	        odin check "$f" -file -no-entry-point -target:$target
+	    done
+	done
+	echo "ok: both packages, the doc snippets and every portable example type check for windows_amd64 and darwin_amd64"
+
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
 # a separate application that attaches over a socket, so it is run *alongside* your app, not by it:
 #

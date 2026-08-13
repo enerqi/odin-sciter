@@ -1,0 +1,154 @@
+# Installs the tools every job here needs, pinned and cached.
+#
+# Deliberately no third-party actions: everything below is a curl of a release archive from the
+# project's own GitHub releases, so the only trust decisions are "GitHub" and "the pinned version".
+# A marketplace action would be a fourth supply chain in a repository whose entire pitch is that it
+# has one dependency.
+#
+# The archives do not agree on layout - Odin's tarball has a single top-level directory whose name
+# carries a build date that is NOT derivable from the release tag (`dev-2026-08` unpacks
+# `odin-linux-amd64-nightly+2026-08-06/`), while just's has its binary at the root. `unpack_into`
+# below handles both by looking at what came out rather than assuming.
+name: toolchain
+description: Install Odin, just, and optionally odinfmt and uv - pinned, cached, no marketplace actions.
+
+inputs:
+  odin-version:
+    description: Odin release tag, e.g. dev-2026-08
+    required: false
+    default: dev-2026-08
+  just-version:
+    description: just release version, e.g. 1.55.1
+    required: false
+    default: 1.55.1
+  ols-version:
+    description: ols release tag - odinfmt ships inside it
+    required: false
+    default: dev-2026-06
+  odinfmt:
+    description: also install odinfmt (only `just bindgen` needs it)
+    required: false
+    default: 'false'
+  uv:
+    description: also install uv (only the python steps of `just bindgen` need it)
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve platform names
+      id: plat
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)   odin=odin-linux-amd64  ; odin_ext=tar.gz ; just=x86_64-unknown-linux-musl ; ols=x86_64-unknown-linux-gnu ;;
+          macOS-ARM64) odin=odin-macos-arm64  ; odin_ext=tar.gz ; just=aarch64-apple-darwin     ; ols=arm64-darwin ;;
+          macOS-X64)   odin=odin-macos-amd64  ; odin_ext=tar.gz ; just=x86_64-apple-darwin      ; ols=x86_64-darwin ;;
+          Windows-X64) odin=odin-windows-amd64; odin_ext=zip    ; just=x86_64-pc-windows-msvc   ; ols=x86_64-pc-windows-msvc ;;
+          *) echo "::error::unsupported runner ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        {
+          echo "odin=$odin"
+          echo "odin_ext=$odin_ext"
+          echo "just=$just"
+          echo "ols=$ols"
+          echo "tools=$HOME/.odin-sciter-tools"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Cache toolchain
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.odin-sciter-tools
+        key: tools-${{ runner.os }}-${{ runner.arch }}-odin${{ inputs.odin-version }}-just${{ inputs.just-version }}-ols${{ inputs.ols-version }}-fmt${{ inputs.odinfmt }}
+
+    - name: Download and unpack
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        TOOLS: ${{ steps.plat.outputs.tools }}
+      run: |
+        set -euo pipefail
+
+        # Unpack $1 into $2, flattening a single top-level directory if the archive has one.
+        unpack_into() {
+          local archive="$1" dest="$2" tmp
+          tmp="$(mktemp -d)"
+          case "$archive" in
+            *.zip)    unzip -q "$archive" -d "$tmp" ;;
+            *.tar.gz) tar xzf "$archive" -C "$tmp" ;;
+            *) echo "::error::unknown archive type $archive"; return 1 ;;
+          esac
+          mkdir -p "$dest"
+          # shellcheck disable=SC2012
+          if [ "$(ls -1 "$tmp" | wc -l)" -eq 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then
+            mv "$tmp/$(ls -1 "$tmp")"/* "$dest/"
+          else
+            mv "$tmp"/* "$dest/"
+          fi
+          rm -rf "$tmp"
+        }
+
+        mkdir -p "$TOOLS"
+        cd "$(mktemp -d)"
+
+        odin_asset='${{ steps.plat.outputs.odin }}-${{ inputs.odin-version }}.${{ steps.plat.outputs.odin_ext }}'
+        curl -fsSL -o "$odin_asset" \
+          "https://github.com/odin-lang/Odin/releases/download/${{ inputs.odin-version }}/$odin_asset"
+        unpack_into "$odin_asset" "$TOOLS/odin"
+        chmod +x "$TOOLS/odin/odin" 2>/dev/null || true
+
+        just_asset='just-${{ inputs.just-version }}-${{ steps.plat.outputs.just }}'
+        if [ "$RUNNER_OS" = "Windows" ]; then just_asset="$just_asset.zip"; else just_asset="$just_asset.tar.gz"; fi
+        curl -fsSL -o "$just_asset" \
+          "https://github.com/casey/just/releases/download/${{ inputs.just-version }}/$just_asset"
+        unpack_into "$just_asset" "$TOOLS/just"
+        chmod +x "$TOOLS/just/just" 2>/dev/null || true
+
+        if [ '${{ inputs.odinfmt }}' = 'true' ]; then
+          ols_asset='ols-${{ steps.plat.outputs.ols }}.zip'
+          curl -fsSL -o "$ols_asset" \
+            "https://github.com/DanielGavin/ols/releases/download/${{ inputs.ols-version }}/$ols_asset"
+          unpack_into "$ols_asset" "$TOOLS/ols"
+          # The release ships platform-suffixed names (`odinfmt-x86_64-unknown-linux-gnu`); `just
+          # bindgen` calls plain `odinfmt`. Skip a file that is already correctly named, or the copy
+          # is source-and-destination-identical and fails the step.
+          for f in "$TOOLS/ols"/odinfmt*; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"
+            case "$base" in
+              odinfmt | odinfmt.exe) continue ;;
+              *.exe) cp "$f" "$TOOLS/ols/odinfmt.exe" ;;
+              *)     cp "$f" "$TOOLS/ols/odinfmt" ; chmod +x "$TOOLS/ols/odinfmt" ;;
+            esac
+          done
+        fi
+
+    - name: Add to PATH
+      shell: bash
+      env:
+        TOOLS: ${{ steps.plat.outputs.tools }}
+      run: |
+        set -euo pipefail
+        echo "$TOOLS/odin" >> "$GITHUB_PATH"
+        echo "$TOOLS/just" >> "$GITHUB_PATH"
+        if [ '${{ inputs.odinfmt }}' = 'true' ]; then echo "$TOOLS/ols" >> "$GITHUB_PATH"; fi
+
+    - name: Install uv
+      if: inputs.uv == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Report versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        odin version
+        just --version
+        if [ '${{ inputs.odinfmt }}' = 'true' ]; then command -v odinfmt; fi
+        if [ '${{ inputs.uv }}' = 'true' ]; then uv --version; fi

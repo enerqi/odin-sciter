@@ -1,0 +1,221 @@
+# Runs the upgrade procedure against upstream's newest tag WITHOUT upgrading anything, once a week.
+#
+# The problem this solves: docs/UPGRADING.md says to upgrade "when there is a reason rather than on
+# upstream's roughly-weekly tag cadence", which is right - but it means that when a reason finally
+# arrives, nobody knows whether the new engine still fits the bindings, and finding out costs the whole
+# nine-step procedure. This job pays that cost weekly, in the background, on a scratch tree: fetch the
+# newest tag, swap its headers and its Linux binary into a working copy, regenerate, and run the checks.
+# Nothing is committed and the pin does not move.
+#
+# What it can tell you before you spend an upgrade:
+#   - the engine added, removed or REORDERED ISciterAPI slots (check-api-map.sh catches all three)
+#   - SCITER_API_VERSION changed, so bindings and engine must ship together
+#   - a header patch in src/flatten_headers.py stopped matching, which is a hard error by design
+#   - the generated sciter.odin changed, and by how much - the diffstat is the API's release notes
+#   - the test suite still passes against the new engine, or which parts stopped
+#
+# It also re-checks the trap that cost this project several hours once already: headers and binary
+# disagreeing about the table. api_map is given the API version parsed out of the NEW headers, so a
+# header claiming version N against a binary reporting M fails here rather than in someone's segfault.
+name: canary
+
+on:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: SDK tag to test against (default - upstream's newest)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ODIN_VERSION: dev-2026-08
+  JUST_VERSION: 1.55.1
+  BINDGEN_COMMIT: 12f4e7a
+  SDK_REPO: https://gitlab.com/sciter-engine/sciter-js-sdk.git
+
+jobs:
+  probe:
+    name: upstream engine probe
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pinned tag is recorded in one place and parsed from it, so this job cannot drift from what
+      # is actually vendored.
+      - name: Read the pin and ask upstream for its newest tag
+        id: tags
+        run: |
+          set -euo pipefail
+          pinned=$(grep -E '^\| Tag \|' external/sciter/VENDORED.md | sed -E 's/.*`([^`]+)`.*/\1/')
+          [ -n "$pinned" ] || { echo "::error::could not parse the pinned tag out of external/sciter/VENDORED.md"; exit 1; }
+
+          latest='${{ inputs.tag }}'
+          if [ -z "$latest" ]; then
+            # order_by=updated, because the tag names are not reliably version-sortable: `6.0.4.9-bis`
+            # and `6.0.4.9` are the same engine, differently packaged.
+            latest=$(curl -fsSL "https://gitlab.com/api/v4/projects/sciter-engine%2Fsciter-js-sdk/repository/tags?order_by=updated&sort=desc&per_page=1" \
+              | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)
+          fi
+          [ -n "$latest" ] || { echo "::error::could not read the newest tag from the GitLab API"; exit 1; }
+
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$pinned" = "$latest" ]; then echo "new=false" >> "$GITHUB_OUTPUT"; else echo "new=true" >> "$GITHUB_OUTPUT"; fi
+          echo "pinned=$pinned latest=$latest"
+
+      - name: Nothing new
+        if: steps.tags.outputs.new == 'false'
+        run: echo "pinned ${{ steps.tags.outputs.pinned }} is still upstream's newest tag - nothing to probe" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: ./.github/actions/toolchain
+        if: steps.tags.outputs.new == 'true'
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+          odinfmt: 'true'
+          uv: 'true'
+
+      - name: Install dependencies and build odin-c-bindgen
+        if: steps.tags.outputs.new == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            llvm-dev libclang-dev clang \
+            xvfb libegl1 libgl1-mesa-dri libglx-mesa0 \
+            libfontconfig1 libfreetype6 fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends libgles2 \
+            || sudo apt-get install -y --no-install-recommends libgles2-mesa
+          git clone https://github.com/karl-zylinski/odin-c-bindgen.git "$RUNNER_TEMP/odin-c-bindgen"
+          git -C "$RUNNER_TEMP/odin-c-bindgen" checkout "$BINDGEN_COMMIT"
+          cd "$RUNNER_TEMP/odin-c-bindgen"
+          odin build src -out:bindgen.bin -extra-linker-flags:"-L$(llvm-config --libdir)"
+
+      # A full clone is ~4 GB because every commit carries every platform's binaries. Blobless plus
+      # sparse plus depth-1 fetches the two paths this needs and nothing else.
+      - name: Fetch the SDK at ${{ steps.tags.outputs.latest }}
+        if: steps.tags.outputs.new == 'true'
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --sparse --depth 1 --branch "${{ steps.tags.outputs.latest }}" \
+            "$SDK_REPO" "$RUNNER_TEMP/sdk"
+          git -C "$RUNNER_TEMP/sdk" sparse-checkout set include bin/linux/x64
+          du -sh "$RUNNER_TEMP/sdk"
+
+      # The same swap docs/UPGRADING.md steps 3 and 4 describe, including the exclusions
+      # external/sciter/VENDORED.md records - so the generated diff is about the API rather than about
+      # files this repository deliberately does not vendor.
+      - name: Swap in the new headers and engine
+        if: steps.tags.outputs.new == 'true'
+        run: |
+          set -euo pipefail
+          rm -rf external/sciter/include
+          cp -r "$RUNNER_TEMP/sdk/include" external/sciter/include
+          rm -rf external/sciter/include/behaviors external/sciter/include/gles
+          rm -f external/sciter/include/*.hpp external/sciter/include/sciter-main.cpp
+          cp "$RUNNER_TEMP/sdk/bin/linux/x64/libsciter.so" lib/linux/x64/libsciter.so
+          sha256sum lib/linux/x64/libsciter.so
+          api_version=$(grep -hoE '#define[[:space:]]+SCITER_API_VERSION[[:space:]]+[0-9]+' external/sciter/include/*.h | grep -oE '[0-9]+$' | head -1)
+          echo "SCITER_API_VERSION in the new headers: ${api_version:-unknown}"
+          echo "EXPECT_API_VERSION=${api_version:-10}" >> "$GITHUB_ENV"
+
+      - name: Regenerate the bindings
+        id: bindgen
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        env:
+          ODIN_C_BINDGEN: ${{ runner.temp }}/odin-c-bindgen/bindgen.bin
+        run: just bindgen
+
+      - name: Verify the ISciterAPI table
+        id: apimap
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        run: just api-map-verify
+
+      - name: Type check and build everything
+        id: check
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        run: just check
+
+      - name: Run the example tests
+        id: tests
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        env:
+          XMODIFIERS: '@im=none'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a just example-tests
+
+      - name: Summarise
+        id: summary
+        if: steps.tags.outputs.new == 'true'
+        run: |
+          set -euo pipefail
+          status() { [ "$1" = "success" ] && echo "pass" || echo "FAIL"; }
+          {
+            echo "## sciter-js-sdk \`${{ steps.tags.outputs.latest }}\` vs pinned \`${{ steps.tags.outputs.pinned }}\`"
+            echo
+            echo "\`SCITER_API_VERSION\` in the new headers: \`${EXPECT_API_VERSION}\` (pinned bindings expect 10)"
+            echo
+            echo "| Step | Result |"
+            echo "| --- | --- |"
+            echo "| \`just bindgen\` | $(status '${{ steps.bindgen.outcome }}') |"
+            echo "| \`just api-map-verify\` | $(status '${{ steps.apimap.outcome }}') |"
+            echo "| \`just check\` | $(status '${{ steps.check.outcome }}') |"
+            echo "| \`just example-tests\` | $(status '${{ steps.tests.outcome }}') |"
+            echo
+            echo "### Generated bindings diff"
+            echo
+            echo '```'
+            git diff --stat sciter.odin || true
+            echo '```'
+            echo
+            echo "### Header diff (names only)"
+            echo
+            echo '```'
+            git diff --name-status external/sciter/include | head -60 || true
+            echo '```'
+            echo
+            echo "Nothing was committed and the pin did not move. To act on this, follow docs/UPGRADING.md."
+          } > canary-summary.md
+          cat canary-summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ '${{ steps.bindgen.outcome }}' = 'success' ] \
+            && [ '${{ steps.apimap.outcome }}' = 'success' ] \
+            && [ '${{ steps.check.outcome }}' = 'success' ] \
+            && [ '${{ steps.tests.outcome }}' = 'success' ]; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One issue per upstream tag, updated rather than duplicated, so a monthly cadence of tags does
+      # not become a monthly cadence of noise.
+      - name: Open or update the tracking issue
+        if: steps.tags.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="canary: sciter-js-sdk ${{ steps.tags.outputs.latest }}"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          body_file=canary-summary.md
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body_file"
+          else
+            gh issue create --title "$title" --body-file "$body_file"
+          fi
+
+      - name: Fail the run if the probe was not clean
+        if: steps.tags.outputs.new == 'true' && steps.summary.outputs.clean != 'true'
+        run: |
+          echo "::error::the new engine did not pass cleanly - see the job summary and the tracking issue"
+          exit 1

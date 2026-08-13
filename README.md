@@ -329,6 +329,21 @@ Regenerating needs [odin-c-bindgen](https://github.com/karl-zylinski/odin-c-bind
 this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing at it, plus
 [uv](https://docs.astral.sh/uv/) for the two Python steps.
 
+Two recipes exist for what CI runs, and are worth running by hand after an engine change:
+
+- `just api-map-verify` — `api_map`, with its table asserted rather than read: 189 slots, API version
+  10, every non-null slot resolving to its own `…Imp`, and the platform's null list unchanged
+- `just cross-check` — `odin check -target:windows_amd64` and `darwin_amd64` over both packages, the
+  doc snippets and every portable example. Three examples are excluded for stated reasons: `integration`
+  and `native_child` are raw Xlib, and `single_binary` embeds an engine binary that is only vendored
+  for Linux
+
+CI itself is three workflows in `.github/workflows/`: `ci` (the above plus the tests, under Xvfb),
+`bindgen` (regeneration is byte-identical to what is committed), and `canary` — a weekly probe that
+runs the whole upgrade procedure against upstream's newest tag on a scratch tree without moving the
+pin, so a breaking engine release is news before it is a problem. See
+[`docs/UPGRADING.md`](docs/UPGRADING.md#what-ci-does-for-you).
+
 
 ## Sciter version
 

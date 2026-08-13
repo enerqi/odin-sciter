@@ -1,0 +1,85 @@
+# sciter.odin is generated, and docs/PLAN.md §5 makes a claim about it: "running it twice produces a
+# byte-identical sciter.odin". That claim is load-bearing - it is why an engine upgrade's diff is
+# readable, and why `just format` does not quietly churn a file nobody edited - and it is exactly the
+# kind of claim that stops being true without anyone noticing. This job regenerates from the vendored
+# headers and fails if the result differs from what is committed.
+#
+# It is separate from ci.yml because it needs three tools nothing else needs (uv, odinfmt, libclang)
+# and a build of odin-c-bindgen, and because a bindgen failure is a different kind of news from a test
+# failure: it means either the generator moved under us or the committed file was hand-edited.
+name: bindgen
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'sciter.odin'
+      - 'bindgen.sjson'
+      - 'src/**'
+      - 'external/sciter/include/**'
+      - '.github/workflows/bindgen.yml'
+  pull_request:
+    paths:
+      - 'sciter.odin'
+      - 'bindgen.sjson'
+      - 'src/**'
+      - 'external/sciter/include/**'
+      - '.github/workflows/bindgen.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ODIN_VERSION: dev-2026-08
+  JUST_VERSION: 1.55.1
+  # Pinned deliberately: the generator's output is the artifact under test, so an unpinned generator
+  # would turn "the bindings changed" and "the generator changed" into the same red build. Bump this
+  # on purpose, and read the resulting sciter.odin diff as the generator's release notes.
+  BINDGEN_COMMIT: 12f4e7a
+
+jobs:
+  regenerate:
+    name: regeneration is byte-identical
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+          odinfmt: 'true'
+          uv: 'true'
+
+      # `-lclang` does not resolve on Debian/Ubuntu without help: LLVM opts out of the usual shared
+      # library policy so that several majors can coexist, so the undecorated libclang.so lives inside
+      # a versioned prefix rather than the triplet directory. Installing libclang-dev does NOT fix it -
+      # that package is an empty metapackage. The whole story, and the alternatives that look right and
+      # are not, is in docs/BINDGEN-LIBCLANG.md.
+      - name: Build odin-c-bindgen
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm-dev libclang-dev clang
+          git clone https://github.com/karl-zylinski/odin-c-bindgen.git "$RUNNER_TEMP/odin-c-bindgen"
+          git -C "$RUNNER_TEMP/odin-c-bindgen" checkout "$BINDGEN_COMMIT"
+          cd "$RUNNER_TEMP/odin-c-bindgen"
+          odin build src -out:bindgen.bin -extra-linker-flags:"-L$(llvm-config --libdir)"
+          ldd bindgen.bin | grep clang
+
+      - name: Regenerate
+        env:
+          ODIN_C_BINDGEN: ${{ runner.temp }}/odin-c-bindgen/bindgen.bin
+        run: just bindgen
+
+      # A patch in src/flatten_headers.py that no longer matches is a hard error inside `just bindgen`
+      # itself, so that failure has already happened by here. What this catches is subtler: a generated
+      # file that drifted from what is committed.
+      - name: sciter.odin is unchanged
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code --stat sciter.odin; then
+            echo "::error::regenerating sciter.odin from the vendored headers produced a different file than the one committed. Either the generator moved (bump BINDGEN_COMMIT deliberately) or sciter.odin was edited by hand (it is generated - change bindgen.sjson or src/ instead)."
+            git diff sciter.odin | head -200
+            exit 1
+          fi

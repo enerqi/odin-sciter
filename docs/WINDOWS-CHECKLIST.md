@@ -11,16 +11,21 @@ everything in this repository type checks for `windows_amd64` — but "type chec
 ## What was already done for Windows, without the machine
 
 - **`odin check -target:windows_amd64` passes** for `package sciter`, `package sciter_app`,
-  `docs/snippets`, and every example. That is the cheap half of a port and it is done:
+  `docs/snippets`, and every *portable* example. That is the cheap half of a port and it is done:
 
   ```sh
-  odin check . -no-entry-point -target:windows_amd64
-  odin check sciter_app -no-entry-point -target:windows_amd64
-  odin check docs/snippets -no-entry-point -target:windows_amd64
-  for f in examples/*.odin; do odin check "$f" -file -no-entry-point -target:windows_amd64; done
+  just cross-check          # windows_amd64 and darwin_amd64, both packages, snippets, examples
   ```
 
-  Run these again after any change to platform-conditional code. `darwin_amd64` passes too.
+  It runs on every push (`.github/workflows/ci.yml`), which is what stops this rotting: nothing here
+  builds for Windows day to day, so an example that stops checking there is otherwise invisible until
+  someone has the machine.
+
+  Three examples are excluded, each deliberately rather than because it failed. `integration` and
+  `native_child` are raw Xlib — they are the two halves of "a Sciter view and a native window inside
+  each other", and on Linux that means X11; the Windows equivalents would be different programs, not
+  the same program compiled elsewhere. `single_binary` embeds the engine with `#load` and only the
+  Linux binary is vendored, so it stops at its own `#panic` — which is step 8 below.
 
 - **`examples/api_map.odin` was rewritten to build and mean something on Windows.** It previously used
   `dladdr` through `foreign import dl "system:dl"`, which does not exist on Windows — the one tool the
@@ -37,6 +42,13 @@ everything in this repository type checks for `windows_amd64` — but "type chec
   `windows` (no arch subfolder) for `packfolder_platform`.
 
 ## Bring-up, in order
+
+Steps 2, 4, 5 and 7 are already wired into CI: `.github/workflows/ci.yml` has a `windows-2022` job that
+sits dormant while `lib/windows/x64/sciter.dll` is absent and runs `just api-map-verify`, `just check`
+and `just example-tests` the moment it is committed. So step 1 below turns the job on, and a good part
+of this list then answers itself on a runner — including step 5's open question about the display gate.
+What a runner cannot answer is anything that needs eyes on a window (steps 3, 6, 9) or a real desktop's
+anti-malware (step 8).
 
 **1. Vendor the binary.**
 

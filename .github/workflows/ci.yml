@@ -1,0 +1,189 @@
+# The regression gate for the repository, and the automated part of docs/UPGRADING.md's upgrade
+# procedure: steps 6 (api_map against the shipped engine) and 7 (check, tests, ASan) run here on every
+# push, so a PR that bumps the vendored engine gets the whole battery without anyone remembering to
+# run it. Steps 2 (read the SDK changelog), 8 (look at a window) and 9 (docs) stay human - CI cannot
+# see that a window renders blank.
+#
+# Platform jobs are gated on the binary actually being vendored rather than being deleted or left to
+# fail: `lib/windows/x64/sciter.dll` and `lib/macos/**` do not exist today, so those jobs report what
+# they skipped and why. Vendoring the binary is the whole of turning them on - see
+# docs/WINDOWS-CHECKLIST.md, whose steps 2, 4, 5, 7 and 8 are what the Windows job below runs.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ODIN_VERSION: dev-2026-08
+  JUST_VERSION: 1.55.1
+
+jobs:
+  linux:
+    name: linux x64 (engine vendored)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+
+      # libsciter.so links 16 libraries (see docs/ENGINE.md); the runner image is missing the EGL and
+      # GLES pair and the software rasteriser behind them. `libgles2` is the current name and
+      # `libgles2-mesa` the older one, hence the fallback. clang is Odin's linker driver on Linux.
+      # Fonts matter more than they look: the engine measures text through fontconfig, and an image
+      # with no fonts installed makes text metrics assertions fail for a reason that reads like a
+      # binding bug.
+      - name: Install engine runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libegl1 libgl1-mesa-dri libglx-mesa0 \
+            libfontconfig1 libfreetype6 fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends libgles2 \
+            || sudo apt-get install -y --no-install-recommends libgles2-mesa
+          command -v clang >/dev/null || sudo apt-get install -y --no-install-recommends clang
+          ldd lib/linux/x64/libsciter.so
+
+      # The step the upgrade procedure exists for. No display needed - it loads the library and walks
+      # the table without creating a window.
+      - name: Verify the ISciterAPI table
+        run: just api-map-verify
+
+      - name: Type check and build everything
+        run: just check
+
+      # Xvfb because the windowed tests gate themselves on DISPLAY/WAYLAND_DISPLAY and would otherwise
+      # skip ~two thirds of the suite. XMODIFIERS=@im=none because this engine build segfaults in
+      # XSetICFocus when a window takes focus and an X input method is present - see README.md.
+      # LIBGL_ALWAYS_SOFTWARE because the runner has no GPU and the windowless_gl example wants a
+      # desktop GL context, which llvmpipe provides.
+      #
+      # The retry is deliberate and narrow: the element-timer tests in events.odin are timing
+      # sensitive and flake on a loaded machine, which a shared CI runner always is. A suite that
+      # passes on the second run is reported as a warning rather than hidden - if this fires often,
+      # the fix is in the tests, not here.
+      - name: Run the example tests
+        env:
+          XMODIFIERS: '@im=none'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -uo pipefail
+          if xvfb-run -a just example-tests; then exit 0; fi
+          echo "::warning::example-tests failed once, retrying - see the timing-sensitive timer tests in events.odin"
+          xvfb-run -a just example-tests
+
+      # Value refcounting is the code most worth running under a sanitizer, and per the justfile's own
+      # notes Linux ASan catches heap errors that Windows ASan does not - so this runs here or nowhere.
+      - name: Value refcounting under ASan
+        env:
+          XMODIFIERS: '@im=none'
+        run: xvfb-run -a just test_sanitize eval
+
+  cross-check:
+    name: cross target type check (windows, macos)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+      # No engine needed: this is `odin check -target:`, the cheap half of a port. It is the only
+      # thing standing between a Linux-only edit and a platform that stops compiling silently.
+      - run: just cross-check
+
+  windows:
+    name: windows x64 (needs the engine vendored)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+
+      - name: Is the engine vendored?
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f lib/windows/x64/sciter.dll ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::lib/windows/x64/sciter.dll is not vendored - skipping the runtime steps. Step 1 of docs/WINDOWS-CHECKLIST.md is what turns this job on."
+          fi
+
+      # Checklist step 2, and the same weaker check the example's header describes: sciter.dll exports
+      # one symbol, so almost every slot resolves as `sciter.dll+0x...` and containment is what is
+      # being asserted. The null list is expected to differ from Linux and is reported, not enforced,
+      # until a real run records it.
+      - name: Verify the ISciterAPI table
+        if: steps.engine.outputs.have == 'true'
+        shell: bash
+        run: just api-map-verify
+
+      # Checklist step 4. Note single_binary's `when` needs extending once the DLL is vendored
+      # (checklist step 8) or this fails on its deliberate #panic - that is the failure telling you
+      # to do step 8, not a broken build.
+      - name: Type check and build everything
+        if: steps.engine.outputs.have == 'true'
+        shell: bash
+        run: just check
+
+      # Checklist step 5, and it has a question attached: the windowed tests gate on
+      # DISPLAY/WAYLAND_DISPLAY, which are POSIX variables that do not exist on Windows. Watch whether
+      # this run skips them (wrong, but harmless) or runs them (correct). If it skips, the gate needs
+      # to treat Windows as always having a display.
+      - name: Run the example tests
+        if: steps.engine.outputs.have == 'true'
+        shell: bash
+        run: just example-tests
+
+  macos:
+    name: macos (needs the engine vendored)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+        with:
+          odin-version: ${{ env.ODIN_VERSION }}
+          just-version: ${{ env.JUST_VERSION }}
+
+      # macOS ships untested and says so (README.md's platform table). The arm64 runner also means the
+      # binary to vendor is the arm64 one, or a universal build.
+      - name: Is the engine vendored?
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ls lib/macos/*/libsciter.dylib >/dev/null 2>&1; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no libsciter.dylib under lib/macos/ - skipping the runtime steps. macOS is unvendored and untested; see external/sciter/VENDORED.md."
+          fi
+
+      - name: Verify the ISciterAPI table
+        if: steps.engine.outputs.have == 'true'
+        run: just api-map-verify
+
+      - name: Type check and build everything
+        if: steps.engine.outputs.have == 'true'
+        run: just check
+
+      - name: Run the example tests
+        if: steps.engine.outputs.have == 'true'
+        run: just example-tests

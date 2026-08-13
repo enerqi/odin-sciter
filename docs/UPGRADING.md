@@ -114,6 +114,36 @@ just test_sanitize eval    # Value refcounting under ASan
 **9. Update the docs that name a version**: `README.md`'s version table, `docs/PLAN.md`'s status line,
 `VENDORED.md`. Then tag per the policy above.
 
+### What CI does for you
+
+Most of the mechanical half of the list above runs in `.github/workflows/`, so a branch that bumps the
+pin arrives with the answers already attached.
+
+| Step | Where |
+| --- | --- |
+| 1 get the SDK | `canary.yml` fetches it blobless + sparse + depth 1 — two paths, not 4 GB |
+| 2 read the SDK changelog | **you** |
+| 3 headers, 4 binaries | by hand on a real upgrade; `canary.yml` does it on a scratch tree |
+| 5 `just bindgen` | `bindgen.yml` — and it asserts the result is byte-identical to what is committed |
+| 6 `just example api_map` | `ci.yml`, as `just api-map-verify` — the table is asserted, not printed for reading |
+| 7 check and test | `ci.yml`, on Linux under Xvfb, plus `just cross-check` for the two other targets |
+| 8 windowed by hand | **you.** CI cannot see that a window renders blank |
+| 9 docs | **you** |
+
+The piece that does not correspond to a step is `canary.yml`, and it is the reason the rest is worth
+having. Once a week it asks GitLab for the newest tag, and if it is not the pinned one it swaps that
+engine's headers and Linux binary into a scratch tree, regenerates, and runs steps 5-7 against it —
+committing nothing and moving nothing. So "does the new engine still fit these bindings?" is answered
+before there is a reason to upgrade, and a reordered `ISciterAPI`, a changed `SCITER_API_VERSION`, or a
+`flatten_headers.py` patch that stopped matching arrives as an issue rather than as a surprise in the
+middle of an upgrade. It also feeds `api_map` the API version parsed out of the *new* headers, so the
+headers-disagree-with-the-binary trap that cost this project a day on the GitHub mirror is checked on
+every probe.
+
+`api-map-verify`'s expectations — 189 slots, `SCITER_API_VERSION` 10, and the per-platform null list —
+live in `.github/scripts/check-api-map.sh`. On a version bump those are the lines you expect to edit,
+and the diff of that file is then the record of what the new engine changed.
+
 ### When `SCITER_API_VERSION` changes
 
 `sciter.load()` refuses a table whose `version` field does not match the headers the bindings were

@@ -65,3 +65,6 @@ target
 !lib/**/*.so
 !lib/**/*.dll
 !lib/**/*.dylib
+
+# CodeGraph's local index. Machine-local and regenerable; nothing here should be shared.
+.codegraph/
