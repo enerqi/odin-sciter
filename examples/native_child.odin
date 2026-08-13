@@ -224,13 +224,16 @@ main :: proc() {
 	// The document's button hides the placeholder; the host notices the box went away and unmaps.
 	root, _ := sciter_app.root(window)
 	if button, berr := sciter_app.select_first(root, "#toggle"); berr == nil {
-		_, _ = sciter_app.eval(
+		// `el.on(name, fn)` evaluates to a RESOURCE, not to undefined - measured - so the result owns a
+		// reference and is cleared rather than dropped. The shape of the script does not tell you.
+		registered, _ := sciter_app.eval(
 			window,
 			`document.$("#toggle").on("click", function(){
 			   const slot = document.$("#slot");
 			   slot.style.display = slot.style.display == "none" ? "block" : "none";
 			 });`,
 		)
+		sciter_app.value_clear(&registered)
 		_ = button
 	}
 

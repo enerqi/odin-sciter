@@ -241,10 +241,12 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 	surface := pixels
 	owns := false
 
+	// The old surface is *not* released here. The engine is still holding it - it was handed over by the
+	// previous SXM_SIZE - and this call can still fail, in which case the view has to be left exactly as
+	// it was rather than describing a freed block. So the new buffer is built alongside the old one and
+	// the old one is released below, after the handover has succeeded. That costs both surfaces at once
+	// for the length of one message and is the only ordering with no window where `view.pixels` is dead.
 	if surface == nil {
-		if view.owns_pixels {
-			delete(view.pixels, view.allocator)
-		}
 		surface = make([]u8, row * int(height), view.allocator)
 		owns = true
 	} else if len(surface) < row * (int(height) - 1) + int(width) * 4 {
@@ -252,9 +254,6 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 		// sub-rectangle of a larger image hands over a slice that ends at the image's last pixel, and
 		// requiring a full trailing stride would refuse the one arrangement this mode exists for.
 		return .Window_Failed
-	} else if view.owns_pixels {
-		// Handed a buffer after owning one: let ours go rather than leak it behind the caller's.
-		delete(view.pixels, view.allocator)
 	}
 
 	message := sciter.Sciter_X_Msg_Size {
@@ -267,11 +266,18 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 		if owns {
 			delete(surface, view.allocator)
 		}
-		return .Window_Failed
+		return .Window_Failed // the view still describes the surface the engine still holds
 	}
 
+	old, old_owned := view.pixels, view.owns_pixels
 	view.width, view.height, view.stride = width, height, row
 	view.pixels, view.owns_pixels = surface, owns
+
+	// Only now, and never the buffer we just handed over - a caller may legitimately resize onto the
+	// same memory.
+	if old_owned && raw_data(old) != raw_data(surface) {
+		delete(old, view.allocator)
+	}
 	return nil
 }
 

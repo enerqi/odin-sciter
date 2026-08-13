@@ -738,6 +738,10 @@ combine_url :: proc(element: Element, url: string, allocator := context.allocato
 		if n < size - 1 {
 			return string_from_utf16(raw_data(buf), uint(n), allocator), nil
 		}
+
+		// The arena is the caller's, and a retry quadruples: leaving each abandoned attempt in it costs
+		// about 85x the final answer on the worst path, for a call the docs suggest running per request.
+		delete(buf, context.temp_allocator)
 		size *= 4
 	}
 	// Four rounds is 256x the first guess; anything still filling that is not a URL this call can help

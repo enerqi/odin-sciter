@@ -313,9 +313,28 @@ activate :: proc(window: Window, bring_to_front := true) {
 
 // Runs a script in the window's global scope and returns its result.
 //
-// The returned Value owns a reference; `clear` it when done. A script *error* is reported through
-// `set_debug_output` and comes back here as `.Eval_Failed` - without a debug output handler installed
-// there is nothing else to see.
+// The returned Value owns a reference; `clear` it when done.
+//
+// **A script error does not come back as `.Eval_Failed`.** Measured on 6.0.4.9, identically in a
+// window and in a windowless view, for a syntax error, an unhandled `throw` and an undefined name: the
+// call answers `nil` and the *result* is an error string - the same `.ERROR`-unit Value `value_parse`
+// reports a bad document with, carrying the engine's message and a stack trace:
+//
+//	v, err := sciter_app.eval(window, script)
+//	defer sciter_app.value_clear(&v)
+//	if err != nil { ... }                       // a failure of the call itself, not of the script
+//	if sciter_app.value_is_error(&v) {          // this is how a script error arrives
+//		msg, _ := sciter_app.value_to_string(&v, context.temp_allocator)
+//		// "expecting ';'\n    at <eval>:1\n"
+//	}
+//
+// So `value_is_error` is the test and the result is the diagnosis - a debug output handler is not
+// needed for this, though it remains the only way to see errors in the *document's* own `<script>`
+// (see `set_default_debug_output`). `.Eval_Failed` is left for the call itself failing.
+//
+// One ownership consequence, and it is the reason this is spelled out here: the error string owns a
+// reference like any other Value, so a caller that checks only `err` and drops the result leaks on
+// **every** script error. `scoped_eval` releases it either way.
 eval :: proc(window: Window, script: string) -> (result: Value, err: Error) {
 	w := utf16_from_string(script, context.temp_allocator)
 	value_init(&result)

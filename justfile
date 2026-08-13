@@ -705,6 +705,14 @@ api-map-verify: mktarget_dirs
 	just example api_map | .github/scripts/check-api-map.sh
 
 
+# ---
+# assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
+check-ownership:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	python3 .github/scripts/check-ownership.py
+
+
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
 # slots the engine has - it catches a reordered or removed one. It cannot catch an *added* one: a newer
 # SDK regenerates into `sciter.odin` as fields nothing wraps, and coverage degrades one upgrade at a

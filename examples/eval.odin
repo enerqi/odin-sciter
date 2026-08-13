@@ -45,7 +45,8 @@ main :: proc() {
 	if !sciter_app.load_engine() {
 		os.exit(1)
 	}
-	// A script error is otherwise completely silent - eval just returns .Eval_Failed.
+	// An error in the *document's* own <script> is otherwise completely silent. (An error in a script
+	// passed to `eval` is not - it comes back as the returned Value, see `eval`.)
 	sciter_app.set_default_debug_output()
 
 	if err := sciter_app.init(); err != nil {
@@ -1047,9 +1048,12 @@ test_an_independent_copy_has_to_be_rebuilt_rather_than_isolated :: proc(t: ^test
 // ---------------------------------------------------------------------------------------------------
 // The engine's diagnostics
 //
-// Without a debug output handler a CSS typo, a bad URL and a script exception are all completely
-// silent - `eval` reports `.Eval_Failed` and nothing anywhere says why. `set_default_debug_output`
+// Without a debug output handler a CSS typo, a bad URL and an exception in the document's own
+// `<script>` are all completely silent, and nothing anywhere says why. `set_default_debug_output`
 // prints them to stderr; this is the call underneath it, for routing them into a log or a panel.
+//
+// A script handed to `eval` is the exception: its errors arrive as the returned Value, with the message
+// and a stack trace, whether or not any of this is installed - see `eval`.
 //
 // **These three cannot run under `-sanitize:address`**, and it is the sanitiser rather than the code:
 // they load a document whose script will not parse, the engine's QuickJS throws a C++ exception to
@@ -1240,4 +1244,108 @@ test_the_diagnostics_handler_can_be_detached :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
 	testing.expect_value(t, g_diagnostics.count, before)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The scoped forms
+//
+// `scoped_eval` and its siblings are `eval` with the release attached to the scope by
+// `@(deferred_out)`. The tests are here rather than beside the wrappers because this is the file
+// `just test_sanitize eval` runs under ASan, which is what proves the reference counting.
+
+// The value is live for the whole of the scope it was taken in - the release happens on the way out,
+// not at the next statement - so a scoped Value reads exactly like an unscoped one while it is in use.
+@(test)
+test_a_scoped_value_is_usable_for_the_whole_scope :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	v, err := sciter_app.scoped_eval(window, `"hello " + "world"`)
+	testing.expect_value(t, err, nil)
+
+	s, serr := sciter_app.value_to_string(&v, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, s, "hello world")
+
+	// still live, several statements later
+	again, aerr := sciter_app.value_to_string(&v, context.temp_allocator)
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, again, "hello world")
+}
+
+// The whole point: the discarding call form is released too. `@(require_results)` does not reject
+// `_, _ =` - measured - so this is the shape that leaked in the examples, and it is the shape the
+// deferred release has to cover. Under ASan this test is the assertion.
+@(test)
+test_a_discarded_scoped_value_is_still_released :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	for _ in 0 ..< 200 {
+		_, _ = sciter_app.scoped_eval(window, `"x".repeat(1000)`)
+	}
+	testing.expect(t, true) // reaching here with nothing leaked is the result
+}
+
+// **A failing `eval` does not report `.Eval_Failed`, and its result is not empty.** Measured on
+// 6.0.4.9, identically in a window and in a windowless view, for a syntax error, an unhandled `throw`
+// and an undefined name alike: the call answers `err = nil` and hands back an *error string* - the same
+// `.ERROR`-unit Value `value_parse` uses to report a bad document, carrying the engine's message and a
+// stack trace.
+//
+// Two consequences, and the second is why this test lives in a file about ownership: `value_is_error`
+// is the way to detect a failed eval and `value_to_string` on the result is the diagnosis (no debug
+// output handler needed, contrary to what this file's header used to say) - and a caller that checks
+// only `err` and drops the Value leaks a reference on *every* script error. The scoped form releases it
+// either way, which is exactly the path this test covers.
+@(test)
+test_a_failing_eval_returns_an_error_string_and_is_still_released :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	v, err := sciter_app.scoped_eval(window, `this is not valid (((`)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, sciter_app.value_is_error(&v))
+
+	message, merr := sciter_app.value_to_string(&v, context.temp_allocator)
+	testing.expect_value(t, merr, nil)
+	testing.expect(t, strings.contains(message, "expecting"))
+
+	// The same for a thrown exception rather than a parse failure.
+	thrown, terr := sciter_app.scoped_eval(window, `throw new Error("boom")`)
+	testing.expect_value(t, terr, nil)
+	testing.expect(t, sciter_app.value_is_error(&thrown))
+	text, xerr := sciter_app.value_to_string(&thrown, context.temp_allocator)
+	testing.expect_value(t, xerr, nil)
+	testing.expect(t, strings.contains(text, "boom"))
+}
+
+// `scoped_make_element` gives up the reference the engine handed back, and inserting does not consume
+// it - the document takes its own - so the element is still in the tree after the scope ends.
+@(test)
+test_a_scoped_element_stays_in_the_document_after_insertion :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	testing.expect_value(t, sciter_app.load_html(window, `<html><body><ul id=list></ul></body></html>`), nil)
+	root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	list, lerr := sciter_app.select_first(root, "#list")
+	testing.expect_value(t, lerr, nil)
+
+	{
+		item, ierr := sciter_app.scoped_make_element("li", "only")
+		testing.expect_value(t, ierr, nil)
+		testing.expect_value(t, sciter_app.insert_element(item, list), nil)
+	} // the caller's reference goes here; the document's does not
+
+	n, nerr := sciter_app.child_count(list)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, n, sciter_app.Child_Index(1))
+
+	first, ferr := sciter_app.child(list, 0)
+	testing.expect_value(t, ferr, nil)
+	text, terr := sciter_app.text(first, context.temp_allocator)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, text, "only")
 }

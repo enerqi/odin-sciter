@@ -128,8 +128,11 @@ load :: proc(
 
 	// Alongside the executable. os.args[0] is what the process was invoked as, so this is best-effort:
 	// it resolves to "." for a bare-name invocation, which is a harmless extra candidate.
+	//
+	// `filepath.dir` allocates, and `add` copies what it is given into the candidates allocator, so the
+	// scratch goes in the temp allocator - every other input to `add` is a literal or already temporary.
 	if len(os.args) > 0 {
-		add(&candidates, filepath.dir(os.args[0]))
+		add(&candidates, filepath.dir(os.args[0], context.temp_allocator))
 	}
 
 	when ODIN_OS == .Windows {

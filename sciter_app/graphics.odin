@@ -31,7 +31,6 @@ package sciter_app
 import sciter ".."
 import "base:runtime"
 import "core:fmt"
-import "core:mem"
 
 // The engine's HIMG, HGFX, HPATH and HTEXT. All four are reference counted; the `retain_*`/`release_*`
 // pairs below are the engine's AddRef/Release.
@@ -224,12 +223,16 @@ save_image :: proc(
 	}
 	// The scratch accumulates from the temp allocator, not the caller's: the engine delivers in chunks,
 	// so this grows by doubling, and only the exact-size result below belongs to `allocator`. Growing
-	// in the caller's allocator meant peak memory of twice the encoded image - tens of megabytes for a
-	// 4K PNG - and with `context.temp_allocator` passed in as `allocator`, which is the common case, the
-	// `defer delete` was a no-op and the doubling was retained until the next `free_all`.
+	// in the caller's allocator means peak memory of twice the encoded image - tens of megabytes for a
+	// 4K PNG.
+	//
+	// **The allocator has to be on the dynamic array itself, not beside it.** A zero-valued `[dynamic]`
+	// adopts `context.allocator` at its first `append` and never consults anything else, so a sink that
+	// merely *carried* an allocator field left the doubling in the caller's allocator - measured - which
+	// is the behaviour this comment is here to rule out.
 	sink := Byte_Sink {
-		ctx       = context,
-		allocator = context.temp_allocator,
+		ctx = context,
+		out = make([dynamic]u8, 0, 0, context.temp_allocator),
 	}
 	defer delete(sink.out)
 
@@ -879,11 +882,12 @@ paint_trampoline :: proc "system" (prm: rawptr, gfx: sciter.Hgfx, width, height:
 	call.painter(Graphics(gfx), width, height, call.user)
 }
 
+// No `allocator` field: `out` carries its own, set by `save_image`. One beside it would be read by
+// nothing - see the note there.
 @(private = "file")
 Byte_Sink :: struct {
-	ctx:       runtime.Context,
-	allocator: mem.Allocator,
-	out:       [dynamic]u8,
+	ctx: runtime.Context,
+	out: [dynamic]u8,
 }
 
 @(private = "file")

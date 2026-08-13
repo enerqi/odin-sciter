@@ -108,12 +108,14 @@ string_from_utf16 :: proc(p: [^]u16, n: uint, allocator := context.allocator) ->
 
 	// Decoded into scratch first, then cloned at the exact length. Each UTF-16 unit is at most 3 UTF-8
 	// bytes - a surrogate pair is 2 units and 4 bytes, so 3 per unit covers that too - but sizing the
-	// *returned* allocation by that worst case is wrong twice over: every `delete(s, allocator)` of it
-	// is then a wrong-size free (harmless on the heap allocator, which ignores the size, and a bad-free
-	// report on a tracking or size-checked one), and for ASCII - nearly every string that leaves the
-	// engine - two thirds of the allocation is held for the life of the string. This proc is on the
-	// return path of `value_to_string`, `text`, `html` and `atom_name`, so that is the package's
-	// hottest allocation.
+	// *returned* allocation by that worst case would hold, for ASCII (nearly every string that leaves
+	// the engine), two thirds of the allocation for the life of the string. This proc is on the return
+	// path of `value_to_string`, `text`, `html` and `atom_name`, so that is the package's hottest
+	// allocation and the copy pays for itself.
+	//
+	// The mismatch between the freed size and the allocated one is *not* the reason: measured, both the
+	// heap allocator and `mem.Tracking_Allocator` free by pointer and ignore the size a `delete` reports,
+	// so an oversized allocation freed at its used length raises nothing. Waste is the whole argument.
 	scratch := make([]u8, n * 3, context.temp_allocator)
 	defer delete(scratch, context.temp_allocator)
 	written := utf16.decode_to_utf8(scratch, units)

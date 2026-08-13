@@ -635,7 +635,11 @@ test_expando_crosses_both_ways :: proc(t: ^testing.T) {
 	testing.expect_value(t, n, 42)
 
 	// The supported way to put a string there, and it reads back through the same expando.
-	_, serr := sciter_app.eval_element(name, `this.odin_note = "set by Odin"`)
+	//
+	// The result is cleared rather than dropped: an assignment expression evaluates to the assigned
+	// value, so this `eval_element` hands back a STRING that owns a reference like any other.
+	assigned, serr := sciter_app.eval_element(name, `this.odin_note = "set by Odin"`)
+	defer sciter_app.value_clear(&assigned)
 	testing.expect_value(t, serr, nil)
 	note, nerr := sciter_app.value_get(&expando, "odin_note")
 	defer sciter_app.value_clear(&note)

@@ -93,7 +93,17 @@ load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: stri
 		}
 	}
 
-	if lerr, _ := sciter.load(full); lerr != .None && lerr != .Already_Loaded {
+	// `sciter.load` hands back its candidate list on every path, success included, and nothing else owns
+	// it - see its doc comment and `load_engine`, which is the worked example. Dropping it here leaked
+	// the list plus one string per candidate on every call.
+	lerr, tried := sciter.load(full)
+	defer {
+		for candidate in tried {
+			delete(candidate)
+		}
+		delete(tried)
+	}
+	if lerr != .None && lerr != .Already_Loaded {
 		delete(full, allocator)
 		return "", .Not_Loaded
 	}

@@ -58,6 +58,23 @@ an array, a map, a script object. The rules are the C API's and this package doe
 
 `defer value_clear(&v)` next to every Value that came from the engine is the whole discipline.
 
+**Or let the language do it.** For the common shape — read a value, use it here, done — there is a
+`scoped_` twin of every producer, and the release is `@(deferred_out)` rather than your memory:
+
+```odin
+v, err := sciter_app.scoped_eval(window, "getRows()")   // released at the end of this scope
+_, _ = sciter_app.scoped_eval(window, "refresh()")      // released too, discarded or not
+```
+
+Reach for the plain one when the Value has to outlive the scope — stored in a struct, returned upwards,
+handed to the engine to keep — and for `scoped_` otherwise. See `sciter_app/scoped.odin`.
+
+What this costs to skip is not theoretical: measured on the vendored engine, 2000 discarded `eval`s of
+a 100 kB string grow the process by **390 MB**, and the same loop cleared grows it by 76 kB. And the
+shape of the script is no guide — an assignment (`x = "hi"`) evaluates to a STRING and
+`el.on("click", f)` evaluates to a RESOURCE, so both own a reference where "it returns nothing" was the
+natural assumption.
+
 Two places where the direction is easy to get backwards, both in behavior method calls
 (`sciter_app/behavior.odin`):
 
@@ -114,6 +131,21 @@ Where a proc borrows instead of allocating, its doc comment says "borrowed" and 
 `tag`, the `name` in an attribute-change event, and the keyboard/cursor strings in the host callbacks
 are all borrowed for the duration of the call. No procedure in the package allocates into your
 allocator without taking one, so what follows is entirely your choice to make.
+
+Which gives the one ownership question in this package a mechanical answer, and it is worth stating as
+a rule of its own because it holds without exception:
+
+> **If it takes an allocator, the result is yours to free. If it does not, it is borrowed.**
+
+Thirty exported procedures return a `string` or a slice. Twenty-six take an `allocator` — `text`,
+`html`, `attribute`, `style`, `value_to_string`, `atom_name`, `request_url`, `asset_members` and the
+rest — and hand back memory you own. The other four — `tag`, `request_method`, `value_to_bytes`,
+`archive_item` — hand back a pointer into the engine, and each one's doc comment says how long it
+lives. There is no third case, and `just check-ownership` fails the build if one appears.
+
+The same test does not work for a `Value`, which is why §2 above is a page of prose: `Value` is one type
+covering four contracts, and the signature cannot tell you which. The `scoped_*` procedures are the way
+out of that for the common case — see below.
 
 ### You own the temp-allocator boundary
 
@@ -211,13 +243,18 @@ estimate up front.
 wrapper itself uses for every argument it builds.
 
 **Never the temp allocator for anything the engine keeps.** The engine holds pointers past the call in
-four places, and every one of them will read the memory after your next `free_all`:
+six places, and every one of them will read the memory after your next `free_all`:
 
 - the argv given to `init` — held until `shutdown`
 - an `Asset_Class`'s passport — the C header says it must "survive last instance of the engine"
 - any handler struct you attach — the engine stores its *address* as the tag
 - the bytes handed to `serve` — borrowed for the duration of the callback, so they must outlive the
   return, and `data_ready` is the copying alternative when they cannot
+- **a windowless view's pixel surface** — a buffer passed to `create_windowless` or `resize_windowless`
+  is drawn into on every later `paint_windowless`, so it is held for the life of the view or until the
+  next resize. It looks like a frame buffer and frame buffers look per-frame; this one is not.
+- **an archive blob** — `open_archive` indexes it in place and does not copy, so it must stay valid and
+  unmoved until `close_archive`. `#load`ed data is ideal, and is why the examples use it.
 
 ### Two specific cases that have caught people
 
