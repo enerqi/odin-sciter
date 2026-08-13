@@ -8,6 +8,12 @@
 // "can a Sciter application host a native control - a video surface, a GL viewport, an OS webview -
 // inside its layout?"
 //
+// **This does not use `SciterAttachHwndToElement`.** That slot and `SciterGetElementHwnd` take an
+// `HWND`, and what that means on X11 is not established here - so this example owns an X11 child window
+// itself and positions it over the element's rectangle. If you came looking for those two slots because
+// the header suggests this is what they are for: they are deliberately unwrapped, and
+// `docs/SDK-PARITY.md` says why.
+//
 // **On Linux, yes, and the reason is one measurement that is not in any header:**
 //
 //	window, _ := sciter_app.create_window({width = 900, height = 600})
@@ -253,6 +259,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 @(private = "file")

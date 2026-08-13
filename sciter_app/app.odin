@@ -8,8 +8,10 @@ package sciter_app
 import sciter ".."
 import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
+import "core:unicode/utf16"
 
 // Opens the engine, or explains on stderr where it looked and why that failed.
 //
@@ -51,6 +53,10 @@ g_argv_storage: [][]u16
 @(private)
 g_argv: [][^]u16
 
+// Remembered so `shutdown` can give the argv back to the allocator `init` took it from.
+@(private)
+g_argv_allocator: mem.Allocator
+
 @(private)
 g_initialized: bool
 
@@ -69,6 +75,7 @@ init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
 
 	argv := args if args != nil else os.args
 
+	g_argv_allocator = allocator
 	g_argv_storage = make([][]u16, len(argv), allocator)
 	g_argv = make([][^]u16, len(argv), allocator)
 	for arg, i in argv {
@@ -104,8 +111,21 @@ stop :: proc() {
 }
 
 // Releases the engine's resources. Call after `run` returns.
+//
+// The argv `init` built is freed here, after SHUTDOWN rather than before: the engine holds those
+// pointers for as long as it is running. Without this an `init` -> `shutdown` -> `init` cycle - a plugin
+// host, or a test proving `shutdown` releases everything - leaks the previous set.
 shutdown :: proc() {
 	sciter.api().SciterExec(.SHUTDOWN, 0, 0)
+
+	for arg in g_argv_storage {
+		delete(arg, g_argv_allocator)
+	}
+	delete(g_argv_storage, g_argv_allocator)
+	delete(g_argv, g_argv_allocator)
+	g_argv_storage = nil
+	g_argv = nil
+
 	g_initialized = false
 }
 
@@ -124,7 +144,7 @@ version :: proc() -> [4]u32 {
 // one wrapper per option; the two worth having are below.
 set_option :: proc(option: sciter.Sciter_Rt_Options, value: uintptr, window: Window = nil) -> Error {
 	ok := sciter.api().SciterSetOption(rawptr(window), option, value)
-	return nil if ok else Api_Error.Load_Failed
+	return nil if ok else Api_Error.Option_Failed
 }
 
 // Which script capabilities the engine grants. Sciter denies file and socket access by default, so a
@@ -161,6 +181,10 @@ set_debug_output :: proc(handler: sciter.Debug_Output_Proc, param: rawptr = nil,
 // Call this before loading a document. Without some debug output installed, a CSS typo, a bad URL and
 // a script exception are all completely silent, which is the most confusing thing about a first Sciter
 // document.
+//
+// The context captured here is only used for `fmt`'s own needs - the message itself is decoded into a
+// fixed buffer, so a diagnostic emitted from a thread other than this one does not touch a per-thread
+// arena. See `default_debug_output`.
 set_default_debug_output :: proc(window: Window = nil) {
 	g_debug_ctx = context
 	set_debug_output(default_debug_output, nil, window)
@@ -168,6 +192,15 @@ set_default_debug_output :: proc(window: Window = nil) {
 
 @(private)
 g_debug_ctx: runtime.Context
+
+// A fixed buffer rather than an allocator, for two reasons that only show up late. The engine gives no
+// promise about which thread emits a diagnostic and `worker_thread.odin` establishes that there are
+// other threads, so `context.temp_allocator` - a per-thread arena - would be bumped from two threads
+// with no synchronisation. And nothing here would ever free it: a process that runs the pump forever
+// grows that arena by one allocation per diagnostic. Truncation is the price, and it is the right price
+// for a default logger; a handler that needs whole messages writes its own.
+@(private)
+DEBUG_MESSAGE_MAX :: 4096
 
 @(private)
 default_debug_output :: proc "system" (
@@ -178,7 +211,13 @@ default_debug_output :: proc "system" (
 	text_length: u32,
 ) {
 	context = g_debug_ctx
-	msg := string_from_utf16(text, uint(text_length), context.temp_allocator)
+
+	buf: [DEBUG_MESSAGE_MAX]u8
+	msg := ""
+	if text != nil && text_length > 0 {
+		written := utf16.decode_to_utf8(buf[:], text[:text_length])
+		msg = string(buf[:written])
+	}
 	fmt.eprintfln("[sciter %v %v] %s", subsystem, severity, strings.trim_right_space(msg))
 }
 
@@ -203,11 +242,11 @@ default_debug_output :: proc "system" (
 // so a sheet that matches nothing, `no-such-element {}`, is how to get back to no master styling.
 set_master_css :: proc(css: string) -> Error {
 	ok := sciter.api().SciterSetMasterCSS(raw_data(css), u32(len(css)))
-	return nil if ok else Api_Error.Load_Failed
+	return nil if ok else Api_Error.Option_Failed
 }
 
 // Adds to the master stylesheet, keeping what is already there.
 append_master_css :: proc(css: string) -> Error {
 	ok := sciter.api().SciterAppendMasterCSS(raw_data(css), u32(len(css)))
-	return nil if ok else Api_Error.Load_Failed
+	return nil if ok else Api_Error.Option_Failed
 }

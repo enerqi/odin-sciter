@@ -240,6 +240,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 @(private = "file")
@@ -1172,7 +1176,9 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 
 	// Past the end is not an error - it lands at the end. The largest possible index is the interesting
 	// one: handed to the engine as written it segfaults rather than appending, so `insert_element`
-	// clamps to the child count and this is the regression test for that.
+	// clamps to the child count and this is the regression test for that. Note that "append" is now
+	// spelled `nil` rather than `-1`; an out-of-range *number* still clamps, because the engine's
+	// segfault does not care how the caller arrived at it.
 	tail, _ := sciter_app.make_element("li", "way past")
 	defer sciter_app.unuse_element(tail)
 	testing.expect_value(t, sciter_app.insert_element(tail, list, max(sciter_app.Child_Index)), nil)
@@ -1181,6 +1187,14 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 	testing.expect_value(t, after, before + 2)
 	at_end, _ := sciter_app.child(list, after - 1)
 	testing.expect_value(t, at_end, tail)
+
+	// A negative index clamps up rather than arriving as `max(u32)`, which is the same segfault from
+	// the other end.
+	low, _ := sciter_app.make_element("li", "clamped up")
+	defer sciter_app.unuse_element(low)
+	testing.expect_value(t, sciter_app.insert_element(low, list, -3), nil)
+	first_now, _ := sciter_app.child(list, 0)
+	testing.expect_value(t, first_now, low)
 
 	// And a moderate over-run behaves the same way.
 	spare, _ := sciter_app.make_element("li", "also past")
@@ -1472,6 +1486,19 @@ test_sort_children :: proc(t: ^testing.T) {
 		sciter_app.sort_children(list, nil),
 		sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER),
 	)
+
+	// A negative `first` is clamped, not passed on. `Child_Index` is signed and the engine's parameter
+	// is not, so an unclamped -1 arrives as max(u32) - which `insert_element` documents as a segfault
+	// inside the engine. `-1` is not exotic: it is `element_index - 1` on a first child, and it is what
+	// `insert_element` itself takes as "at the end".
+	from_negative: Sort_State
+	testing.expect_value(t, sciter_app.sort_children(list2, by_text_descending, &from_negative, -1), nil)
+	testing.expect(t, from_negative.calls > 0, "a clamped -1 sorts from the first child")
+
+	// The same on the other end: `last` past the end is the count, not an out-of-range read.
+	past_end: Sort_State
+	testing.expect_value(t, sciter_app.sort_children(list2, by_text_descending, &past_end, 0, 999), nil)
+	testing.expect(t, past_end.calls > 0, "a clamped `last` sorts to the last child")
 }
 
 // `SciterGetElementUID` works; `SciterGetElementByUID` does not resolve what it produces on the
@@ -2215,7 +2242,7 @@ test_master_css_replaces_and_appends :: proc(t: ^testing.T) {
 	testing.expect_value(t, styled_color(window, "letter-spacing"), "")
 	testing.expect_value(t, styled_color(window, "text-indent"), "")
 
-	testing.expect_value(t, sciter_app.set_master_css(""), sciter_app.Error(sciter_app.Api_Error.Load_Failed))
+	testing.expect_value(t, sciter_app.set_master_css(""), sciter_app.Error(sciter_app.Api_Error.Option_Failed))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2830,7 +2857,7 @@ test_asset_class_refuses_too_many_members :: proc(t: ^testing.T) {
 	}
 
 	_, err := sciter_app.make_asset_class("TooBig", too_many, nil, context.temp_allocator)
-	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Wrong_Type))
+	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Too_Many_Members))
 
 	// The limit itself is fine.
 	class, ok := sciter_app.make_asset_class(
@@ -2979,12 +3006,16 @@ test_a_window_that_was_never_shown_reports_itself_closed :: proc(t: ^testing.T) 
 	window, _, ok := styled_window(t)
 	if !ok {return}
 
-	testing.expect_value(t, sciter_app.window_state(window), sciter.Sciter_Window_State.CLOSED)
+	before, before_ok := sciter_app.window_state(window)
+	testing.expect(t, before_ok)
+	testing.expect_value(t, before, sciter.Sciter_Window_State.CLOSED)
 
 	// It is perfectly usable in that state - a document loads, and the DOM answers.
 	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
 	testing.expect(t, styled_target(window) != nil)
-	testing.expect_value(t, sciter_app.window_state(window), sciter.Sciter_Window_State.CLOSED)
+	after, after_ok := sciter_app.window_state(window)
+	testing.expect(t, after_ok)
+	testing.expect_value(t, after, sciter.Sciter_Window_State.CLOSED)
 }
 
 // **`window_state` reports almost nothing.** `.MINIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are accepted
@@ -3013,7 +3044,8 @@ test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
 		sciter_app.heartbeat()
 
 		// Whatever it now claims to be, it is one of the two states this engine reports.
-		reported := sciter_app.window_state(window)
+		reported, reported_ok := sciter_app.window_state(window)
+		testing.expect(t, reported_ok, "a live window always reports a state the enum has")
 		testing.expectf(
 			t,
 			reported == .SHOWN || reported == .CLOSED,

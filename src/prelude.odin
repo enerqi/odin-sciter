@@ -89,8 +89,10 @@ loaded :: proc() -> bool {
 //  4. `lib/<platform>/` relative to the current directory, where this repository keeps its copy
 //  5. the system library search path (LD_LIBRARY_PATH / PATH / DYLD_LIBRARY_PATH)
 //
-// On failure `tried` lists every candidate that was attempted, so the caller can print something
-// actionable. It is allocated with `allocator`.
+// `tried` lists every candidate that was attempted, so the caller can print something actionable. It
+// is allocated with `allocator` **and returned on every path, success included** - each string
+// separately allocated - so the caller owns it and has to free it either way. `load_engine` in
+// `package sciter_app` is the worked example.
 load :: proc(
 	path := "",
 	allocator := context.allocator,

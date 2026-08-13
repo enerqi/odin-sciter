@@ -1877,6 +1877,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 // A fresh App and a freshly loaded document. The App and the Host are deliberately not freed: the
@@ -2871,7 +2875,9 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 
 	// A window that was created and never shown reports `.CLOSED` - see `dom_walk`. The document in it
 	// is perfectly live all the same.
-	testing.expect_value(t, sciter_app.window_state(window), sciter.Sciter_Window_State.CLOSED)
+	never_shown, never_shown_ok := sciter_app.window_state(window)
+	testing.expect(t, never_shown_ok, "a live window reports a state the enum has")
+	testing.expect_value(t, never_shown, sciter.Sciter_Window_State.CLOSED)
 	root, rerr := sciter_app.root(window)
 	testing.expect_value(t, rerr, nil)
 	testing.expect(t, root != nil)
@@ -2885,12 +2891,11 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 	// the DOM, and a state that is not in the enum at all.
 	_, after := sciter_app.root(window)
 	testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
-	state := sciter_app.window_state(window)
-	testing.expect(
-		t,
-		state != .SHOWN && state != .CLOSED,
-		"a closed window reports 0xFFFFFFFE, which is not one of the enum's values",
-	)
+	// `ok` false is the whole point of the pair: the engine answers 0xFFFFFFFE, which is not a member
+	// of SCITER_WINDOW_STATE, so there is no state to report and the wrapper says so instead of
+	// handing back an out-of-range enum value.
+	_, state_ok := sciter_app.window_state(window)
+	testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
 
 	// And the application's own window came through it untouched, which is the part that would not
 	// survive the unsafe order: there, the next pump takes the process down whatever it is doing.

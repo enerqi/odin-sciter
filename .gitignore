@@ -68,3 +68,5 @@ target
 
 # CodeGraph's local index. Machine-local and regenerable; nothing here should be shared.
 .codegraph/
+.claude
+

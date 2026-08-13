@@ -8,6 +8,12 @@
 // Sciter draws with its own Skia GPU pipeline straight into **the framebuffer bound to your GL
 // context**, so the UI ends up in your texture with nothing copied and nothing uploaded.
 //
+// **The route here is `SciterProcX` with `SL_TARGET_OPENGL`, not the `SciterEGL*` slots.** Those two -
+// `SciterEGLGetProcAddress` and `SciterEGLSendEvent` - are for handing the engine an EGL context the
+// host already owns, and they are deliberately unwrapped: testing them needs a GPU this repository does
+// not run on. `docs/SDK-PARITY.md` records that decision. What is below is the documented path and the
+// one that renders on a software stack.
+//
 // **Linux only, and that is about this file rather than about the binding.** Somebody has to create a
 // GL context, and doing it without pulling in GLFW or SDL means EGL, which is the Linux/Android API.
 // The wrapper itself is platform-agnostic: on Windows you would make a WGL context (or use the

@@ -16,7 +16,6 @@ package sciter_app
 import sciter ".."
 import "base:runtime"
 import "core:mem"
-import "core:strings"
 
 // The engine's variant. Same type as `sciter.Value`, so the two can be passed back and forth freely.
 Value :: sciter.Value
@@ -122,13 +121,21 @@ value_from_bytes :: proc(b: []u8) -> (v: Value) {
 	return
 }
 
-// An empty array of `length` undefined slots, ready for `value_set_at`.
+// An empty array of `length` undefined slots, ready for `value_set_at`. A zero length is a real empty
+// array - `value_len` on it is 0, not `.INCOMPATIBLE_TYPE`.
 value_make_array :: proc(length: int) -> (v: Value) {
-	// Writing the last slot is what gives the array its length.
-	if length > 0 {
-		undefined: Value
-		sciter.api().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)
+	// Writing the last slot is what gives the array its length, and there is no last slot to write at
+	// zero. Parsing `[]` is how the type gets set in that case - measured: the result reports a length
+	// of 0 and no error, where a zeroed Value is `.UNDEFINED` and reports `.INCOMPATIBLE_TYPE`. The
+	// difference is invisible to the append pattern (`value_set_at` on an `.UNDEFINED` makes it a
+	// one-element array by the header's own fallback rule) and not invisible to anything that inspects
+	// the value first, so an array whose length is computed must not change type when the count is 0.
+	if length <= 0 {
+		empty, err := value_parse("[]")
+		return empty if err == nil else v
 	}
+	undefined: Value
+	sciter.api().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)
 	return
 }
 
@@ -179,7 +186,15 @@ value_parse :: proc(s: string, how := sciter.Value_String_Cvt_Type.JSON_LITERAL)
 // ---------------------------------------------------------------------------------------------------
 // Extraction
 
+// True for any non-zero integer, at either width. Both slots are needed and neither is enough on its
+// own, measured on 6.0.4.9: `ValueIntData` answers 0 with no error on a `.BIG_INT` - so a boolean that
+// made the round trip through an `i64` would read `false` - and `ValueInt64Data` refuses a `.BOOL`
+// outright with `.INCOMPATIBLE_TYPE`. So the type decides which one is asked.
 value_to_bool :: proc(v: ^Value) -> (b: bool, err: Error) {
+	if type, _ := value_type(v); type == .BIG_INT {
+		i := value_to_i64(v) or_return
+		return i != 0, nil
+	}
 	i: sciter.Int
 	value_err(sciter.api().ValueIntData(v, &i)) or_return
 	return i != 0, nil
@@ -382,13 +397,6 @@ each_callback :: proc "system" (param: rawptr, key: ^Value, value: ^Value) -> b3
 	sink := (^Each_Sink)(param)
 	context = sink.ctx
 	return b32(sink.visit(key, value, sink.user_data))
-}
-
-// ---------------------------------------------------------------------------------------------------
-
-@(private)
-to_cstring :: proc(s: string, allocator := context.allocator) -> cstring {
-	return strings.clone_to_cstring(s, allocator)
 }
 
 // ---------------------------------------------------------------------------------------------------

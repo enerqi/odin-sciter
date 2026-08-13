@@ -8,8 +8,8 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and twenty-five examples, 337 tests and eleven
-> guides cover it. Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
+> engine, there is an Odin-shaped layer on top of them, and 29 examples, 367 tests and eleven
+> guides cover it (`just stats` prints those; they are measured, not maintained by hand). Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
 
@@ -60,7 +60,12 @@ just example hello_window
 ```
 
 A window opens with HTML and CSS rendered by Sciter. The engine is vendored in `lib/`, so this works
-offline with nothing else installed.
+offline with nothing else installed — which is also why the clone is ~24 MB: `lib/linux/x64/libsciter.so`
+is the engine itself, tracked in git. The `--depth 1` above is what keeps you from fetching every past
+copy of it.
+
+**On X11, run that with `XMODIFIERS=@im=none`** if it segfaults — the engine, not your build. Details
+two paragraphs down.
 
 If it does not load, the error lists every path it tried. Point it at a library explicitly with:
 

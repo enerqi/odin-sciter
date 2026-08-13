@@ -303,9 +303,9 @@ test_an_already_extracted_blob_is_not_written_again :: proc(t: ^testing.T) {
 	testing.expect_value(t, after.modification_time, before.modification_time)
 }
 
-// The cache is keyed on the hash, but reuse is decided by the size on disk. A file that is there but
-// the wrong length - a run killed mid-write by something that did not go through the rename, a
-// truncated copy - has to be replaced rather than loaded.
+// The cache is keyed on the hash, and reuse is decided by hashing what is on disk. A file that is
+// there but the wrong length - a run killed mid-write by something that did not go through the rename,
+// a truncated copy - is rejected by the cheap size test before the hash is reached.
 @(test)
 test_a_file_of_the_wrong_size_is_replaced :: proc(t: ^testing.T) {
 	if !engine_loaded(t) {return}
@@ -335,6 +335,45 @@ test_a_file_of_the_wrong_size_is_replaced :: proc(t: ^testing.T) {
 	written, rerr := os.read_entire_file(second, context.temp_allocator)
 	testing.expect_value(t, rerr, nil)
 	testing.expect(t, slice.equal(written, blob))
+}
+
+// The one the size test cannot catch, and the reason reuse hashes the file rather than measuring it:
+// the cache path is a pure function of the shipped engine, so it is the same for every user of a given
+// build and predictable to anything else running as this user. Substituted bytes of the right length
+// must be rewritten, not `dlopen`ed.
+@(test)
+test_a_file_of_the_right_size_but_the_wrong_content_is_replaced :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := transmute([]u8)string("odin-sciter test blob: replaced when substituted")
+	defer scrub(blob)
+
+	first, err := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err, nil)
+	defer delete(first)
+
+	original, serr := os.stat(first, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+
+	// Same length, different bytes - exactly what a size check calls "already extracted".
+	impostor := make([]u8, len(blob), context.temp_allocator)
+	for &b in impostor {
+		b = 'x'
+	}
+	testing.expect_value(t, os.write_entire_file(first, impostor), nil)
+
+	second, err2 := sciter_app.load_embedded(blob)
+	testing.expect_value(t, err2, nil)
+	defer delete(second)
+	testing.expect_value(t, second, first)
+
+	after, serr2 := os.stat(second, context.temp_allocator)
+	testing.expect_value(t, serr2, nil)
+	testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+
+	written, rerr := os.read_entire_file(second, context.temp_allocator)
+	testing.expect_value(t, rerr, nil)
+	testing.expect(t, slice.equal(written, blob), "the substituted bytes must not survive")
 }
 
 // The temporary is an implementation detail and has to stay one: a `.tmp` left in the cache directory

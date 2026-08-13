@@ -1073,6 +1073,10 @@ have_display :: proc() -> bool {
 // The only tests in this file that need a window: a diagnostic has to come from somewhere, and script
 // only runs in a document. One window for the suite, never shown - see `dom_walk` for why.
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 @(private = "file")

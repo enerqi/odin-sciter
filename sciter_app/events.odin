@@ -10,6 +10,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:fmt"
 import "core:time"
 
 // What the engine reports. `params` points at the group's own parameter struct - use the typed
@@ -35,9 +36,10 @@ Event_Handler :: struct {
 	subscription: sciter.Event_Groups,
 
 	// Return true to mark the event handled. Whoever sent it is told - `send_event` reports it - and
-	// the rest of the trip carries the HANDLED bit, so later handlers see `Event_Phase.Handled`. It
-	// does not cancel delivery: the bubbling pass still arrives at this handler, which is why acting
-	// on every phase acts twice.
+	// the rest of the trip carries the HANDLED bit, so later handlers see `handled = true` on the typed
+	// parameters (and `event_handled(cmd)` on the raw code). It does not cancel delivery: the bubbling
+	// pass still arrives at this handler, which is why acting on every phase acts twice - and the phase
+	// stays readable after something claims the event, which is what makes acting once possible.
 	on_event:     proc(handler: ^Event_Handler, event: Event) -> bool,
 
 	// Yours. The handler is passed back to `on_event`, so this is how state gets in.
@@ -98,15 +100,41 @@ event_trampoline :: proc "system" (tag: rawptr, he: sciter.Helement, evtg: scite
 // The phase bits live above every real event code (SINKING is 0x8000, HANDLED is 0x10000).
 EVENT_CODE_MASK :: 0x7FFF
 
+// Which way the event is travelling. **This is not where "handled" lives**: the C API has SINKING as a
+// bit (0x8000) and HANDLED as a separate, independent one (0x10000), so an event can be sinking *and*
+// handled at once. Modelling all three as one enum made `.Handled` shadow the direction - every handler
+// downstream of one that claimed the event lost the ability to tell sinking from bubbling, and the
+// documented way to act exactly once (`if ev.phase == .Bubbling`) silently stopped acting. Use
+// `handled` on the typed parameters, or `event_handled` on a raw code.
 Event_Phase :: enum {
 	Bubbling, // travelling back up from the target - the normal case
 	Sinking, // travelling down towards the target, before it sees the event
-	Handled, // something already claimed it
 }
 
 // The event code with the phase bits removed.
 event_code :: proc(cmd: u32) -> u32 {
 	return cmd & EVENT_CODE_MASK
+}
+
+// **`sciter.Behavior_Events` names the engine's codes and does not close the set.** Everything at or
+// above `.FIRST_APPLICATION_EVENT_CODE` (256) belongs to the application, and the engine passes those
+// through untouched - so a `switch` on `Behavior_Event.code` or `Fired_Event.code` can legitimately see
+// a value with no name, and needs a `case:` for it. This is the one enum in the package that is used as
+// both a named set and an open number space.
+//
+// `app_event` is how to spell one of your own. It asserts the floor, because a code below it collides
+// with an engine event - and `.BUTTON_CLICK` is 0, so the collision that costs the most time to find is
+// the one you get by forgetting to add the base at all.
+app_event :: proc(n: u32, loc := #caller_location) -> sciter.Behavior_Events {
+	base := u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE)
+	fmt.assertf(
+		n >= base,
+		"an application event code must be at or above FIRST_APPLICATION_EVENT_CODE (%d), got %d",
+		base,
+		n,
+		loc = loc,
+	)
+	return sciter.Behavior_Events(n)
 }
 
 // The mouse group needs one more bit taken off. `MOUSE_EVENTS.DRAGGING` is 0x100, and the header says
@@ -118,14 +146,15 @@ mouse_code :: proc(cmd: u32) -> u32 {
 	return event_code(cmd) & ~u32(sciter.Mouse_Events.DRAGGING)
 }
 
+// The direction bit, and only that. Readable whether or not anything has claimed the event.
 event_phase :: proc(cmd: u32) -> Event_Phase {
-	switch {
-	case cmd & u32(sciter.Phase_Mask.HANDLED) != 0:
-		return .Handled
-	case cmd & u32(sciter.Phase_Mask.SINKING) != 0:
-		return .Sinking
-	}
-	return .Bubbling
+	return .Sinking if cmd & u32(sciter.Phase_Mask.SINKING) != 0 else .Bubbling
+}
+
+// Whether something upstream has already claimed this event. Independent of the phase: an event can
+// arrive sinking and handled, or bubbling and handled.
+event_handled :: proc(cmd: u32) -> bool {
+	return cmd & u32(sciter.Phase_Mask.HANDLED) != 0
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -136,13 +165,16 @@ event_phase :: proc(cmd: u32) -> Event_Phase {
 //	if be, ok := behavior_event(event); ok && be.code == .BUTTON_CLICK { ... }
 
 Behavior_Event :: struct {
-	code:   sciter.Behavior_Events,
-	phase:  Event_Phase,
-	target: Element, // the element the behavior belongs to - the button that was clicked
-	source: Element, // the element the event originated from
-	reason: uintptr, // a CLICK_REASON or EDIT_CHANGED_REASON, depending on `code`
-	data:   ^Value, // event payload; borrowed, do not clear
-	raw:    ^sciter.Behavior_Event_Params,
+	// Named for the engine's own events, but **not a closed set**: an application code passes through
+	// unnamed, so a `switch` on this needs a `case:`. See `app_event`.
+	code:    sciter.Behavior_Events,
+	phase:   Event_Phase,
+	handled: bool, // something upstream already claimed it - independent of the phase
+	target:  Element, // the element the behavior belongs to - the button that was clicked
+	source:  Element, // the element the event originated from
+	reason:  uintptr, // a CLICK_REASON or EDIT_CHANGED_REASON, depending on `code`
+	data:    ^Value, // event payload; borrowed, do not clear
+	raw:     ^sciter.Behavior_Event_Params,
 }
 
 behavior_event :: proc(event: Event) -> (be: Behavior_Event, ok: bool) {
@@ -153,6 +185,7 @@ behavior_event :: proc(event: Event) -> (be: Behavior_Event, ok: bool) {
 	return Behavior_Event {
 			code = sciter.Behavior_Events(event_code(p.cmd)),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.heTarget),
 			source = Element(p.he),
 			reason = p.reason,
@@ -185,6 +218,7 @@ event_name :: proc(be: Behavior_Event, allocator := context.allocator) -> string
 Mouse_Event :: struct {
 	code:     sciter.Mouse_Events,
 	phase:    Event_Phase,
+	handled:  bool, // something upstream already claimed it - independent of the phase
 	target:   Element,
 	pos:      [2]i32, // relative to the target element
 	buttons:  sciter.Mouse_Buttons,
@@ -201,6 +235,7 @@ mouse_event :: proc(event: Event) -> (me: Mouse_Event, ok: bool) {
 	return Mouse_Event {
 			code = sciter.Mouse_Events(mouse_code(p.cmd)),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
 			buttons = p.button_state,
@@ -214,6 +249,7 @@ mouse_event :: proc(event: Event) -> (me: Mouse_Event, ok: bool) {
 Key_Event :: struct {
 	code:      sciter.Key_Events,
 	phase:     Event_Phase,
+	handled:   bool, // something upstream already claimed it - independent of the phase
 	target:    Element,
 	key_code:  u32, // a virtual key for KEY_DOWN/KEY_UP, a character for KEY_CHAR
 	modifiers: sciter.Keyboard_States,
@@ -228,6 +264,7 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 	return Key_Event {
 			code = sciter.Key_Events(event_code(p.cmd)),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
 			key_code = p.key_code,
 			modifiers = p.alt_state,
@@ -248,15 +285,16 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 // not interested and no `.DROP` ever arrives. `sciter-x-behavior.h` mentions only the first of the two;
 // consuming just that was measured to leave the drop refused. See docs/events.md.
 Exchange_Event :: struct {
-	code:   sciter.Exchange_Cmd,
-	phase:  Event_Phase,
-	target: Element, // the element under the cursor
-	source: Element, // the dragged element, and nil for a drag from another application
-	pos:    [2]i32, // relative to the target element
-	view:   [2]i32, // relative to the window
-	mode:   sciter.Dd_Modes, // copy / move / link, as the source offered it
-	data:   ^Value, // the dragged payload; borrowed, do not clear
-	raw:    ^sciter.Exchange_Params,
+	code:    sciter.Exchange_Cmd,
+	phase:   Event_Phase,
+	handled: bool, // something upstream already claimed it - independent of the phase
+	target:  Element, // the element under the cursor
+	source:  Element, // the dragged element, and nil for a drag from another application
+	pos:     [2]i32, // relative to the target element
+	view:    [2]i32, // relative to the window
+	mode:    sciter.Dd_Modes, // copy / move / link, as the source offered it
+	data:    ^Value, // the dragged payload; borrowed, do not clear
+	raw:     ^sciter.Exchange_Params,
 }
 
 exchange_event :: proc(event: Event) -> (xe: Exchange_Event, ok: bool) {
@@ -267,6 +305,7 @@ exchange_event :: proc(event: Event) -> (xe: Exchange_Event, ok: bool) {
 	return Exchange_Event {
 			code = sciter.Exchange_Cmd(event_code(p.cmd)),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
 			source = Element(p.source),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
@@ -336,11 +375,12 @@ timer_event :: proc(event: Event) -> (te: Timer_Event, ok: bool) {
 // focus in a field that has not been filled in properly. It is a field of the caller's struct, so it
 // only counts while the handler is on the stack.
 Focus_Event :: struct {
-	code:   sciter.Focus_Events,
-	phase:  Event_Phase,
-	target: Element,
-	cause:  u32, // how the focus was moved; a FOCUS_CMD_TYPE for `.ADVANCE_REQUEST`
-	raw:    ^sciter.Focus_Params,
+	code:    sciter.Focus_Events,
+	phase:   Event_Phase,
+	handled: bool, // something upstream already claimed it - independent of the phase
+	target:  Element,
+	cause:   u32, // how the focus was moved; a FOCUS_CMD_TYPE for `.ADVANCE_REQUEST`
+	raw:     ^sciter.Focus_Params,
 }
 
 focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
@@ -351,6 +391,7 @@ focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
 	return Focus_Event {
 			code = sciter.Focus_Events(event_code(p.cmd)),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
 			cause = p.cause,
 			raw = p,
@@ -380,6 +421,7 @@ focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
 Scroll_Event :: struct {
 	code:     u32,
 	phase:    Event_Phase,
+	handled:  bool, // something upstream already claimed it - independent of the phase
 	target:   Element,
 	pos:      i32, // the new offset, for a position-carrying code
 	vertical: bool, // false means the horizontal scrollbar
@@ -396,6 +438,7 @@ scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
 	return Scroll_Event {
 			code = event_code(p.cmd),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
 			pos = p.pos,
 			vertical = bool(p.vertical),
@@ -413,12 +456,18 @@ scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
 // `set_attribute` from Odin and for `setAttribute` from script alike, and a removal arrives with
 // `value` empty rather than as a separate code.
 //
+// `removed` is the distinction that emptiness alone cannot carry. The header says "new attribute value,
+// NULL if attribute was deleted" (sciter-x-behavior.h), and a nil pointer decodes to `""` - so without
+// this flag `removeAttribute("data-x")` and `setAttribute("data-x", "")` are the same event, and
+// "there is no state" reads as "the state is empty".
+//
 // `name` is borrowed from the engine and valid for the call. `value` is decoded into `allocator`,
 // because the engine hands it over as UTF-16.
 Attribute_Change :: struct {
 	element: Element,
 	name:    string,
 	value:   string,
+	removed: bool,
 	raw:     ^sciter.Attribute_Change_Params,
 }
 
@@ -429,22 +478,23 @@ attribute_change_event :: proc(event: Event, allocator := context.allocator) -> 
 	p := (^sciter.Attribute_Change_Params)(event.params)
 	return Attribute_Change {
 			element = Element(p.he),
-			name = string(p.name),
-			value = string_from_utf16_cstring(p.value, allocator),
-			raw = p,
-		},
-		true
+			name    = string(p.name),
+			value   = string_from_utf16_cstring(p.value, allocator),
+			removed = p.value == nil, // read before the decode turns nil into ""
+			raw     = p,
+		}, true
 }
 
 // A touch gesture. The engine keeps the group and the parameter struct, but the `GESTURE_CMD` enum is
 // **commented out** in sciter-x-behavior.h on this SDK, so `code` is a bare number here: there is no
 // list of values upstream to name it against.
 Gesture_Event :: struct {
-	code:   u32,
-	phase:  Event_Phase,
-	target: Element,
-	pos:    [2]i32, // relative to the target element
-	raw:    ^sciter.Gesture_Params,
+	code:    u32,
+	phase:   Event_Phase,
+	handled: bool, // something upstream already claimed it - independent of the phase
+	target:  Element,
+	pos:     [2]i32, // relative to the target element
+	raw:     ^sciter.Gesture_Params,
 }
 
 gesture_event :: proc(event: Event) -> (ge: Gesture_Event, ok: bool) {
@@ -455,8 +505,9 @@ gesture_event :: proc(event: Event) -> (ge: Gesture_Event, ok: bool) {
 	return Gesture_Event {
 			code = event_code(p.cmd),
 			phase = event_phase(p.cmd),
+			handled = event_handled(p.cmd),
 			target = Element(p.target),
-			pos = {p.pos.x, p.pos.y},
+			pos = {i32(p.pos.x), i32(p.pos.y)},
 			raw = p,
 		},
 		true
@@ -671,13 +722,21 @@ release_capture :: proc(element: Element) -> Error {
 // The engine counts in whole milliseconds. A positive `interval` shorter than one millisecond is
 // raised to one rather than rounded down, because rounding down to zero would stop the timer - see
 // `stop_timer`, which is what that spelling means.
+//
+// A negative interval is `.INVALID_PARAMETER`, and so is one over `max(u32)` milliseconds (~49.7 days).
+// Both used to reach the engine as a `u32`: the first as 0, which silently *stopped* a running timer
+// from what was usually an arithmetic slip, and the second wrapped to whatever the low 32 bits held.
+// `stop_timer` is the only spelling of stopping.
 set_timer :: proc(element: Element, interval: time.Duration, id: uintptr = 0) -> Error {
+	if interval < 0 {
+		return sciter.Scdom_Result.INVALID_PARAMETER
+	}
 	ms := i64(interval / time.Millisecond)
 	if interval > 0 && ms < 1 {
 		ms = 1
 	}
-	if ms < 0 {
-		ms = 0
+	if ms > i64(max(u32)) {
+		return sciter.Scdom_Result.INVALID_PARAMETER
 	}
 	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), u32(ms), id))
 }

@@ -34,12 +34,40 @@ The Odin ecosystem has no package manager to satisfy, so the tag is for humans a
 
 ## Cutting a release
 
+## Before the second engine binary lands: decide about the vendored `.so`
+
+`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. That is fine for one engine
+and it does not stay fine:
+
+- a binary does not delta against its predecessor, so **every upgrade adds another ~24 MB to history,
+  permanently**. This document treats upgrades as routine and `canary.yml` surfaces upstream tags
+  weekly, so the intended cadence is "regularly"
+- Windows and macOS are both meant to be vendored, at which point every clone carries three engines for
+  whichever platform the reader is on
+- `docs/PLAN.md` already records that a full-history clone of the *upstream* SDK is ~4 GB because "800+
+  commits, each carrying every platform's binaries" - the same failure mode, one scale down
+
+There are two ways out and both are cheap **now** and expensive later, because migrating history is
+what costs:
+
+1. **git-lfs** for `lib/**/libsciter.*` and `lib/**/sciter.dll`. Keeps the vendored-and-offline
+   property; costs some friction for forks and for CI setups that have to enable LFS.
+2. **Do not vendor.** A `just fetch-engine` recipe that downloads the binary from the pinned SDK tag and
+   checks it against a committed SHA-256. Keeps the repository small; costs the "works offline from a
+   clean clone with nothing installed" property, which `README.md` currently advertises.
+
+Nothing here has been changed, because it is a repository-history decision rather than a code one. It
+is recorded here so that it is made deliberately, before the second binary makes it expensive.
+
 A release here is a git tag and nothing else — there is no package manager to publish to, and Odin
 consumers vendor or submodule the repository or import it by path.
 
 1. `just check` — both packages, the guides' snippets, all twenty-one examples
 2. `just test` — every `@(test)`, and `just test_sanitize eval` for the `Value` refcounting under ASan
 3. `just example api_map` — 189 slots, 0 mismatches, against the engine actually vendored
+   and `just parity --check` — the slots the new headers declare against the ones `sciter_app` wraps,
+   diffed against `docs/parity-baseline.txt`. `api_map` catches a slot that moved or vanished; this is
+   the one that catches a slot that *appeared*, which is how coverage otherwise rots one SDK at a time
 4. run the windowed examples by hand on every platform that claims to be tested
 5. move the `## Unreleased` heading in [`CHANGELOG.md`](../CHANGELOG.md) to the version being cut, and
    check the platform table in it and in `README.md` still tell the truth
@@ -126,6 +154,7 @@ pin arrives with the answers already attached.
 | 3 headers, 4 binaries | by hand on a real upgrade; `canary.yml` does it on a scratch tree |
 | 5 `just bindgen` | `bindgen.yml` — and it asserts the result is byte-identical to what is committed |
 | 6 `just example api_map` | `ci.yml`, as `just api-map-verify` — the table is asserted, not printed for reading |
+| 6b `just parity --check` | `ci.yml` — new unwrapped slots are a diff against `docs/parity-baseline.txt` |
 | 7 check and test | `ci.yml`, on Linux under Xvfb, plus `just cross-check` for the two other targets |
 | 8 windowed by hand | **you.** CI cannot see that a window renders blank |
 | 9 docs | **you** |

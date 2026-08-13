@@ -218,6 +218,10 @@ Loader :: struct {
 g_loader: Loader
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 @(private = "file")
@@ -460,6 +464,13 @@ test_serving_nothing_is_a_discard :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.serve(&request, body), sciter_app.Load_Result.OK)
 	testing.expect(t, raw.outData == raw_data(body))
 	testing.expect_value(t, raw.outDataSize, u32(1))
+
+	// An empty *but present* resource is `.OK` with a zero size, not a discard - an empty stylesheet
+	// and a missing one are different answers, and a document can tell them apart. `nil` above is the
+	// spelling of "I have nothing"; a zero-length slice of a real buffer is "the resource is empty".
+	present_but_empty := body[:0]
+	testing.expect_value(t, sciter_app.serve(&request, present_but_empty), sciter_app.Load_Result.OK)
+	testing.expect_value(t, raw.outDataSize, u32(0))
 }
 
 // **`data_ready` works from inside the callback and nowhere else.** It is `serve` with a copy rather

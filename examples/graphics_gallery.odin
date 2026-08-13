@@ -1891,6 +1891,10 @@ have_display :: proc() -> bool {
 // One window for the whole suite: creating and destroying them per test is slow and the engine keeps
 // the host handler's address, so it has to outlive the test that made it.
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 TEXT_DOC :: `<html><head><style>

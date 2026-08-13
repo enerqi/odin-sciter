@@ -218,3 +218,52 @@ jobs:
         run: |
           echo "::error::the new engine did not pass cleanly - see the job summary and the tracking issue"
           exit 1
+
+  # The generator is pinned to a commit (`BINDGEN_COMMIT`, in this file and in bindgen.yml) and nothing
+  # otherwise says when that pin has gone stale. `sciter.odin` is ~2800 lines of generated code whose
+  # quality is entirely a function of that tool, so six months of upstream fixes is worth hearing about
+  # - and this is the same "poll weekly, open one issue" machinery the engine probe above already uses.
+  #
+  # It does not regenerate anything: a bindgen bump changes generated output and belongs in a deliberate
+  # commit with the diffstat read, not in a scheduled job.
+  bindgen-pin:
+    name: odin-c-bindgen pin drift
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the pin against upstream's default branch
+        id: pin
+        run: |
+          set -euo pipefail
+          pinned="$BINDGEN_COMMIT"
+          head=$(git ls-remote https://github.com/karl-zylinski/odin-c-bindgen HEAD | cut -f1)
+          short_head=${head:0:7}
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "head=$short_head" >> "$GITHUB_OUTPUT"
+          if [ "${head#$pinned}" = "$head" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "odin-c-bindgen has moved: pinned $pinned, upstream HEAD $short_head"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "pin is current ($pinned)"
+          fi
+
+      - name: Open or update the tracking issue
+        if: steps.pin.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="canary: odin-c-bindgen has moved past ${{ steps.pin.outputs.pinned }}"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          body="\`BINDGEN_COMMIT\` is \`${{ steps.pin.outputs.pinned }}\`; upstream HEAD is \`${{ steps.pin.outputs.head }}\`.
+
+          Nothing is broken by this - the pin is what makes \`bindgen.yml\`'s byte-identical check
+          meaningful. It is worth a look when convenient: bump the pin in \`.github/workflows/bindgen.yml\`
+          and \`.github/workflows/canary.yml\`, run \`just bindgen\`, and read the \`sciter.odin\` diffstat
+          before committing."
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" --body "$body"
+          fi

@@ -20,6 +20,7 @@
 package sciter_app
 
 import sciter ".."
+import "core:strings"
 import "core:unicode/utf16"
 
 // Everything in this package that can fail reports it as one of these.
@@ -48,6 +49,9 @@ Api_Error :: enum {
 	Parse_Failed, // value_parse was handed text the dialect does not accept
 	Asset_Failed, // the engine refused a SOM asset
 	Wrong_Arity, // a SOM method was handed fewer arguments than its passport declares - see asset_call
+	Option_Failed, // the engine refused a configuration call - set_option, or either master-CSS setter
+	Archive_Failed, // an archive call the engine reports as a bare false - see close_archive
+	Too_Many_Members, // a SOM class was given more than MAX_ASSET_MEMBERS properties or methods
 }
 
 // `sciter.Scdom_Result.OK_NOT_HANDLED` is -1 and is a success, so `!= .OK` is not the test.
@@ -102,11 +106,28 @@ string_from_utf16 :: proc(p: [^]u16, n: uint, allocator := context.allocator) ->
 	}
 	units := p[:n]
 
-	// Each UTF-16 unit is at most 3 UTF-8 bytes; a surrogate pair is 2 units and 4 bytes, so 3 per
-	// unit covers that too.
-	buf := make([]u8, n * 3, allocator)
-	written := utf16.decode_to_utf8(buf, units)
-	return string(buf[:written])
+	// Decoded into scratch first, then cloned at the exact length. Each UTF-16 unit is at most 3 UTF-8
+	// bytes - a surrogate pair is 2 units and 4 bytes, so 3 per unit covers that too - but sizing the
+	// *returned* allocation by that worst case is wrong twice over: every `delete(s, allocator)` of it
+	// is then a wrong-size free (harmless on the heap allocator, which ignores the size, and a bad-free
+	// report on a tracking or size-checked one), and for ASCII - nearly every string that leaves the
+	// engine - two thirds of the allocation is held for the life of the string. This proc is on the
+	// return path of `value_to_string`, `text`, `html` and `atom_name`, so that is the package's
+	// hottest allocation.
+	scratch := make([]u8, n * 3, context.temp_allocator)
+	defer delete(scratch, context.temp_allocator)
+	written := utf16.decode_to_utf8(scratch, units)
+
+	out := make([]u8, written, allocator)
+	copy(out, scratch[:written])
+	return string(out)
+}
+
+// The engine's DOM tag names, attribute names and CSS selectors are plain `LPCSTR`, so these are the
+// one direction that does not go through UTF-16.
+@(private)
+to_cstring :: proc(s: string, allocator := context.allocator) -> cstring {
+	return strings.clone_to_cstring(s, allocator)
 }
 
 // Decodes a NUL-terminated UTF-16 run. Sciter hands these back from callbacks that report no length.

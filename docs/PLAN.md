@@ -9,9 +9,14 @@ background threads, drag-and-drop, graphics (both a custom-painted element and a
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 337 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
-the wrapper is 310 of its 347 exported procedures called from a test; the rest are proc-group members
-reached through their group. `close` is now among the covered ones: there is exactly one order in which
+`just example-tests` runs 367 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+the wrapper is 355 of its 360 exported procedures called from a test; the rest are proc-group members
+reached through their group.
+
+Every number in that paragraph comes from `just stats` (`.github/scripts/stats.sh`), and `just stats
+--check` fails if this file and `README.md` have drifted from it - which they had, by 29 tests. The
+counting rule is `\.name\b` and not `\.name(`: the examples store and forward wrappers as often as
+they call them, and matching the open paren undercounts. `close` is now among the covered ones: there is exactly one order in which
 a secondary window can be closed without crashing the engine - hide, pump, close - and
 `examples/workbench.odin` pins it. What remains
 is Windows - and everything that could be prepared for it without the machine has been, including

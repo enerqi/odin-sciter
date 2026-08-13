@@ -21,6 +21,11 @@
 //     `noexec` on a fair number of hardened systems
 //   - on Windows, a freshly written DLL is exactly the pattern anti-malware heuristics look at
 //   - the extracted file is a normal file: this hides nothing and protects nothing
+//   - the cache path is a pure function of the shipped engine, so it is the same for every user of a
+//     given build and predictable to anything else running as this user. The directory is created
+//     owner-only and the extracted file is hashed against the embedded bytes before it is reused, so a
+//     substituted library is rewritten rather than loaded - but a process running *as this user* can
+//     still win a race against any such check, and nothing here changes that.
 //
 // On licensing: the Sciter EULA's grant is "You may utilize sciter.dll in any manner you see fit
 // (subject to the limitations outlined in this license)", and the only limitation it states is the
@@ -38,10 +43,11 @@ import "core:strings"
 
 // Writes an embedded copy of the engine to a cache directory and loads it.
 //
-// The file name carries a hash of `blob`, so a different engine build gets a different file rather
-// than silently reusing a stale one, and an unchanged one is written exactly once. The write goes to a
-// temporary name and is then renamed, so two copies of the program starting at the same time cannot
-// see a half-written library.
+// The directory name carries a hash of `blob`, so a different engine build gets a different file
+// rather than silently reusing a stale one, and an unchanged one is written exactly once. An existing
+// file is reused only if its contents hash to the same value - the name alone is not taken as proof.
+// The write goes to a temporary name and is then renamed, so two copies of the program starting at the
+// same time cannot see a half-written library.
 //
 // Returns the path it loaded from, allocated in `allocator`.
 load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: string, err: Error) {
@@ -57,11 +63,16 @@ load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: stri
 	// treats any path whose basename is not exactly LIBRARY_NAME as a directory to look inside, so it
 	// would go hunting for `libsciter-<hash>.so/libsciter.so`. Keeping the real filename also matters
 	// to anything that later inspects the process's loaded modules.
-	dir, joinerr := filepath.join({base, fmt.tprintf("%016x", hash.fnv64a(blob))}, context.temp_allocator)
+	want := hash.fnv64a(blob)
+	dir, joinerr := filepath.join({base, fmt.tprintf("%016x", want)}, context.temp_allocator)
 	if joinerr != nil {
 		return "", .Not_Loaded
 	}
-	if mkerr := os.make_directory_all(dir); mkerr != nil && !os.exists(dir) {
+	// Owner-only: this directory holds a library that every later run of the program will `dlopen`, so
+	// nobody else should be able to write into it. That is a defence in depth, not the guarantee - the
+	// guarantee is the content check below.
+	OWNER_ONLY :: os.Permissions{.Read_User, .Write_User, .Execute_User}
+	if mkerr := os.make_directory_all(dir, OWNER_ONLY); mkerr != nil && !os.exists(dir) {
 		return "", .Not_Loaded
 	}
 
@@ -70,9 +81,11 @@ load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: stri
 		return "", .Not_Loaded
 	}
 
-	// Already extracted by an earlier run, and the hash says it is the same engine.
-	if !is_file_of_size(full, len(blob)) {
-		if werr := write_engine(full, blob); werr != nil {
+	// Already extracted by an earlier run, and its *contents* hash to the blob we are shipping. The
+	// path is a pure function of the build, so it is predictable to anything else running as this
+	// user; a size match is not evidence that the bytes about to be `dlopen`ed are ours.
+	if !is_file_of_engine(full, blob, want) {
+		if werr := write_engine(full, blob, want); werr != nil {
 			// `full` came from the caller's allocator and a failed call returns "", so it goes back
 			// here - exactly as on the load failure below.
 			delete(full, allocator)
@@ -90,7 +103,7 @@ load_embedded :: proc(blob: []u8, allocator := context.allocator) -> (path: stri
 // Writes `blob` to `full` via a temporary file in the same directory, then renames it into place.
 // Rename is atomic within a filesystem, so a concurrent reader sees either no file or the whole one.
 @(private)
-write_engine :: proc(full: string, blob: []u8) -> Error {
+write_engine :: proc(full: string, blob: []u8, want: u64) -> Error {
 	// The pid keeps two simultaneous first runs from writing to the same temporary.
 	temp := fmt.tprintf("%s.%d.tmp", full, os.get_pid())
 
@@ -106,23 +119,35 @@ write_engine :: proc(full: string, blob: []u8) -> Error {
 	if rerr := os.rename(temp, full); rerr != nil {
 		// Losing the race is fine - the other process wrote the identical bytes. Anything else is not.
 		os.remove(temp)
-		if !is_file_of_size(full, len(blob)) {
+		if !is_file_of_engine(full, blob, want) {
 			return .Not_Loaded
 		}
 	}
 	return nil
 }
 
+// Whether the file at `path` is the engine in `blob`, by content. `want` is `hash.fnv64a(blob)`, passed
+// in because the caller has already computed it to name the directory.
+//
+// The size test first is only a cheap rejection; the hash is what decides. FNV-1a over 25 MB is a few
+// milliseconds, once per process start, against the 25 MB write it avoids - and the alternative is
+// trusting a file whose path anything running as this user can predict.
 @(private)
-is_file_of_size :: proc(path: string, size: int) -> bool {
+is_file_of_engine :: proc(path: string, blob: []u8, want: u64) -> bool {
 	if !os.exists(path) {
 		return false
 	}
-	info, err := os.stat(path, context.temp_allocator)
-	if err != nil {
+	info, serr := os.stat(path, context.temp_allocator)
+	if serr != nil || info.size != i64(len(blob)) {
 		return false
 	}
-	return info.size == i64(size)
+	// Not the temp allocator: 25 MB would sit in the arena until whoever owns it decides otherwise.
+	data, rerr := os.read_entire_file(path, context.allocator)
+	if rerr != nil {
+		return false
+	}
+	defer delete(data)
+	return hash.fnv64a(data) == want
 }
 
 // Where the extracted engine lives. The user's cache directory rather than the system temp directory:
@@ -168,5 +193,5 @@ engine_cache_dir :: proc(allocator := context.allocator) -> (dir: string, err: E
 
 	// No home directory at all - a daemon, or a very bare container. Fall back to the working
 	// directory, which at least fails visibly rather than writing somewhere surprising.
-	return strings.clone("." + "/" + APP, allocator), nil
+	return strings.clone("./" + APP, allocator), nil
 }

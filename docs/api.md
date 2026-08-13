@@ -91,7 +91,7 @@ exception are all completely silent.
 | `set_media_vars(window, vars: ^Value) -> Error` | media *flags*: `{dark: true}` makes `@media dark` match. Merges; switches every time. |
 | `update_window(window)` | repaint what is dirty now, rather than at the next turn of the pump |
 | `show` / `hide` / `close` / `activate` | window state; a window is created hidden. **A secondary window is closed by `hide`, a turn of the pump, then `close`** — any other order segfaults the engine |
-| `window_state` / `set_window_state` | the full `Sciter_Window_State` |
+| `window_state(window) -> (state, ok)` / `set_window_state` | `ok` is false when the engine answers something outside the enum — a destroyed window reports `0xFFFFFFFE` |
 | `eval(window, script) -> (Value, Error)` | script in the global scope |
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |
 | `set_global(window, name: string, value: ^Value) -> Error` | publishes into `globalThis`; redo after every load |
@@ -183,7 +183,7 @@ do not clear it.
 | `element_value` / `set_element_value` | script's `element.value`, typed by the attached behavior |
 | `make_element(tag, text := "")` | detached; **the reference is yours**, inserted or not |
 | `clone_element(el)` | detached deep copy, same ownership |
-| `insert_element(el, parent, index := -1)` | default appends; a move if `el` already had a parent |
+| `insert_element(el, parent, index: Maybe(Child_Index) = nil)` | `nil` appends; a move if `el` already had a parent |
 | `remove_element(el, finalize := true)` | `false` detaches **and takes a reference for you** |
 | `swap_elements(a, b)` | exchanges indexes and parents |
 | `sort_children(el, cmp, user_data, first, last)` | in place; `last` is one past the end |
@@ -449,7 +449,7 @@ sciter_app.set_global_asset(asset)      // *before* the document that uses it is
 | `make_asset(class, user_data, allocator)` / `destroy_asset` | one per object; the engine holds its address, so it must not move |
 | `set_global_asset(asset)` / `release_global_asset(asset)` | publishes it as a global under the class name |
 | `element_asset(el, behavior) -> (^sciter.Som_Asset_T, Error)` | a behavior's own asset — `element_asset(input, "edit")` |
-| `MAX_ASSET_MEMBERS` | 32 properties and 32 methods per class; over that is `.Wrong_Type` |
+| `MAX_ASSET_MEMBERS` | 32 properties and 32 methods per class; over that is `.Too_Many_Members` |
 
 ```odin
 Asset_Getter :: proc(asset: ^Asset) -> (value: Value, ok: bool)   // the Value is handed to the engine

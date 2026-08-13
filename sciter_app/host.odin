@@ -47,9 +47,20 @@ Load_Request :: struct {
 // The engine consumes the data during the callback - "Sciter does not store pointer to this data", per
 // sciter-x-def.h - so a buffer that is valid for the duration of the handler is enough. The alternative
 // for data that is awkward to keep alive even that long is `SciterDataReady`, which copies immediately.
+//
+// **`nil` and an empty-but-present slice are different answers.** `nil` means "I have nothing for this
+// request" and is `.DISCARD`, i.e. the resource is never loaded. A zero-length non-nil slice means "the
+// resource is empty", which is an ordinary thing to serve - an empty stylesheet, an empty JS module, a
+// generated `[]` - and answers `.OK` with a zero size. Collapsing the two made an empty archive entry
+// indistinguishable from a missing one.
 serve :: proc(request: ^Load_Request, data: []u8) -> Load_Result {
-	if len(data) == 0 {
+	if data == nil {
 		return .DISCARD
+	}
+	if len(data) == 0 {
+		request.raw.outData = nil
+		request.raw.outDataSize = 0
+		return .OK
 	}
 	request.raw.outData = raw_data(data)
 	request.raw.outDataSize = u32(len(data))
@@ -385,7 +396,11 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 	case sciter.SC_KEYBOARD_REQUEST:
 		if handler.on_keyboard_request != nil {
 			kr := (^sciter.Scn_Keyboard_Request)(pns)
-			kind := kr.keyboardType == nil ? "" : strings.clone(string(kr.keyboardType), context.temp_allocator)
+			// Borrowed for the call, not cloned: this is engine memory and the handler is synchronous.
+			// The clone that used to be here went into `context.temp_allocator` from inside an engine
+			// callback that nothing frees - the same unbounded-arena shape as the debug output in
+			// app.odin. A handler that wants to keep the name copies it.
+			kind := kr.keyboardType == nil ? "" : string(kr.keyboardType)
 			handler.on_keyboard_request(handler, Window(kr.hwnd), kind)
 		}
 		return 0
@@ -393,7 +408,7 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 	case sciter.SC_SET_CURSOR:
 		if handler.on_set_cursor != nil {
 			sc := (^sciter.Scn_Set_Cursor)(pns)
-			url := sc.cursorUrl == nil ? "" : strings.clone(string(sc.cursorUrl), context.temp_allocator)
+			url := sc.cursorUrl == nil ? "" : string(sc.cursorUrl) // borrowed, as above
 			handler.on_set_cursor(handler, Window(sc.hwnd), u32(sc.cursorId), url)
 		}
 		return 0

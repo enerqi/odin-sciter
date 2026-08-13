@@ -41,6 +41,50 @@ House rules that will otherwise cost you time. All of these are load-bearing.
   test runner reports it as a leak.
 - **`ODIN_TEST_THREADS=1` is required** — already in the `example-test` recipe.
 
+### The duplicated fixture is a stated cost, not an oversight
+
+`test_window` is written out in ten files. `have_display`, the `load_engine()` boilerplate and the
+`runtime.default_allocator()` swap are repeated at the same scale. That is the price of the build model
+and it is worth naming so nobody "fixes" it by accident:
+
+**Every example is a standalone single file**, built and tested with `odin build examples/x.odin -file`
+and `odin test examples/x.odin -file`. `-file` compiles exactly one file as its own `package main`, so
+there is no second file for a shared helper to live in. A helper package (`examples/harness/`) would
+work for the tests and would break the property the examples exist for: that one file, readable top to
+bottom, is a complete program you can copy out of the repository. `src/prelude.odin` is not an option
+either — it is `bindgen.sjson`'s `imports_file`, pasted verbatim into the generated `sciter.odin`.
+
+The cost is real and has already been paid once: the skip messages have drifted apart between files, and
+a change to the fixture is a ten-file edit. When you make one, make it in all ten.
+
+### `docs/snippets/` is compiled, `spike/` is not
+
+**`docs/snippets/snippets.odin` is every Odin code block in the guides**, wrapped in just enough
+scaffolding to compile, and `just check` type-checks it. That is what stops the documentation from
+rotting silently, and it is worth knowing about before you write a code block: add the snippet there,
+in the section matching the guide, and the guide's block becomes something CI keeps honest.
+
+**`spike/` is the opposite and should probably go.** `spike/skeleton`, `spike/windowless` and
+`spike/smoke` are 752 lines of development scratch programs. `just format` formats them; nothing
+compiles them - `just check` does not - so they can stop building without anyone noticing, and what
+they demonstrate is now covered by `examples/windowless.odin` and `examples/hello_window.odin`. They are
+left in place because deleting somebody's scratch work is not a reviewer's call, but they are the only
+Odin in this tree that nothing verifies.
+
+### Advancing the engine in a test
+
+The engine has no "quiesce" call, so a test that waits for the engine to do something has to pump it.
+Three spellings appear in the suite — a fixed number of `run_once` turns, `heartbeat` in a loop, and
+`time.sleep`. Prefer, in order:
+
+1. **Pump until a predicate, with a turn cap.** `for i in 0 ..< 200 { if done() { break }; run_once() }`
+   and then assert on the predicate. Robust against a slow machine, and it fails as "the thing never
+   happened" rather than as a mystery.
+2. **A fixed number of turns**, when there is nothing to predicate on — a "nothing should arrive" test.
+3. **`time.sleep`** only where the engine's own clock is the thing under test, as in the timer tests.
+
+The known-flaky timer tests are what option 3 costs, and they are why 1 is the default.
+
 ### The commenting standard
 
 This is what makes the work useful to somebody who has not used Sciter. Match the existing files.

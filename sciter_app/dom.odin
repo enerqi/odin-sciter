@@ -410,6 +410,11 @@ set_style :: proc(element: Element, name: string, value: string) -> Error {
 //     above, `.Left` and `.Right` beside it.
 //   - `show_popup_at` names the corner of the *popup* that lands on the given point: `.Top_Left` puts
 //     the point at its top-left, which is the usual "here is where the mouse is" placement.
+// **Transcribed, not generated.** The C API takes a bare `UINT` here, so there is no upstream enum for
+// the generator to produce and nothing that would catch a renumbering. The values are the ones documented
+// on `SciterShowPopup` in `external/sciter/include/sciter-x-dom.h:513-522`, which lists 2/8/4/6 and says
+// "see numpad on keyboard to get an idea of the numbers"; the diagonals and the centre follow from that
+// layout. Check that comment block against this enum on an SDK upgrade.
 Popup_Placement :: enum u32 {
 	Bottom_Left  = 1,
 	Bottom       = 2,
@@ -566,19 +571,28 @@ clone_element :: proc(element: Element) -> (copy: Element, err: Error) {
 	return Element(he), nil
 }
 
-// Puts `element` into `parent` at `index`. The default appends: an index past the end is not an error,
-// it lands at the end.
+// Puts `element` into `parent` at `index`. **`nil` appends**, which is what the type says rather than
+// what a sentinel would imply:
+//
+//	sciter_app.insert_element(row, table)      // append
+//	sciter_app.insert_element(row, table, 0)   // first child
+//
+// An index past the end is not an error either; it lands at the end.
 //
 // Inserting an element that already has a parent is a **move** - the engine disconnects it first.
 // Nothing else is needed to move an element around, and re-creating it would lose its state and its
 // attached behaviors.
-insert_element :: proc(element: Element, parent: Element, index := Child_Index(-1)) -> Error {
+insert_element :: proc(element: Element, parent: Element, index: Maybe(Child_Index) = nil) -> Error {
 	// The index is clamped to the child count rather than handed over as given. The C API documents an
 	// index past the end as an append, and a moderate one behaves that way - but a very large one
 	// (`max(u32)`, the obvious spelling of "at the end") segfaults inside the engine rather than
-	// appending, so the count is what gets passed.
+	// appending, so the count is what gets passed. A negative one would arrive as that same `max(u32)`,
+	// which is why it is clamped up as well as down.
 	n := child_count(parent) or_return
-	at := n if index < 0 || index > n else index
+	at := n
+	if wanted, has := index.?; has {
+		at = clamp(wanted, 0, n)
+	}
 
 	return dom_err(sciter.api().SciterInsertElement(sciter.Helement(element), sciter.Helement(parent), u32(at)))
 }
@@ -619,6 +633,10 @@ Element_Comparator :: proc(a, b: Element, user_data: rawptr) -> int
 
 // Sorts the children in `[first, last)` - `last` is one past the end, and the default sorts all of
 // them. The comparator runs on this thread, with this context, before `sort_children` returns.
+//
+// Both ends are clamped to the child count for the same reason `insert_element` clamps its index: the
+// engine takes these as unsigned, so a negative one arrives as `max(u32)` and segfaults inside it
+// rather than being rejected.
 sort_children :: proc(
 	element: Element,
 	cmp: Element_Comparator,
@@ -630,11 +648,13 @@ sort_children :: proc(
 		return sciter.Scdom_Result.INVALID_PARAMETER
 	}
 
+	count := child_count(element) or_return
 	stop := last
-	if stop < 0 {
-		stop = child_count(element) or_return
+	if stop < 0 || stop > count {
+		stop = count
 	}
-	if first >= stop {
+	begin := max(first, Child_Index(0))
+	if begin >= stop {
 		return nil // nothing to order, which is not a failure
 	}
 
@@ -644,7 +664,7 @@ sort_children :: proc(
 		user_data = user_data,
 	}
 	return dom_err(
-		sciter.api().SciterSortElements(sciter.Helement(element), u32(first), u32(stop), sort_callback, &sink),
+		sciter.api().SciterSortElements(sciter.Helement(element), u32(begin), u32(stop), sort_callback, &sink),
 	)
 }
 
@@ -695,15 +715,34 @@ element_by_uid :: proc(window: Window, uid: Element_Uid) -> (element: Element, e
 // comes from the document.
 combine_url :: proc(element: Element, url: string, allocator := context.allocator) -> (full: string, err: Error) {
 	// The C API resolves in place, in a buffer the caller sizes, and **truncates silently** rather than
-	// reporting that it did not fit - a four-unit buffer came back OK holding "fil". So the buffer is
-	// sized here from the input plus generous room for a base, rather than left to the caller.
-	size := utf16_len(url) + 1024
-	buf := make([]u16, size, context.temp_allocator)
+	// reporting that it did not fit - a four-unit buffer came back OK holding "fil". Sizing the buffer
+	// by a guess (the input plus 1024 units of slack for the base) is therefore only a first attempt:
+	// a deep document path, a `data:` base or a long archive prefix would silently produce a wrong
+	// absolute URL reported as success, and the caller then hands that truncated path to the
+	// filesystem or a host callback, a long way from here.
+	//
+	// A result that exactly fills the buffer is the only symptom truncation has, so that is the retry
+	// condition. A legitimately exact fit costs one extra call and returns the same answer.
 	w := utf16_from_string(url, context.temp_allocator)
-	copy(buf, w)
+	size := utf16_len(url) + 1024
 
-	dom_err(sciter.api().SciterCombineURL(sciter.Helement(element), raw_data(buf), u32(size))) or_return
-	return string_from_utf16_cstring(raw_data(buf), allocator), nil
+	for _ in 0 ..< 4 {
+		buf := make([]u16, size, context.temp_allocator)
+		copy(buf, w)
+		dom_err(sciter.api().SciterCombineURL(sciter.Helement(element), raw_data(buf), u32(size))) or_return
+
+		n := 0
+		for n < size && buf[n] != 0 {
+			n += 1
+		}
+		if n < size - 1 {
+			return string_from_utf16(raw_data(buf), uint(n), allocator), nil
+		}
+		size *= 4
+	}
+	// Four rounds is 256x the first guess; anything still filling that is not a URL this call can help
+	// with, and a silent truncation is the one answer not worth returning.
+	return "", sciter.Scdom_Result.INVALID_PARAMETER
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -323,6 +323,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 // A fresh App per test, with the document loaded under it. The App is deliberately *not* freed: the
@@ -461,7 +465,7 @@ test_elements_created_later_are_asked_about :: proc(t: ^testing.T) {
 	el, err := sciter_app.make_element("div", "")
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, sciter_app.set_attribute(el, "style", "behavior: my-gauge"), nil)
-	testing.expect_value(t, sciter_app.insert_element(el, body, -1), nil)
+	testing.expect_value(t, sciter_app.insert_element(el, body), nil) // nil index: append
 	sciter_app.heartbeat()
 
 	testing.expectf(t, len(app.requested) == before + 1, "one more request, got %d", len(app.requested) - before)

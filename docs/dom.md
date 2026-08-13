@@ -319,7 +319,7 @@ the engine, where Odin's allocator tracking cannot see it. `remove_element(el, f
 hands back a reference the same way; see below.
 
 ```odin
-sciter_app.insert_element(el, parent, 0)      // at the front; the default appends
+sciter_app.insert_element(el, parent, 0)      // at the front; a nil index appends
 sciter_app.insert_element(el, other_parent)   // a move — the engine disconnects it first
 sciter_app.swap_elements(a, b)                // exchanges both indexes and parents
 sciter_app.remove_element(el)                 // destroyed, behaviors and all

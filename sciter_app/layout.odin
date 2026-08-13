@@ -8,8 +8,8 @@
 // One flag from the C API is deliberately not surfaced: ELEMENT_AREAS' `AS_PPX`, which asks for
 // physical pixels. It returned identical rectangles on the display this was measured against, and
 // there was no scaled display here to establish what it does otherwise, so rather than ship an
-// argument nobody has checked, `sciter.api().SciterGetElementLocation` takes the raw flag word -
-// `u32(box) | u32(origin) | 0x8000`.
+// argument nobody has checked, it is left out - `location` passes `u32(box) | u32(origin)` and nothing
+// more. If you want `AS_PPX`, call the raw API yourself with `u32(box) | u32(origin) | 0x8000`.
 package sciter_app
 
 import sciter ".."
@@ -27,6 +27,10 @@ Rect :: struct {
 // `.Scrollable` is the odd one: it is documented as the scrollable area inside the content box, and
 // measured against this engine it reports the same rectangle as the visible box rather than the full
 // content. `scroll_info` is what answers "how much is there to scroll".
+//
+// **Transcribed from `ELEMENT_AREAS` in `external/sciter/include/sciter-x-dom.h:306-327`**, split into
+// this and `Origin` because the C enum packs two independent choices into one flag word. Nothing
+// regenerates these, so check them against that block on an SDK upgrade.
 Box :: enum u32 {
 	Content          = 0, // the inner box: no padding, no border
 	Padding          = 0x10, // content + padding
@@ -52,6 +56,9 @@ Box :: enum u32 {
 //
 // `.Self` is how to ask for a size and ignore a position: the content box comes back at (0, 0), and an
 // outer box comes back with negative x and y, which is how to read a padding or border width.
+//
+// The other half of `ELEMENT_AREAS` (`sciter-x-dom.h:306-327`), and transcribed with the same caveat as
+// `Box`: hand-written, so an upstream renumbering would pass unnoticed.
 Origin :: enum u32 {
 	Root      = 1, // the document's root element - or the nearest windowed container, e.g. a popup
 	Self      = 2, // the element's own content origin

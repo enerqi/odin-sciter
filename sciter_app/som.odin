@@ -110,7 +110,11 @@ Asset_Class :: struct {
 // `element_asset` matches on; the members are copied, so the slices passed in need not outlive the
 // call.
 //
-// Fails with `.Wrong_Type` if either list is longer than `MAX_ASSET_MEMBERS`.
+// Fails with `.Too_Many_Members` if either list is longer than `MAX_ASSET_MEMBERS`.
+//
+// Safe before `init`, which matters because the natural place to build a class is at the top of `main`
+// alongside the rest of the configuration: this interns one atom per member name, and interning is
+// measured to need only `load` - see the header of `atom.odin`.
 make_asset_class :: proc(
 	name: string,
 	properties: []Asset_Property = nil,
@@ -121,7 +125,7 @@ make_asset_class :: proc(
 	err: Error,
 ) {
 	if len(properties) > MAX_ASSET_MEMBERS || len(methods) > MAX_ASSET_MEMBERS {
-		return nil, .Wrong_Type
+		return nil, .Too_Many_Members
 	}
 
 	class = new(Asset_Class, allocator)
@@ -209,7 +213,12 @@ destroy_asset :: proc(asset: ^Asset) {
 //
 // **The document that is already loaded does not see it.** The global appears in the next document
 // loaded into any window, so this belongs before `load_html` / `load_file` rather than after.
+// A nil asset is `.Asset_Failed` rather than a nil dereference on `&asset.base`: `destroy_asset` and
+// every other proc taking an `^Asset` guards, and this is the one that did not.
 set_global_asset :: proc(asset: ^Asset) -> Error {
+	if asset == nil {
+		return .Asset_Failed
+	}
 	if !sciter.api().SciterSetGlobalAsset(&asset.base) {
 		return .Asset_Failed
 	}
@@ -219,6 +228,9 @@ set_global_asset :: proc(asset: ^Asset) -> Error {
 // Withdraws it. Same timing in reverse: a document that already has the global keeps it until it is
 // replaced.
 release_global_asset :: proc(asset: ^Asset) -> Error {
+	if asset == nil {
+		return .Asset_Failed
+	}
 	if !sciter.api().SciterReleaseGlobalAsset(&asset.base) {
 		return .Asset_Failed
 	}
@@ -368,19 +380,40 @@ asset_get :: proc(asset: ^sciter.Som_Asset_T, property: string) -> (result: Valu
 		if def.name != want {
 			continue
 		}
-		if def.u.accs.getter == nil {
+		// `def.u` is a union discriminated by `def.type`. Only `.ACCSESSOR` makes `u.accs` the live
+		// member; for a constant the same bytes are the constant itself, so calling through them is a
+		// jump to whatever the constant happens to be.
+		switch sciter.Som_Prop_Type(def.type) {
+		case .ACCSESSOR:
+			if def.u.accs.getter == nil {
+				return {}, .Not_Found
+			}
+			if !def.u.accs.getter(asset, &result) {
+				value_clear(&result)
+				return {}, .Call_Failed
+			}
+			return result, nil
+		case .INT32:
+			return value_from_int(def.u._i32), nil
+		case .INT64:
+			return value_from_i64(def.u._i64), nil
+		case .FLOAT:
+			return value_from_f64(def.u._f64), nil
+		case .STRING:
+			if def.u.str == nil {
+				return {}, nil
+			}
+			return value_from_string(string(def.u.str)), nil
+		case:
+			// A type this binding does not know: the union layout is unknown, so nothing here is safe
+			// to read.
 			return {}, .Not_Found
 		}
-		if !def.u.accs.getter(asset, &result) {
-			value_clear(&result)
-			return {}, .Call_Failed
-		}
-		return result, nil
 	}
 	return {}, .Not_Found
 }
 
-// Writes one. `.Not_Found` if there is no such property or it is read-only.
+// Writes one. `.Not_Found` if there is no such property, it is a constant, or it is read-only.
 asset_set :: proc(asset: ^sciter.Som_Asset_T, property: string, value: ^Value) -> Error {
 	p := asset_passport(asset)
 	if p == nil || p.properties == nil {
@@ -390,6 +423,11 @@ asset_set :: proc(asset: ^sciter.Som_Asset_T, property: string, value: ^Value) -
 	for def in ([^]sciter.Som_Property_Def_T)(p.properties)[:p.n_properties] {
 		if def.name != want {
 			continue
+		}
+		// Same union as `asset_get`: only an accessor has a setter to call. A constant has none, and
+		// its bytes are not a function pointer.
+		if sciter.Som_Prop_Type(def.type) != .ACCSESSOR {
+			return .Not_Found
 		}
 		if def.u.accs.setter == nil {
 			return .Not_Found

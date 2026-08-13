@@ -46,6 +46,70 @@ So the 64 directories in `samples.sciter` are not a binding gap. They are a *Sci
 large part of what they demonstrate is unreachable from the host by design — see
 [Capabilities with no host API](#capabilities-with-no-host-api-at-all).
 
+## C-API coverage
+
+The other parity question, and the one with a countable answer: of the function-table slots the SDK's
+headers declare, how many does `package sciter_app` reach?
+
+Measured by [`.github/scripts/parity.sh`](../.github/scripts/parity.sh) — `just parity` — which strips
+comments and `#if 0` blocks before matching (two declarations in the headers are disabled upstream and
+would otherwise read as permanent gaps), and matches usage as `.Name` rather than `.Name(` because the
+wrappers often store or forward a slot rather than calling it on the spot.
+
+| table | header | live slots | reached | not reached |
+| --- | --- | ---: | ---: | ---: |
+| main | `sciter-x-api.h` | 176 | **163** | 13 |
+| graphics | `sciter-x-graphics.h` | 72 | **70** | 2 |
+| request | `sciter-x-request.h` | 29 | **29** | 0 |
+
+**Every slot that is live, implemented and reachable is wrapped.** The fifteen that are not are listed
+below with a reason each, and the list is committed as
+[`parity-baseline.txt`](./parity-baseline.txt): `just parity --check` diffs against it and CI runs that,
+so a slot added by a future SDK shows up as a one-line diff during the upgrade rather than as a user
+asking for something that quietly does not exist.
+
+### Declared but disabled upstream
+
+Not gaps, and not counted above. Both match a naive `grep` for `SCFN(` and neither is a real slot:
+
+| slot | header | why it does not exist |
+| --- | --- | --- |
+| `imageGetPixels` | `sciter-x-graphics.h:146-148` | inside a `//` comment block. Direct pixel access is a real thing to want; `save_image(.RAW)` is the readback path here |
+| `Request` | `sciter-x-request.h:186-189` | inside `#if 0` |
+
+### Not wrapped, with reasons
+
+| slot(s) | category | why not |
+| --- | --- | --- |
+| `SciterSelectElements`, `SciterSelectParent` | superseded | the wide variants are wrapped instead, as `select_all` and `select_parent` |
+| `SciterGetElementTypeCB` | superseded | `SciterGetElementType` is wrapped as `tag` |
+| `SciterProc`, `SciterProcND`, `SciterClassName` | platform | Win32 window-proc and window-class plumbing. This design has no `foreign import` of the Win32 window machinery: windows come from `SciterCreateWindow` and messages from the engine's own pump |
+| `SciterAttachHwndToElement`, `SciterGetElementHwnd` | **deliberate, see below** | native child windows |
+| `SciterEGLGetProcAddress`, `SciterEGLSendEvent` | **deliberate, see below** | windowless EGL |
+| `SciterGetViewExpando` | dead slot | NULL on every platform on Sciter 6 — a leftover of the removed TIScript VM. `window.odin`, [`ENGINE.md`](./ENGINE.md) |
+| `SciterGetObject`, `SciterGetElementNamespace` | dead slot | answer `.OPERATION_FAILED` for every element tried; same VM leftovers. [`api.md`](./api.md), [`dom.md`](./dom.md) |
+| `gCreate` | not supported by the engine | answers `.NOTSUPPORTED`; `paint_image` is the offscreen path. `graphics.odin` |
+| `gGetNativeDC` | raw on purpose | platform handle passthrough; `graphics_api()` exposes the table for it |
+
+### The two native-integration decisions
+
+These are the only four live, implemented slots left unwrapped, so "out of scope" and "nobody got to it"
+need telling apart:
+
+**Native child windows** (`SciterAttachHwndToElement`, `SciterGetElementHwnd`) — **deferred, not
+refused.** Both slots take an `HWND`, and the parameter is a Win32 window handle whose X11 meaning this
+binding has not established. [`native_child.odin`](../examples/native_child.odin) takes the other route:
+it owns an X11 child window itself and positions it over the element's rectangle, which works today on
+the platform the repository is tested on. Wrapping the pair is the right move once there is a Windows
+box in the loop — see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
+
+**Windowless EGL** (`SciterEGLGetProcAddress`, `SciterEGLSendEvent`) — **deferred pending hardware.**
+[`windowless_gl.odin`](../examples/windowless_gl.odin) drives the windowless path through
+`SciterProcX` with `SL_TARGET_OPENGL`, which is the documented route and the one that renders on the
+software stack available here. The EGL pair is for handing the engine an EGL context the host already
+owns; testing that needs a GPU this repository does not currently run on, and shipping an untestable
+wrapper is worse than not shipping one.
+
 ## Host-side parity
 
 The comparison that decides whether the bindings are complete.

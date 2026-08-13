@@ -93,7 +93,12 @@ behavior_value :: proc(element: Element) -> (value: Value, handled: bool, err: E
 // **no intrinsic behavior implements it on Sciter 6** - use `set_element_value` for an `<input>` - and
 // this is here for behaviors of your own.
 //
-// `value` is not consumed.
+// **`value` is borrowed, on both sides.** This wrapper does not consume it - it copies the 16-byte
+// struct into the parameter block without taking a reference, and the caller still owns the one
+// reference that exists. The receiving behavior therefore borrows it too, for the duration of the call
+// only: a `SET_VALUE` implementation that wants to keep what it was handed must `value_copy` it, and
+// must not `value_clear` it, or the caller is left holding a reference to a freed value. See
+// "Answering a method call" below for the same rule from the implementer's side.
 set_behavior_value :: proc(element: Element, value: ^Value) -> (handled: bool, err: Error) {
 	params := sciter.Value_Params {
 		methodID = u32(sciter.Behavior_Method_Identifiers.SET_VALUE),
@@ -179,6 +184,15 @@ call_behavior_method :: proc(element: Element, params: rawptr) -> (handled: bool
 // written into the parameter block count - the block is the caller's memory, written in place, and the
 // call is synchronous, so the caller sees it the moment `call_behavior_method` returns.
 //
+// Which settles who owns the Values in it, in both directions:
+//
+//   - **`GET_VALUE`: what you write into `args.val` is handed to the caller, and the caller owns it.**
+//     The `value_from(42)` above makes a fresh Value with one reference and gives that reference away;
+//     do not clear it here. Returning a Value you also keep means `value_copy` first.
+//   - **`SET_VALUE`: `args.val` is borrowed for the call only.** The caller still owns the reference,
+//     so keeping the value past the call means `value_copy`, and clearing it is a use-after-free in
+//     the caller.
+//
 // One measured rule that shapes where the handler goes: **a method call is delivered only to handlers
 // attached to that exact element.** It does not sink, it does not bubble, and a handler attached with
 // `attach_window_handler` never sees one. `attach_handler` on the element itself is the only
@@ -225,6 +239,9 @@ method_args :: proc(mc: Method_Call) -> Method_Args {
 		return (^sciter.Value_Params)(mc.params)
 	case .IS_EMPTY:
 		return (^sciter.Is_Empty_Params)(mc.params)
+	// `.FIRST_APPLICATION_METHOD_ID` is a floor, not a method - 256, the first id an application may
+	// use - and it is listed here only because the switch is exhaustive over the enum. The three real
+	// methods beside it carry no parameter struct.
 	case .DO_CLICK, .SET_CURRENT_GL_CONTEXT, .RELEASE_CURRENT_GL_CONTEXT, .FIRST_APPLICATION_METHOD_ID:
 		return nil
 	}

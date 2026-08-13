@@ -10,7 +10,13 @@
 // the SOM side of the API - assets, native properties exposed to script - is where they are the
 // currency, and this is the piece that has to be in place first.
 //
-// Four measured properties, none of them documented upstream:
+// Five measured properties, none of them documented upstream:
+//
+//   - **interning works before `init`, and `load` is the only prerequisite.** Measured on 6.0.4.9:
+//     `atom("name")` after `load` but before `init` answers a stable atom, and `atom_name` on *that
+//     atom* reads it back. This is what makes `make_asset_class` safe to call at the top of `main`,
+//     which is the natural place for it - see its doc comment. It does not extend to atoms nobody
+//     interned; see the last point.
 //
 //   - **`atom` never fails.** A name the engine has not seen is interned there and then, so there is
 //     no such thing as an unknown name, only an atom nobody else refers to yet.

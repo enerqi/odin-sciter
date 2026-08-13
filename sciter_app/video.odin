@@ -5,6 +5,12 @@
 // so there is no slot to call and nothing for the binding generator to see. What the engine hands over
 // is a pointer to a C++ object, and using it means laying out its virtual table by hand.
 //
+// **The render calls return `bool` where the rest of the package returns `Error`, and that is the C++
+// interface rather than an oversight.** `video_destination`'s virtual functions answer a bare `bool`
+// and carry no status code, so there is nothing for an `Error` to hold; inventing one would claim a
+// diagnosis the engine never gave. `video_destination` itself does return `Error` - it goes through the
+// SOM asset lookup, which has real failures to report.
+//
 // Everything below was measured against the vendored 6.0.4.9 Linux engine rather than read off the
 // header - see `docs/RESEARCH-METHOD.md` for why that is the rule here. The measurements that matter:
 //
@@ -124,6 +130,10 @@ FRAGMENTED_VIDEO_DESTINATION_INAME :: "fragmented.destination.video.sciter.com"
 video_destination :: proc(element: Element) -> (dest: ^Video_Destination, err: Error) {
 	asset := element_asset(element, "video") or_return
 
+	// A *method* call, and that is what makes this chain safe to walk on an engine-owned asset:
+	// `Som_Method_Def_T.func` is a plain field, no union, nothing to discriminate. The property side is
+	// not - `som_property_def_t` is a union keyed on `type`, which `asset_get`/`asset_set` check before
+	// touching. Keep that distinction in mind before adding a property read here.
 	site := asset_call(asset, "renderingSite") or_return
 	defer value_clear(&site)
 

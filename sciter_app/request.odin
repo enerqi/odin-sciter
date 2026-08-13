@@ -24,6 +24,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:time"
 
@@ -37,15 +38,26 @@ Request :: distinct sciter.Hrequest
 
 // The request API is a second function table, reached through the main one. `sciter.api()` is cheap but
 // this is one more indirection on every call, so it is fetched once.
+//
+// Written on first use with a plain nil check and no synchronisation, which is correct only under
+// this package's threading rule: **engine calls happen on the thread that runs the pump**
+// (docs/architecture.md, and `post_callback` in host.odin is how a worker thread gets back onto
+// it). A worker calling request_api() directly races here. The write is a single aligned pointer so
+// it cannot tear on any target this builds for, and the worst outcome is fetching the table
+// twice - but if the threading rule is ever relaxed, this is one of the two places to change.
 @(private)
 g_request_api: ^sciter.Sciter_Request_Api
 
-// The raw `SciterRequestAPI` table, for anything this wrapper does not cover. Nil only if the engine is
-// not loaded.
-request_api :: proc() -> ^sciter.Sciter_Request_Api {
+// The raw `SciterRequestAPI` table, for anything this wrapper does not cover.
+//
+// Panics if `sciter.load()` has not been called, for the reason `sciter.api()` does: every consumer here
+// calls straight through the returned table, so handing back nil only moves the fault to a
+// function-pointer offset with nothing to say about the cause.
+request_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Request_Api {
 	if g_request_api == nil && sciter.loaded() {
 		g_request_api = sciter.api().GetSciterRequestAPI()
 	}
+	fmt.assertf(g_request_api != nil, "sciter.load() must be called before any request call", loc = loc)
 	return g_request_api
 }
 

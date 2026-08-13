@@ -196,11 +196,14 @@ node_set_text :: proc(node: Node, text: string) -> Error {
 // Creating and moving nodes
 
 // A detached text node. It belongs to the caller until `node_insert` puts it in a document.
+//
+// `found_node` rather than a bare cast, as everywhere else here: OK plus a null handle would otherwise
+// hand back a nil Node that the file's own ownership rule then tells the caller to insert or release.
 make_text_node :: proc(text: string) -> (node: Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateTextNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
-	return Node(hn), nil
+	return found_node(hn)
 }
 
 // A detached comment node. Same ownership as `make_text_node`.
@@ -208,7 +211,7 @@ make_comment_node :: proc(text: string) -> (node: Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateCommentNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
-	return Node(hn), nil
+	return found_node(hn)
 }
 
 // Puts `what` into the document, positioned relative to `node`: `.BEFORE`, `.AFTER`, `.APPEND` (as the

@@ -313,12 +313,23 @@ test_event_code_strips_the_phase_bits :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.event_code(click | SINKING), click)
 	testing.expect_value(t, sciter_app.event_phase(click | SINKING), sciter_app.Event_Phase.Sinking)
 
+	// HANDLED is an independent bit, not a third phase: it says something claimed the event, and says
+	// nothing about which way it is travelling. A handled event on the bubbling pass is still bubbling.
 	testing.expect_value(t, sciter_app.event_code(click | HANDLED), click)
-	testing.expect_value(t, sciter_app.event_phase(click | HANDLED), sciter_app.Event_Phase.Handled)
+	testing.expect_value(t, sciter_app.event_phase(click | HANDLED), sciter_app.Event_Phase.Bubbling)
+	testing.expect(t, sciter_app.event_handled(click | HANDLED))
+	testing.expect(t, !sciter_app.event_handled(click))
 
-	// Both bits at once: something claimed it on the way down, and "already handled" is the more
-	// useful of the two to hear about.
-	testing.expect_value(t, sciter_app.event_phase(click | SINKING | HANDLED), sciter_app.Event_Phase.Handled)
+	// Both bits at once, which is the case one enum could not express: sinking *and* already claimed.
+	testing.expect_value(t, sciter_app.event_phase(click | SINKING | HANDLED), sciter_app.Event_Phase.Sinking)
+	testing.expect(t, sciter_app.event_handled(click | SINKING | HANDLED))
+
+	// `Behavior_Events` is a named set *and* an open number space above FIRST_APPLICATION_EVENT_CODE.
+	// `app_event` is the spelling that cannot collide with an engine code - which matters most for 0,
+	// `.BUTTON_CLICK`, the value you get by forgetting to add the base.
+	mine := sciter_app.app_event(u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 7)
+	testing.expect_value(t, u32(mine), u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 7)
+	testing.expect(t, u32(mine) > u32(sciter.Behavior_Events.BUTTON_CLICK))
 
 	// BUTTON_CLICK is 0, so a naive `cmd == .BUTTON_CLICK` looks right until an event sinks. Codes
 	// that are not zero go through the same split, up to the largest one the mask can carry.
@@ -450,7 +461,9 @@ test_key_event_maps_the_params :: proc(t: ^testing.T) {
 	ke, ok := sciter_app.key_event({group = {.KEY}, params = &params})
 	testing.expect(t, ok)
 	testing.expect_value(t, ke.code, sciter.Key_Events.CHAR)
-	testing.expect_value(t, ke.phase, sciter_app.Event_Phase.Handled)
+	// HANDLED with no SINKING bit: claimed, and still on the bubbling pass.
+	testing.expect_value(t, ke.phase, sciter_app.Event_Phase.Bubbling)
+	testing.expect(t, ke.handled)
 	testing.expect_value(t, ke.target, target)
 	testing.expect_value(t, ke.key_code, u32('A'))
 	testing.expect_value(t, ke.modifiers, sciter.KEYBOARD_STATE_SHIFT)
@@ -555,6 +568,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 
 @(private = "file")
@@ -592,12 +609,13 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 // the order and the phases rather than about a side effect.
 @(private = "file")
 Seen :: struct {
-	group:  sciter.Event_Groups,
-	code:   u32, // phase bits already removed
-	phase:  sciter_app.Event_Phase,
-	target: sciter_app.Element,
-	source: sciter_app.Element,
-	reason: uintptr,
+	group:   sciter.Event_Groups,
+	code:    u32, // phase bits already removed
+	phase:   sciter_app.Event_Phase,
+	handled: bool,
+	target:  sciter_app.Element,
+	source:  sciter_app.Element,
+	reason:  uintptr,
 }
 
 // `Event_Handler` is embedded, not pointed at: the engine stores the handler's address as the tag it
@@ -659,6 +677,7 @@ record :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> b
 	} else if be, ok := sciter_app.behavior_event(event); ok {
 		entry.code = u32(be.code)
 		entry.phase = be.phase
+		entry.handled = be.handled
 		entry.target = be.target
 		entry.source = be.source
 		entry.reason = be.reason
@@ -824,8 +843,9 @@ test_send_event_arrives_in_both_phases :: proc(t: ^testing.T) {
 
 // Returning true marks the event handled: `send_event` reports it to whoever sent it, and the engine
 // sets the HANDLED bit for the rest of the trip. It does not cancel delivery - the bubbling pass still
-// arrives, which is what `Event_Phase.Handled` is for and why a handler that acts on every phase acts
-// twice even when something upstream already dealt with the event.
+// arrives, which is what `handled` is for and why a handler that acts on every phase acts twice even
+// when something upstream already dealt with the event. The phase stays readable either way, which is
+// what lets `phase == .Bubbling` remain a correct way to act exactly once.
 @(test)
 test_claiming_an_event_marks_it_handled :: proc(t: ^testing.T) {
 	root, tick, reset, ok := test_elements(t)
@@ -843,7 +863,12 @@ test_claiming_an_event_marks_it_handled :: proc(t: ^testing.T) {
 	claimed, has_claimed := sent(&r, 1)
 	if !has_sinking || !has_claimed {return}
 	testing.expect_value(t, sinking.phase, sciter_app.Event_Phase.Sinking)
-	testing.expect_value(t, claimed.phase, sciter_app.Event_Phase.Handled)
+	testing.expect(t, !sinking.handled, "nothing has claimed it on the way down")
+
+	// The claimed one is the bubbling pass, and it is still readable as bubbling - which is the whole
+	// point of keeping HANDLED off the phase.
+	testing.expect_value(t, claimed.phase, sciter_app.Event_Phase.Bubbling)
+	testing.expect(t, claimed.handled, "the handler above claimed it")
 }
 
 // The engine calls back as `proc "system"`, where Odin's implicit context does not exist. Without the

@@ -351,6 +351,10 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
+// Shared by every test in this file, and created on first use. That is deliberate - a window per test
+// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
+// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
+// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
 g_window: sciter_app.Window
 @(private = "file")
 g_app: App
@@ -757,6 +761,105 @@ test_an_assets_properties_can_be_read_and_written_without_script :: proc(t: ^tes
 		sciter_app.Error(sciter_app.Api_Error.Call_Failed),
 	)
 	testing.expect_value(t, g_app.calls, 5) // unchanged
+}
+
+// `.Asset_Failed` is the one `Api_Error` variant nothing asserted, and the SOM path is where the
+// nastiest bug in this package lived (the constant-property call below), so its error branch is worth
+// pinning. A nil asset is the reachable way to produce it: `&asset.base` on nil would otherwise be a
+// dereference inside the wrapper.
+@(test)
+test_publishing_a_nil_asset_is_refused :: proc(t: ^testing.T) {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+
+	testing.expect_value(t, sciter_app.set_global_asset(nil), sciter_app.Error(sciter_app.Api_Error.Asset_Failed))
+	testing.expect_value(
+		t,
+		sciter_app.release_global_asset(nil),
+		sciter_app.Error(sciter_app.Api_Error.Asset_Failed),
+	)
+}
+
+// A passport whose properties are constants rather than accessors, built by hand because
+// `make_asset_class` only ever writes accessors and the intrinsic behaviors probed so far only publish
+// accessors. `som_property_def_t` is a union discriminated by `type`, and for anything but
+// `SOM_PROP_ACCSESSOR` the bytes where the getter pointer would be are the constant itself - so reading
+// one without checking the tag is an indirect call to `100`, or into the engine's rodata. Nothing
+// promises the next behavior probed, or the next engine build, keeps only accessors.
+g_const_props: [4]sciter.Som_Property_Def_T
+g_const_passport: sciter.Som_Passport_T
+g_const_class: sciter.Som_Asset_Class_T
+g_const_asset: sciter.Som_Asset_T
+
+const_passport :: proc "system" (thing: ^sciter.Som_Asset_T) -> ^sciter.Som_Passport_T {
+	return &g_const_passport
+}
+
+// No window and no document: a passport is a property of the class, and this one is ours.
+@(test)
+test_a_constant_property_is_read_from_the_definition_rather_than_called :: proc(t: ^testing.T) {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+
+	LABEL :: "a string constant lives in rodata"
+	g_const_props = {
+		{type = int(sciter.Som_Prop_Type.INT32), name = u64(sciter_app.atom("max")), u = {_i32 = 100}},
+		{type = int(sciter.Som_Prop_Type.INT64), name = u64(sciter_app.atom("big")), u = {_i64 = 1 << 40}},
+		{type = int(sciter.Som_Prop_Type.FLOAT), name = u64(sciter_app.atom("ratio")), u = {_f64 = 0.5}},
+		{type = int(sciter.Som_Prop_Type.STRING), name = u64(sciter_app.atom("label")), u = {str = LABEL}},
+	}
+	g_const_passport = {
+		properties   = &g_const_props[0],
+		n_properties = len(g_const_props),
+	}
+	g_const_class = {
+		asset_get_passport = const_passport,
+	}
+	g_const_asset = {
+		isa = &g_const_class,
+	}
+
+	// Each of these would be a call through the constant before the tag was checked.
+	max_value, max_err := sciter_app.asset_get(&g_const_asset, "max")
+	defer sciter_app.value_clear(&max_value)
+	testing.expect_value(t, max_err, nil)
+	max_i, _ := sciter_app.value_to_int(&max_value)
+	testing.expect_value(t, max_i, i32(100))
+
+	big_value, big_err := sciter_app.asset_get(&g_const_asset, "big")
+	defer sciter_app.value_clear(&big_value)
+	testing.expect_value(t, big_err, nil)
+	big_i, _ := sciter_app.value_to_i64(&big_value)
+	testing.expect_value(t, big_i, i64(1 << 40))
+
+	ratio_value, ratio_err := sciter_app.asset_get(&g_const_asset, "ratio")
+	defer sciter_app.value_clear(&ratio_value)
+	testing.expect_value(t, ratio_err, nil)
+	ratio_f, _ := sciter_app.value_to_f64(&ratio_value)
+	testing.expect_value(t, ratio_f, 0.5)
+
+	label_value, label_err := sciter_app.asset_get(&g_const_asset, "label")
+	defer sciter_app.value_clear(&label_value)
+	testing.expect_value(t, label_err, nil)
+	label_s, _ := sciter_app.value_to_string(&label_value, context.temp_allocator)
+	testing.expect_value(t, label_s, LABEL)
+
+	// A constant has no setter to call, which is `.Not_Found` and not a jump to 100.
+	replacement := sciter_app.value_from(i32(1))
+	defer sciter_app.value_clear(&replacement)
+	testing.expect_value(
+		t,
+		sciter_app.asset_set(&g_const_asset, "max", &replacement),
+		sciter_app.Error(sciter_app.Api_Error.Not_Found),
+	)
+	testing.expect_value(t, g_const_props[0].u._i32, i32(100)) // and the definition is untouched
+
+	// The names are still listed, which is what makes them reachable in the first place.
+	properties, _ := sciter_app.asset_members(&g_const_asset, context.temp_allocator)
+	testing.expect_value(t, len(properties), 4)
+	testing.expect_value(t, properties[0], "max")
 }
 
 // Calling a method directly. **The engine records a method's arity and does not enforce it**, so a

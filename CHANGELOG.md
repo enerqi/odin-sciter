@@ -5,6 +5,91 @@ tag actually has. `v6.0.4.9` is the first release against engine 6.0.4.9; `v6.0.
 second release of the bindings against the same engine. The policy, and the upgrade procedure behind
 it, are in [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
+## Unreleased
+
+Fixes and hardening from a whole-repository review, [`docs/review/`](docs/review/). Headings follow
+[Keep a Changelog](https://keepachangelog.com/); the v6.0.4.9 entry below predates that and is a
+feature inventory rather than a diff, because it is the first release and there was nothing to diff
+against.
+
+### Fixed
+
+- **`asset_get` / `asset_set` called through a union without reading its tag.** `som_property_def_t` is
+  discriminated by `type`, and for a constant property the bytes where the getter pointer would be are
+  the constant itself — so reading one was an indirect call to whatever the constant happened to be.
+  Reproduced as a segfault. Constants now come back as Values, and a constant has no setter.
+- **`sort_children` clamped `last` but not `first`.** A negative `first` reached the engine as
+  `max(u32)`, which the neighbouring `insert_element` documents as a segfault.
+- **`graphics_api()` and `request_api()` returned nil before `load()`** and ~90 procs dereferenced the
+  result. They now assert, as `sciter.api()` does.
+- **`load_embedded` reused a cached engine on a size match alone.** The cache path is a pure function of
+  the shipped engine and therefore predictable; reuse now hashes the file contents, and the cache
+  directory is created owner-only.
+- **`set_timer` turned a negative interval into "stop"** — the engine's spelling of stopping — instead
+  of reporting it. Now `.INVALID_PARAMETER`, as is an interval over `max(u32)` milliseconds.
+- **`combine_url` truncated silently** at a fixed 1024-unit guess. It now detects the truncation and
+  retries.
+- **`serve` could not answer with a legitimately empty resource.** `nil` is "I have nothing"
+  (`.DISCARD`); an empty-but-present slice is now `.OK` with a zero size.
+- **`create_window` built a degenerate frame** when exactly one of width/height was zero. Rejected now.
+- **`shutdown` leaked the argv** `init` allocated, so an init → shutdown → init cycle lost it.
+- **`string_from_utf16` allocated 3× the string's length** and returned it, making every `delete` of
+  such a string a wrong-size free. It now clones at the exact length.
+- **`value_make_array(0)` returned an `.UNDEFINED` Value**, not an empty array.
+- **`value_to_bool` read `.BIG_INT` as false.** Both integer widths now work; measured, because
+  `ValueInt64Data` refuses a `.BOOL` and `ValueIntData` silently zeroes a `.BIG_INT`.
+- **`set_default_debug_output` allocated per message from a per-thread arena** that nothing freed, from
+  a callback the engine may make on another thread. It decodes into a fixed buffer now.
+- **`save_image` grew its scratch buffer in the caller's allocator** and then copied, doubling peak
+  memory — permanently, when that allocator was the temp allocator.
+- **`make_text_node` / `make_comment_node` did not check for a nil handle**, unlike every sibling.
+- **`set_global_asset(nil)` dereferenced nil** instead of answering `.Asset_Failed`.
+- **CI told macOS maintainers to vendor the engine at `lib/macos/`**; the loader searches `lib/macosx`.
+
+### Changed
+
+- **`Event_Phase` no longer has a `.Handled` variant.** HANDLED is an independent bit in the C API, not
+  a third phase, and folding it in made the direction unreadable once anything claimed an event — so
+  `if ev.phase == .Bubbling`, the documented way to act exactly once, silently stopped acting. The
+  typed event parameters gain a `handled: bool` alongside `phase`, and `event_handled(cmd)` reads the
+  bit from a raw code. **Breaking**, on all seven event parameter structs.
+- **`Api_Error` gains `Option_Failed`, `Archive_Failed` and `Too_Many_Members`.** `set_option`, both
+  master-CSS setters, the archive calls and `make_asset_class`'s member cap used to borrow
+  `Load_Failed` and `Wrong_Type`, which sent a reader of the log to the wrong place. **Breaking**, for
+  code matching on those two.
+- **`Attribute_Change` gains `removed: bool`** — the header distinguishes a removed attribute from an
+  emptied one and the wrapper was losing it.
+- **`insert_element`'s index is `Maybe(Child_Index)`**, so "append" is spelled `nil` rather than `-1`.
+  The signature now says what the doc comment used to have to. A number out of range still clamps.
+  **Breaking**, for callers passing `-1` explicitly.
+- **`window_state` returns `(state, ok)`.** A destroyed window answers `0xFFFFFFFE`, which is not a
+  member of `SCITER_WINDOW_STATE`; returning it as one handed back an out-of-range enum value. Adding a
+  member for it was the alternative and would have put the binding out of step with the C API.
+  **Breaking**.
+
+### Added
+
+- **`just parity`** — which C-API slots `sciter_app` reaches, measured from the headers with comments
+  and `#if 0` blocks stripped. `--check` diffs against `docs/parity-baseline.txt` and runs in CI, so a
+  slot added by a future SDK is a one-line diff during the upgrade rather than a silent gap.
+- **`just stats`** — the counts the docs quote about this repository. `--check` fails when they drift;
+  they had, by 29 tests.
+- **`just lint` runs in CI**, and now covers `sciter_app` as well as the root package. The `-vet` flags
+  were configured and enforcing nothing.
+- **[`docs/README.md`](docs/README.md)** — an index and a reading order for the 27 documents.
+- **[`docs/rules.md`](docs/rules.md)** — the four cross-cutting contracts (thread affinity, `Value`
+  ownership, handle lifetime, allocator conventions) in one place.
+- **`app_event(n)`** — an application event code that asserts the `FIRST_APPLICATION_EVENT_CODE` floor.
+
+### Known issues
+
+- `just format` exits 1 on `examples/dom_walk.odin` (a local named `inline`) and rewrites
+  `custom_loader.odin` and `extension.odin` on every run. Pre-existing; it is why there is no formatter
+  gate in CI yet.
+- The `examples/` files do not pass `-vet` (unused imports, shadowed `err` in a dozen files), so the CI
+  lint step covers the two library packages only.
+- The timer tests in `examples/events.odin` flake under load.
+
 ## Unreleased — v6.0.4.9
 
 First release. Odin bindings for [Sciter.JS](https://sciter.com/) 6.0.4.9, `SCITER_API_VERSION` 10,

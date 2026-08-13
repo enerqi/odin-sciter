@@ -8,8 +8,11 @@ import sciter ".."
 Window :: distinct rawptr
 
 Window_Options :: struct {
-	x, y:          i32, // position in ppx; ignored unless width and height are set
-	width, height: i32, // 0,0 lets the engine pick
+	x, y:          i32, // position in ppx; ignored unless both width and height are set
+	// Both zero lets the engine pick the whole frame. **One of the two zero is rejected** with
+	// `.Window_Failed` rather than silently producing a window with no height: the engine takes a
+	// rectangle, not a pair of optional dimensions, so `{width = 800}` has no meaning to give it.
+	width, height: i32,
 	flags:         sciter.Sciter_Create_Window_Flags, // {} means {.MAIN}
 	parent:        Window,
 }
@@ -30,6 +33,13 @@ create_window :: proc(opts := Window_Options{}) -> (window: Window, err: Error) 
 	flags := opts.flags
 	if flags == {} {
 		flags = {.MAIN}
+	}
+
+	// Zero means "you pick", and the engine can only be asked that about the frame as a whole. A single
+	// zero used to build a degenerate rectangle - `{width = 800}` gave a window 800 wide and 0 tall,
+	// created successfully and showing nothing, which is the one outcome not worth having silently.
+	if (opts.width == 0) != (opts.height == 0) {
+		return nil, .Window_Failed
 	}
 
 	frame := sciter.Tag_Rect {
@@ -227,14 +237,26 @@ set_window_state :: proc(window: Window, state: sciter.Sciter_Window_State) {
 
 // The window's state - but see `set_window_state` for how little of it is reported.
 //
-// Two values outside the obvious ones:
+// **`ok` is false when the engine answers something that is not a state**, which is not hypothetical: a
+// window that has been *destroyed* answers `0xFFFFFFFE`, and `SCITER_WINDOW_STATE` has no such member.
+// Returning that as a `Sciter_Window_State` would hand back an enum value outside its own range - legal
+// to compare in Odin, and a lie - so the pair is the honest shape. `state` is `.CLOSED` when `ok` is
+// false, since a handle the engine no longer knows is as closed as a window gets.
 //
-//   - a window that has been created and never shown reports `.CLOSED`, not `.HIDDEN`
-//   - **a closed window reports `0xFFFFFFFE`, which is not in the enum at all.** Odin will not stop you
-//     comparing against it, so a `switch` on this needs a default arm. Everything else about the handle
-//     is dead too: `root` answers `.INVALID_HWND`.
-window_state :: proc(window: Window) -> sciter.Sciter_Window_State {
-	return sciter.Sciter_Window_State(sciter.api().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0))
+// Inventing a member for it was the alternative and is worse: `sciter.Sciter_Window_State` is generated
+// from `SCITER_WINDOW_STATE` in sciter-x-def.h and adding to it would put the binding out of step with
+// the C API it exists to mirror.
+//
+// One more measured oddity, inside the valid range: a window that has been created and never shown
+// reports `.CLOSED`, not `.HIDDEN`. Everything else about a destroyed handle is dead too - `root`
+// answers `.INVALID_HWND`.
+window_state :: proc(window: Window) -> (state: sciter.Sciter_Window_State, ok: bool) {
+	raw := sciter.api().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0)
+	switch sciter.Sciter_Window_State(raw) {
+	case .CLOSED, .HIDDEN, .SHOWN, .MINIMIZED, .MAXIMIZED, .FULL_SCREEN:
+		return sciter.Sciter_Window_State(raw), true
+	}
+	return .CLOSED, false
 }
 
 show :: proc(window: Window) {

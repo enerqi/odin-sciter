@@ -5,7 +5,7 @@
 # see that a window renders blank.
 #
 # Platform jobs are gated on the binary actually being vendored rather than being deleted or left to
-# fail: `lib/windows/x64/sciter.dll` and `lib/macos/**` do not exist today, so those jobs report what
+# fail: `lib/windows/x64/sciter.dll` and `lib/macosx/**` do not exist today, so those jobs report what
 # they skipped and why. Vendoring the binary is the whole of turning them on - see
 # docs/WINDOWS-CHECKLIST.md, whose steps 2, 4, 5, 7 and 8 are what the Windows job below runs.
 name: CI
@@ -43,10 +43,29 @@ jobs:
       - name: Install build and runtime dependencies
         run: .github/scripts/install-linux-deps.sh
 
+      # `-vet`, `-vet-cast`, `-strict-style` and `-vet-tabs` were configured in the justfile and then
+      # never run by anything, so they enforced nothing. Seconds, no engine and no display, so it goes
+      # first: a shadowed declaration is cheaper to hear about before a 45-minute test job.
+      #
+      # Both library packages only. The examples do not lint clean today (unused imports, shadowed
+      # `err` in a dozen files) and cleaning them is its own change; `just check` still builds them.
+      - name: Lint
+        run: just lint
+
       # The step the upgrade procedure exists for. No display needed - it loads the library and walks
       # the table without creating a window.
       - name: Verify the ISciterAPI table
         run: just api-map-verify
+
+      # Its other half: api-map-verify catches a slot that moved or vanished, this catches one that
+      # appeared and nobody wrapped. Headers only, so it needs no engine.
+      - name: Check C-API coverage against the baseline
+        run: just parity --check
+
+      # The counts README.md and docs/PLAN.md quote about this repository. They are the cheapest claims
+      # to check and the first ones a sceptical reader checks, and they had drifted by 29 tests.
+      - name: Check the documented counts
+        run: just stats --check
 
       - name: Type check and build everything
         run: just check
@@ -144,18 +163,20 @@ jobs:
         shell: bash
         run: just api-map-verify
 
-      # Checklist step 4. Note single_binary's `when` needs extending once the DLL is vendored
-      # (checklist step 8) or this fails on its deliberate #panic - that is the failure telling you
-      # to do step 8, not a broken build.
+      # Checklist step 4. `single_binary.odin` will fail here on its deliberate `#panic` until its
+      # `when` is extended to cover Windows - that failure *is* checklist step 8 asking to be done, not
+      # a broken build. Tracked in docs/WINDOWS-CHECKLIST.md.
       - name: Type check and build everything
         if: steps.engine.outputs.have == 'true'
         shell: bash
         run: just check
 
-      # Checklist step 5, and it has a question attached: the windowed tests gate on
-      # DISPLAY/WAYLAND_DISPLAY, which are POSIX variables that do not exist on Windows. Watch whether
-      # this run skips them (wrong, but harmless) or runs them (correct). If it skips, the gate needs
-      # to treat Windows as always having a display.
+      # Checklist step 5. The display gate is already right for this platform: `have_display` in the
+      # examples returns true unconditionally `when ODIN_OS == .Windows`, because DISPLAY and
+      # WAYLAND_DISPLAY are X11/Wayland variables that would otherwise skip every windowed test here
+      # forever, silently. A session that genuinely cannot open a window fails at `create_window`
+      # instead, which is visible. The remaining open items for this job are in
+      # docs/WINDOWS-CHECKLIST.md rather than in this comment.
       - name: Run the example tests
         if: steps.engine.outputs.have == 'true'
         shell: bash
@@ -178,11 +199,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ls lib/macos/*/libsciter.dylib >/dev/null 2>&1; then
+          # `macosx`, not `macos`: this is the directory `load` searches (src/prelude.odin) and the one
+          # the justfile's packfolder/scapp paths use. A dylib under `lib/macos/` turns this job green
+          # and is then invisible to the loader at runtime.
+          if ls lib/macosx/*/libsciter.dylib >/dev/null 2>&1; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no libsciter.dylib under lib/macos/ - skipping the runtime steps. macOS is unvendored and untested; see external/sciter/VENDORED.md."
+            echo "::notice::no libsciter.dylib under lib/macosx/ - skipping the runtime steps. macOS is unvendored and untested; see external/sciter/VENDORED.md."
           fi
 
       - name: Verify the ISciterAPI table

@@ -30,17 +30,19 @@ open_archive :: proc(blob: []u8) -> (archive: Archive, err: Error) {
 	}
 	h := sciter.api().SciterOpenArchive(raw_data(blob), u32(len(blob)))
 	if h == nil {
-		return nil, .Load_Failed
+		return nil, .Archive_Failed
 	}
 	return Archive(h), nil
 }
 
+// `.Archive_Failed` if the engine refuses. `Load_Failed` used to stand in here, which sent anyone
+// reading a log off to look at their HTML.
 close_archive :: proc(archive: Archive) -> Error {
 	if archive == nil {
 		return nil
 	}
 	ok := sciter.api().SciterCloseArchive(sciter.Archive(archive))
-	return nil if ok else Api_Error.Load_Failed
+	return nil if ok else Api_Error.Archive_Failed
 }
 
 // Looks a file up inside the archive by its path within the packed folder - "index.htm",
@@ -90,6 +92,11 @@ serve_archive :: proc(
 	handled: bool,
 ) {
 	if !strings.has_prefix(request.uri, prefix) {
+		// **Read `handled` first: `result` means nothing when it is false.** There is no "no answer"
+		// value to return here - `Sc_Load_Data_Return_Codes.OK` is 0, so a zeroed result *is* `.OK` and
+		// no spelling of this return can make ignoring `handled` safe. `.OK` is at least the harmless
+		// one if it is used anyway: it means "engine, load it yourself", which is what should happen to
+		// a URL this archive does not own.
 		return .OK, false
 	}
 	path := request.uri[len(prefix):]

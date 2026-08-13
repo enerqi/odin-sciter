@@ -120,6 +120,22 @@ Linux one.
 
 ## Things to look at specifically
 
+**`single_binary.odin` will fail the build until its `when` covers Windows.** It has a deliberate
+`#panic` for platforms whose engine is not vendored, so `just check` on the Windows CI job fails on it
+the first time the DLL lands. That failure is step 8 of this list asking to be done, not a regression -
+which is worth knowing before someone reads it as a broken build. (Previously recorded as a TODO in
+`ci.yml`; it belongs here.)
+
+**The display gate is already correct here, and its cost is that nothing has run.** `have_display` in
+the examples returns true unconditionally `when ODIN_OS == .Windows`, because `DISPLAY` and
+`WAYLAND_DISPLAY` are X11/Wayland variables that do not exist on Windows - had it tested for them, every
+windowed test would have skipped silently, which is the worst way for a test not to run. So the first
+real Windows run executes the whole suite, roughly two thirds of which has never run on this platform.
+Budget for that rather than expecting a quick green.
+
+`examples/windowless_gl.odin` is the one deliberate exception: it gates on `ODIN_OS != .Linux` and skips
+everywhere else, because it creates its GL context with EGL.
+
 **Recipes with a bash shebang.** `pack`, `extension-run`, `check` and a few others are `#!/usr/bin/env
 bash` scripts. `just` runs those through the shebang rather than `windows-shell`, so they need bash in
 `PATH` — Git for Windows provides it. If they fail with something like "The system cannot find the file

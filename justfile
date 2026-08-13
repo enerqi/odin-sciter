@@ -124,10 +124,14 @@ format:
 # implied by `-strict-style`, so without it a space-indented file lints clean. Nothing in the Odin
 # toolchain checks line endings - those are held in place by .gitattributes and odinfmt.json instead.
 # Accepts extra args like `-show-timings` as needed.
+#
+# Both library packages, because CI runs this and the root package alone left `sciter_app` - where
+# nearly all the hand-written code is - unlinted. Not `examples/`: those do not lint clean today.
 # ---
 # lint checks for style and potential bugs. No code generation
 lint *args:
 	odin check . -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
+	odin check sciter_app -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
 
 
 # Every `run_*`, `test*` and `diagnose` recipe depends on this, so it runs before every build - which
@@ -510,14 +514,24 @@ check: mktarget_dirs
 	odin check . -no-entry-point
 	odin check sciter_app -no-entry-point
 	odin check docs/snippets -no-entry-point
-	for f in examples/*.odin; do
+	# One output path per example, and the loop run in parallel. Both halves matter: every example used
+	# to link over a single `check.exe`, which serialised the slowest non-test step in CI onto one core
+	# and left the *previous* example's binary in place when one failed, so the artifact said nothing
+	# about which. Building rather than `odin check`ing is deliberate - single_binary.odin has a `when`
+	# guarded `#panic` that only fires at build time, and linking is what proves an example is shippable.
+	mkdir -p target/debug/check
+	build_one() {
+	    f="$1"
+	    name="$(basename "$f" .odin)"
 	    if [ "$f" = "examples/extension.odin" ] || [ "$f" = "examples/sqlite_extension.odin" ]; then
 	        # Not applications: native extensions, so they have no `main` and build as shared libraries.
-	        odin build "$f" -file -build-mode:shared -out:{{ target_path("debug", "odin-ext" + shared_ext) }}
+	        odin build "$f" -file -build-mode:shared -out:"target/debug/check/$name{{ shared_ext }}"
 	    else
-	        odin build "$f" -file -out:{{ target_path("debug", "check.exe") }}
+	        odin build "$f" -file -out:"target/debug/check/$name.exe"
 	    fi
-	done
+	}
+	export -f build_one
+	ls examples/*.odin | xargs -P "$(nproc 2>/dev/null || echo 4)" -I{} bash -c 'build_one "$@"' _ {}
 	echo "ok: both packages and the doc snippets type check, all $(ls examples/*.odin | wc -l) examples build"
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
@@ -689,6 +703,28 @@ api-map-verify: mktarget_dirs
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just example api_map | .github/scripts/check-api-map.sh
+
+
+# The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
+# slots the engine has - it catches a reordered or removed one. It cannot catch an *added* one: a newer
+# SDK regenerates into `sciter.odin` as fields nothing wraps, and coverage degrades one upgrade at a
+# time with no signal. This measures the headers against `sciter_app` and diffs the unwrapped set
+# against docs/parity-baseline.txt, so a new slot is a one-line diff during the upgrade rather than a
+# surprise afterwards. No engine and no display needed - it reads headers and .odin files.
+# ---
+# C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
+parity *args:
+	.github/scripts/parity.sh {{args}}
+
+
+# The counts the documentation quotes about itself - examples, tests, wrapper procs, and how many of
+# those a test reaches. `--check` fails when README.md or docs/PLAN.md disagree with the measurement,
+# which is how they came to claim 337 tests against an actual 366. Same counting rule as `parity`:
+# `\.name\b`, not `\.name(`, because a wrapper is as often stored or forwarded as called.
+# ---
+# suite and coverage counts; `just stats --check` asserts the docs still agree
+stats *args:
+	.github/scripts/stats.sh {{args}}
 
 # The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS
 # day to day, so an example that stops type checking there is invisible until someone has the machine.

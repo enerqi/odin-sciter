@@ -16,6 +16,11 @@
 //
 // Everything else - `Path`, `Text`, `Image` - is created directly and is independent of any context.
 //
+// **There is no pixel-readback slot to wrap.** `imageGetPixels` is declared in sciter-x-graphics.h and
+// commented out there, so it is not in the table - `save_image(.RAW)` is the way to get pixels back out
+// of an `Image`, and it is what the tests here use. See `docs/SDK-PARITY.md` for the rest of that
+// accounting.
+//
 //	sciter_app.paint_image(img, proc(gfx: sciter_app.Graphics, width, height: u32, user: rawptr) {
 //		sciter_app.set_fill_color(gfx, sciter_app.rgb(0x1e, 0x1e, 0x2e))
 //		sciter_app.set_line_color(gfx, sciter_app.rgb(0x1e, 0x1e, 0x2e))
@@ -25,6 +30,7 @@ package sciter_app
 
 import sciter ".."
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 
 // The engine's HIMG, HGFX, HPATH and HTEXT. All four are reference counted; the `retain_*`/`release_*`
@@ -47,15 +53,26 @@ Color_Stop :: struct {
 	offset: f32,
 }
 
+// Written on first use with a plain nil check and no synchronisation, which is correct only under
+// this package's threading rule: **engine calls happen on the thread that runs the pump**
+// (docs/architecture.md, and `post_callback` in host.odin is how a worker thread gets back onto
+// it). A worker calling graphics_api() directly races here. The write is a single aligned pointer so
+// it cannot tear on any target this builds for, and the worst outcome is fetching the table
+// twice - but if the threading rule is ever relaxed, this is one of the two places to change.
 @(private)
 g_graphics_api: ^sciter.Sciter_Graphics_Api
 
 // The raw `SciterGraphicsAPI` table, for anything this wrapper does not cover - `gGetNativeDC`, and the
-// `vWrap*` family beyond the four wrappers below. Nil only if the engine is not loaded.
-graphics_api :: proc() -> ^sciter.Sciter_Graphics_Api {
+// `vWrap*` family beyond the four wrappers below.
+//
+// Panics if `sciter.load()` has not been called, for the reason `sciter.api()` does: every consumer here
+// calls straight through the returned table, so handing back nil only moves the fault to a
+// function-pointer offset with nothing to say about the cause.
+graphics_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Graphics_Api {
 	if g_graphics_api == nil && sciter.loaded() {
 		g_graphics_api = sciter.api().GetSciterGraphicsAPI()
 	}
+	fmt.assertf(g_graphics_api != nil, "sciter.load() must be called before any graphics call", loc = loc)
 	return g_graphics_api
 }
 
@@ -205,9 +222,14 @@ save_image :: proc(
 	if image == nil {
 		return nil, sciter.Graphin_Result.BAD_PARAM
 	}
+	// The scratch accumulates from the temp allocator, not the caller's: the engine delivers in chunks,
+	// so this grows by doubling, and only the exact-size result below belongs to `allocator`. Growing
+	// in the caller's allocator meant peak memory of twice the encoded image - tens of megabytes for a
+	// 4K PNG - and with `context.temp_allocator` passed in as `allocator`, which is the common case, the
+	// `defer delete` was a no-op and the doubling was retained until the next `free_all`.
 	sink := Byte_Sink {
 		ctx       = context,
-		allocator = allocator,
+		allocator = context.temp_allocator,
 	}
 	defer delete(sink.out)
 
