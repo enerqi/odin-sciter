@@ -46,8 +46,46 @@ against.
 - **`set_global_asset(nil)` dereferenced nil** instead of answering `.Asset_Failed`.
 - **CI told macOS maintainers to vendor the engine at `lib/macos/`**; the loader searches `lib/macosx`.
 
+- **`resize_windowless` left `view.pixels` dangling when the engine refused the resize.** The old
+  surface was freed before `SXM_SIZE` was sent and the view still described it on the failure path, so
+  the caller's natural response — `destroy_windowless` — was a double free. The new surface is now built
+  alongside the old one and the old one released only after the handover succeeds.
+- **`load_embedded` dropped the candidate list `sciter.load` returns on every path**, leaking it and one
+  string per candidate.
+- **`save_image`'s chunk scratch never used the temp allocator.** A zero-valued `[dynamic]` adopts
+  `context.allocator` at its first `append` and ignores an allocator stored beside it, so the doubling
+  growth stayed in the caller's allocator. The allocator now lives on the array.
+- **`sciter.load` leaked `filepath.dir(os.args[0])`**, and **`combine_url` abandoned each oversized
+  retry buffer** in the caller's temp arena.
+- **Two examples discarded reference-owning Values.** Measured: 2000 discarded `eval`s of a 100 kB
+  string grow the process by 390 MB.
+
+### Fixed — documentation that was wrong
+
+- **`eval` never reports `.Eval_Failed` for a script error**, and `call`, `call_function` and
+  `call_method` behave the same way. Measured identically in a window and a windowless view: the error
+  code answers *could I call it?* — a name nothing defines is a real error with an `.UNDEFINED` result —
+  and the returned **Value** answers *did it work?* A function that ran and threw comes back with
+  `err = nil` and an `.ERROR`-unit string carrying the message and a stack trace. The documented route
+  (install a debug handler) was wrong, the real one needs no handler, and because that string owns a
+  reference the natural "it failed, drop it" shape leaked on every script error.
+- **Over-releasing a borrowed handle is a segfault, not a leak.** Measured: one spurious
+  `unuse_request` on a handle from `request_of` answers `.OK` and then kills the process; for
+  `unuse_element` on a borrowed element it takes two calls. Every call reports success.
+- **`http_request`'s temp-allocator arguments are safe** — the URL, the parameter array and both strings
+  of every pair are copied by the engine during the call, despite the request being asynchronous.
+  Measured with a poisoned arena and a canary, for `.Get` and `.Post`; the comment asserted it and
+  nothing had checked.
+
 ### Changed
 
+- **`take_request` and `use_request` hand back an `Owned_Request`.** The borrowed handle a load callback
+  receives and the taken one that owes an `unuse_request` are now separate types, and `unuse_request`
+  accepts only the second — so releasing a handle you never took does not compile. This is the type
+  standing in for a rule because the failure is a first-call segfault the engine reports as `.OK`.
+  `borrow_request(owned)` is the free cast for handing a held request to the readers and answerers;
+  borrowing once at the top of a scope is the idiom. `use_request` additionally returns the handle it
+  took. **Breaking**, for code storing a taken request or calling `use_request`.
 - **`Event_Phase` no longer has a `.Handled` variant.** HANDLED is an independent bit in the C API, not
   a third phase, and folding it in made the direction unreadable once anything claimed an event — so
   `if ev.phase == .Bubbling`, the documented way to act exactly once, silently stopped acting. The
@@ -69,6 +107,14 @@ against.
 
 ### Added
 
+- **`scoped_` procedures** (`sciter_app/scoped.odin`) — a twin of every `Value` producer plus
+  `scoped_make_element` / `scoped_clone_element`, releasing at the end of the calling scope via
+  `@(deferred_out)`. It fires even when the caller writes `_, _ =`, which `@(require_results)` does not
+  reject — measured, and that is the exact shape that leaked in the examples.
+- **`just check-ownership`**, in CI — asserts the rule that if a procedure takes an allocator its result
+  is yours and otherwise it is borrowed. It holds across all 30 procedures that return memory.
+- **[`docs/review/09-memory-safety-ownership.md`](docs/review/09-memory-safety-ownership.md)** — the
+  memory-safety, resource-lifetime and ownership pass, with the measurements behind everything above.
 - **`just parity`** — which C-API slots `sciter_app` reaches, measured from the headers with comments
   and `#if 0` blocks stripped. `--check` diffs against `docs/parity-baseline.txt` and runs in CI, so a
   slot added by a future SDK is a one-line diff during the upgrade rather than a silent gap.
