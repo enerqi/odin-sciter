@@ -24,6 +24,17 @@ Node :: distinct sciter.Hnode
 
 // Marks the element as in use, so the engine will not free it while the handle is held. Pair with
 // `unuse_element`. Not needed for a handle you use and drop inside one callback.
+//
+// **Only unuse what you used.** The pair is a reference count, and an element from `select_*`, `child`,
+// `parent`, `root` or an event's parameters is borrowed - you hold no reference, so there is none to
+// give back. Handing one back anyway under-flows the count, and the engine does not report it:
+// measured on 6.0.4.9 against a `select_first` handle, one spurious `unuse_element` answers `.OK` and
+// the element goes on working, and the *second* answers `.OK` and then segfaults the process. There is
+// no return code to check and the fault lands after the call, a long way from the mistake.
+//
+// The elements that owe an `unuse_element` are exactly the ones this package says hand back a reference
+// of their own: `make_element`, `clone_element`, `remove_element(finalize = false)`, and anything you
+// called `use_element` on yourself. Everything else is borrowed.
 use_element :: proc(element: Element) -> Error {
 	return dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
 }

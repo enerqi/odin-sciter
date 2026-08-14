@@ -196,6 +196,35 @@ caller who checks only `err` both misreads a thrown exception as success and lea
 All three doc comments now state this, and
 `test_a_script_call_reports_a_throw_in_the_value_and_a_missing_name_in_the_error` pins all six cases.
 
+### R9-10 — over-releasing a borrowed element handle segfaults, and both the type and the return code say it is fine  [severity: major, documentation]
+
+**Where:** `sciter_app/dom.odin:27-33`, and the `Element` type itself
+**What:** `use_element` / `unuse_element` are a reference-counting pair, and the package's own header
+says an element from `select_*`, `child`, `parent` or an event is **borrowed** — the caller holds no
+reference. Giving one back anyway is an under-flow. Measured on 6.0.4.9, against an element selected
+with `select_first` and never `use_element`d:
+
+| spurious `unuse_element` calls | result |
+|---|---|
+| 1 | returns `nil`; the element still reads, re-selects and re-reads fine |
+| 2 | returns `nil` **twice**, then the process dies with SIGSEGV |
+
+The engine reports success for every call, including the one that kills it. The fault lands after the
+call returns, so there is no return code to check and nothing on the stack pointing at the mistake.
+
+**Why it matters:** the review's other findings are leaks — bounded, diagnosable, survivable. This is the
+opposite failure of the same missing distinction, and it is a crash. `Element` is one type for two
+regimes, so "hand the reference back" and "hand back a reference you never had" are the same line of
+code, and the second is only wrong because of where the handle came from — which the type does not say
+and the engine will not tell you.
+
+It is also the asymmetry that decides how much the type-level fix is worth: `scoped_*` and a leak
+tracker address forgetting to release, and neither can see an over-release. Only the type can.
+
+**Fix:** documented at `use_element` rather than tested, because the test would be a segfault. The
+type-level fix is the `distinct` owned handles discussed below, whose value this measurement raises
+considerably.
+
 ### R9-05 — `sciter.load` leaks the executable-directory candidate  [severity: minor]
 
 **Where:** `src/prelude.odin:132`
@@ -395,18 +424,38 @@ exactly — it is how they find leaks in their own allocators — and it would h
 existing test suite without anyone thinking about it. It also covers what `scoped_*` cannot: Values that
 genuinely outlive their scope. Cost: one counter, one map, one line in each of ~30 producers.
 
-**3. `distinct` types for owned handles — good for readability, does not stop leaks.**
+**3. `distinct` types for owned handles — the only option that can stop an over-release.**
 
 ```odin
 Owned_Element :: distinct Element    // from make_element / clone_element / remove_element(false)
 ```
 
-Worth being precise about what this buys: Odin has no linear types and no destructors, so dropping an
-`Owned_Element` is still legal and still leaks. What it *does* buy is that the two regimes stop being
-the same type — `insert_element(owned, parent)` needs a visible conversion, `unuse_element` can take
-only the owned form, and a reader of a struct field can see which kind is stored. That is regime 5 vs 6
-and regime 9 made legible. It is a bigger change than the first two and should follow them, not precede
-them.
+Be precise about what this does and does not buy. Odin has no linear types and no destructors, so
+dropping an `Owned_Element` is still legal and still leaks — this is **not** a leak fix, and options 1
+and 2 remain the leak story. What it buys is the other direction, and R9-10 is what makes that worth
+paying for: `unuse_element` would take an `Owned_Element` and nothing else, so handing back a reference
+you never held stops being expressible. Today that is a two-call segfault the engine reports as `.OK`
+twice, and it is the one failure in this review that neither a scope nor a tracker can see.
+
+Secondary benefits: `insert_element(owned, parent)` needs a visible conversion, so the transfer is
+legible at the call site; a struct field's type says which regime it stores; and `select_all`'s slice
+being `[]Element` rather than `[]Owned_Element` states the borrow that its doc comment currently has to.
+
+The cost is real and should not be hidden: Odin does not implicitly convert `distinct` types, so every
+read of a created element — `set_text(item, …)`, `insert_element(item, list)` — needs a conversion at
+the call site. Roughly sixty procedures take an `Element`, and making them all polymorphic over both
+regimes would double the surface, which is worse than the disease.
+
+The precedent for it is already in the tree and is the best argument for the shape: `graphics.odin`
+*already* does this. `Image`, `Path` and `Text` are owned and have `release_*`; `Graphics`, which
+arrives borrowed from a `.DRAW` event or `paint_image`, is a **different type**, so
+`release_graphics(gfx_from_an_event)` is not a mistake anyone can make by accident. The suggestion is
+only to extend a pattern this package already found for itself.
+
+**Where to apply it first: `Request`, not `Element`.** It is the same borrowed/taken split with a
+twentieth of the surface, the taking is already an explicit call (`take_request`), the docs already say
+"every `take_request` owes an `unuse_request`", and the same under-flow hazard applies. It is a
+contained pilot of the idea. `Element` is an API version's worth of change and should follow it.
 
 **4. A `Value_Scope` batch, matching `rules.md`'s existing arena advice — best fit for handlers.**
 
