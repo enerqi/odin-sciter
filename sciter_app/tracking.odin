@@ -61,11 +61,22 @@ when ODIN_DEBUG {
 
 	@(private = "file")
 	Tracker :: struct {
-		on:       bool,
-		handles:  map[rawptr]Acquisition, // the identified kinds
-		counted:  [Resource_Kind]int, // outstanding, for every kind
-		sites:    map[runtime.Source_Code_Location]int, // where the counted ones came from
-		released: [Resource_Kind]int,
+		on:        bool,
+		handles:   map[rawptr]Acquisition, // the identified kinds
+		counted:   [Resource_Kind]int, // outstanding, for every kind
+		sites:     map[runtime.Source_Code_Location]int, // where the counted ones came from
+		released:   [Resource_Kind]int,
+		underflows: [Resource_Kind]int, // releases of something never acquired - see track_release
+		strict:     bool, // trap on the first under-flow rather than only counting it
+
+		// The ledger's own memory, deliberately **not** from `context.allocator`.
+		//
+		// The ledger outlives every scope that adds to it, so under a per-test tracking allocator - which
+		// is exactly what Odin's test runner installs - it reads as a leak in whichever test happened to
+		// grow the map. Pinning it to the default heap allocator keeps the tool from being reported as
+		// the problem it exists to find. The examples do the same thing for their process-lifetime
+		// window.
+		allocator: runtime.Allocator,
 	}
 
 	@(private = "file")
@@ -76,18 +87,31 @@ when ODIN_DEBUG {
 //
 // Call it once, early, on the engine's thread - the ledger has no locking for the same reason the two
 // cached API tables have none (see docs/rules.md rule 1).
-track_resources :: proc(on := true) {
+//
+// `strict` decides what happens on an **under-flow** - releasing a handle that was never acquired. The
+// default traps on the first one, deliberately: that mistake is a segfault a moment later, somewhere
+// else, and the call site is only on the stack now. Pass `strict = false` to count them instead, which
+// is what code deliberately provoking the case wants.
+//
+// Note the asymmetry, because it is the whole reason both this and the `Owned_*` types exist: an
+// under-flow can be caught the instant it happens, and a **leak cannot** - a resource that is merely
+// never released looks identical to one that has not been released *yet*, so leaks are a
+// question you can only ask at the end, with `report_leaked_resources`.
+track_resources :: proc(on := true, strict := true) {
 	when ODIN_DEBUG {
 		if g_tracker.on {
 			delete(g_tracker.handles)
 			delete(g_tracker.sites)
 		}
+		alloc := runtime.default_allocator()
 		g_tracker = Tracker {
-			on = on,
+			on        = on,
+			strict    = strict,
+			allocator = alloc,
 		}
 		if on {
-			g_tracker.handles = make(map[rawptr]Acquisition)
-			g_tracker.sites = make(map[runtime.Source_Code_Location]int)
+			g_tracker.handles = make(map[rawptr]Acquisition, alloc)
+			g_tracker.sites = make(map[runtime.Source_Code_Location]int, alloc)
 		}
 	}
 }
@@ -115,10 +139,26 @@ track_acquire :: proc(kind: Resource_Kind, handle: rawptr, loc: runtime.Source_C
 
 // Records the release of an identified resource.
 @(private)
-track_release :: proc(kind: Resource_Kind, handle: rawptr) {
+track_release :: proc(kind: Resource_Kind, handle: rawptr, loc: runtime.Source_Code_Location = #caller_location) {
 	when ODIN_DEBUG {
 		if !g_tracker.on || handle == nil {
 			return
+		}
+		// Releasing a handle the ledger never saw acquired is the under-flow, and it is worth shouting
+		// about *here* rather than counting it for a report later: this is the last moment the call site
+		// is still on the stack. What follows it is a segfault somewhere else - measured, one spurious
+		// `unuse_request` and two `unuse_element`s - so the assert is strictly better than what the
+		// engine will do next.
+		if _, found := g_tracker.handles[handle]; !found {
+			g_tracker.underflows[kind] += 1
+			if g_tracker.strict {
+				runtime.print_string("\nsciter_app: released a ")
+				runtime.print_string(resource_kind_name(kind))
+				runtime.print_string(" that was never acquired - this is the under-flow that segfaults\n  at ")
+				runtime.print_caller_location(loc)
+				runtime.print_string("\n")
+				runtime.trap()
+			}
 		}
 		g_tracker.counted[kind] -= 1
 		g_tracker.released[kind] += 1

@@ -207,18 +207,20 @@ node_set_text :: proc(node: Node, text: string) -> Error {
 //
 // `found_node` rather than a bare cast, as everywhere else here: OK plus a null handle would otherwise
 // hand back a nil Node that the file's own ownership rule then tells the caller to insert or release.
-make_text_node :: proc(text: string) -> (node: Node, err: Error) {
+make_text_node :: proc(text: string, loc := #caller_location) -> (node: Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateTextNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
+	track_acquire(.Node, rawptr(hn), loc)
 	return found_node(hn)
 }
 
 // A detached comment node. Same ownership as `make_text_node`.
-make_comment_node :: proc(text: string) -> (node: Node, err: Error) {
+make_comment_node :: proc(text: string, loc := #caller_location) -> (node: Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateCommentNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
+	track_acquire(.Node, rawptr(hn), loc)
 	return found_node(hn)
 }
 
@@ -229,7 +231,13 @@ make_comment_node :: proc(text: string) -> (node: Node, err: Error) {
 // parent, or anywhere at all - is `.INVALID_HANDLE`, and so is inserting a node that has been taken
 // back out with `node_remove`. See there.
 node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Node) -> Error {
-	return dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
+	err := dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
+	if err == nil {
+		// The document owns it from here, so the caller no longer owes a release - which is the whole
+		// difference between this and every other transfer in the package.
+		track_release(.Node, rawptr(what))
+	}
+	return err
 }
 
 // Takes the node out of the document. `finalize = true` destroys it.

@@ -139,6 +139,12 @@ jobs:
           EXAMPLE_TEST_TIMEOUT: '420'
         run: xvfb-run -a -s "-screen 0 1280x1024x24" just example-tests
 
+      # Engine-side resources - Values, element references, taken requests, images - are invisible to
+      # Odin's allocator tracking, so nothing above would notice the wrapper leaking one. This exercises
+      # the owning paths under the debug ledger and fails if anything is still held at exit.
+      - name: Leak sweep
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just leak-check
+
       # Value refcounting is the code most worth running under a sanitizer, and per the justfile's own
       # notes Linux ASan catches heap errors that Windows ASan does not - so this runs here or nowhere.
       - name: Value refcounting under ASan

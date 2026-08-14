@@ -706,6 +706,19 @@ api-map-verify: mktarget_dirs
 
 
 # ---
+# exercise the resource-owning paths and fail if anything is still held by the engine at exit
+#
+# Needs -debug: sciter_app/tracking.odin compiles to nothing without it, and the sweep says so rather
+# than passing vacuously. Not part of `example-tests` because it is a program, not a test file - see the
+# header of examples/leak_sweep.odin for why the check cannot live in a test binary.
+leak-check: mktarget_dirs
+	#!/usr/bin/env bash
+	set -euo pipefail
+	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
+	{{ target_path("debug", "leak_sweep.exe") }}
+
+
+# ---
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
 check-ownership:
 	#!/usr/bin/env bash

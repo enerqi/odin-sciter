@@ -122,16 +122,18 @@ value_from_f64 :: proc(f: f64) -> (v: Value) {
 }
 
 // The engine copies the string, so `s` does not have to outlive the call.
-value_from_string :: proc(s: string) -> (v: Value) {
+value_from_string :: proc(s: string, loc := #caller_location) -> (v: Value) {
 	w := utf16_from_string(s, context.temp_allocator)
 	sciter.api().ValueStringDataSet(&v, raw_data(w), u32(len(w) - 1), 0)
-	return
+	// A constructed string owns engine memory exactly as a returned one does, and `value_clear`
+	// releases it either way - so the ledger has to see both halves or it drifts negative.
+	return tracked(v, loc)
 }
 
 // A byte blob - image data, a file's contents. The engine copies it.
-value_from_bytes :: proc(b: []u8) -> (v: Value) {
+value_from_bytes :: proc(b: []u8, loc := #caller_location) -> (v: Value) {
 	sciter.api().ValueBinaryDataSet(&v, raw_data(b), u32(len(b)), .BYTES, 0)
-	return
+	return tracked(v, loc)
 }
 
 // An empty array of `length` undefined slots, ready for `value_set_at`. A zero length is a real empty
@@ -149,7 +151,7 @@ value_make_array :: proc(length: int) -> (v: Value) {
 	}
 	undefined: Value
 	sciter.api().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)
-	return
+	return tracked(v)
 }
 
 value_from :: proc {
@@ -451,7 +453,7 @@ value_from_function :: proc(
 		allocator = allocator,
 	}
 	sciter.api().ValueNativeFunctorSet(&v, functor_invoke, functor_release, (^sciter.Void)(functor))
-	return
+	return tracked(v)
 }
 
 // True if the Value holds a `value_from_function` procedure rather than a script function.

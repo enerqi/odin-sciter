@@ -859,25 +859,25 @@ release_text :: proc(text: Text) -> Error {
 value_from_graphics :: proc(gfx: Graphics) -> (v: Value, err: Error) {
 	value_init(&v)
 	gfx_err(graphics_api().vWrapGfx(sciter.Hgfx(gfx), &v)) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 value_from_image :: proc(image: Image) -> (v: Value, err: Error) {
 	value_init(&v)
 	gfx_err(graphics_api().vWrapImage(sciter.Himg(image), &v)) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 value_from_path :: proc(path: Path) -> (v: Value, err: Error) {
 	value_init(&v)
 	gfx_err(graphics_api().vWrapPath(sciter.Hpath(path), &v)) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 value_from_text :: proc(text: Text) -> (v: Value, err: Error) {
 	value_init(&v)
 	gfx_err(graphics_api().vWrapText(sciter.Htext(text), &v)) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 value_to_graphics :: proc(v: ^Value) -> (gfx: Graphics, err: Error) {

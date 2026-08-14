@@ -1451,8 +1451,11 @@ test_the_resource_tracker_sees_a_leaked_value_and_a_leaked_element :: proc(t: ^t
 	window, ok := test_window(t)
 	if !ok {return}
 
+	// Restarted rather than turned off on the way out: anything else sharing this ledger - the sweep in
+	// `examples/leak_sweep.odin`, or a later test - would otherwise be silently blinded by whichever
+	// order the runner happened to pick.
 	sciter_app.track_resources(true)
-	defer sciter_app.track_resources(false)
+	defer sciter_app.track_resources(true)
 
 	when !ODIN_DEBUG {
 		// Compiled out: no map, no branch, nothing to report.
