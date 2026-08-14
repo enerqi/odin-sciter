@@ -135,13 +135,33 @@ version :: proc() -> [4]u32 {
 	return {api.SciterVersion(0), api.SciterVersion(1), api.SciterVersion(2), api.SciterVersion(3)}
 }
 
-// An engine option. `window` is nil for the process-wide options, which is most of them - the ones
-// that take a window say so in `Sciter_Rt_Options`.
+// An engine option. `window` is nil for the process-wide options, which is most of them.
+//
+// **`Sciter_Rt_Options`'s `hWnd` comments do not tell you which ones need a window, and the return
+// value is the only thing that does.** Measured on 6.0.4.9 (Linux), with `examples/script_bridge.odin`
+// holding the test:
+//
+//   - Accepted with no window: `.SET_SCRIPT_RUNTIME_FEATURES`, `.SET_GFX_LAYER`, `.SET_DEBUG_MODE`,
+//     `.SET_UX_THEMING`, `.SET_MAX_HTTP_DATA_LENGTH`, `.SET_PX_AS_DIP`, `.SET_INIT_SCRIPT`,
+//     `.USE_INTERNAL_HTTP_CLIENT`, `.EXTENDED_TOUCHPAD_SUPPORT`.
+//   - **Needs a window**: `.SMOOTH_SCROLL`, whose header comment says only "value:TRUE - enable" and
+//     reads like a global preference. It fails with nil and succeeds with a window.
+//   - Refused either way on this build: `.CONNECTION_TIMEOUT`, `.HTTPS_ERROR`, `.FONT_SMOOTHING`,
+//     `.ENABLE_UIAUTOMATION`. The option exists in the header and does nothing here.
+//
+// An unknown option code is refused rather than ignored, so a failure really is a failure. Check the
+// error; the only way to find out that an option did not take is to look.
 //
 // `value` is an untyped word on purpose: what it means is chosen by `option`, and it is a boolean for
 // `.SMOOTH_SCROLL`, milliseconds for `.CONNECTION_TIMEOUT`, a `Script_Runtime_Features` mask for
 // `.SET_SCRIPT_RUNTIME_FEATURES`, a UTF-8 string pointer for `.SET_INIT_SCRIPT`. Typing it would mean
 // one wrapper per option; the two worth having are below.
+//
+// `.SET_INIT_SCRIPT` is the one with a lifetime question, and the header's answer holds: the engine
+// copies the source inside the call, measured by freeing the string and overwriting its bytes before
+// loading the document that runs it. Setting it again *replaces* the script rather than adding to it,
+// and it runs at every `load_html` - into that document's `globalThis`, before the document's own
+// scripts. It is the one way to publish a global that does not go through `set_global`.
 set_option :: proc(option: sciter.Sciter_Rt_Options, value: uintptr, window: Window = nil) -> Error {
 	ok := sciter.api().SciterSetOption(rawptr(window), option, value)
 	return nil if ok else Api_Error.Option_Failed

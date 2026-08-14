@@ -9,9 +9,10 @@ background threads, drag-and-drop, graphics (both a custom-painted element and a
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 376 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
-the wrapper is 378 of its 383 exported procedures called from a test; the rest are proc-group members
-reached through their group.
+`just example-tests` runs 381 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+the wrapper is 383 of its 383 exported procedures called from a test - the last five were `set_option`,
+`data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members, and each of them
+turned up something the headers do not say (see their doc comments).
 
 Every number in that paragraph comes from `just stats` (`.github/scripts/stats.sh`), and `just stats
 --check` fails if this file and `README.md` have drifted from it - which they had, by 29 tests. The

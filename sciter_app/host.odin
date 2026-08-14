@@ -83,6 +83,15 @@ serve :: proc(request: ^Load_Request, data: []u8) -> Load_Result {
 //
 // Unlike `serve`, the engine copies the data here, so the buffer does not have to outlive the call.
 // Still call it from the engine's thread - see docs/architecture.md on threading.
+//
+// **Answer each delayed request exactly once.** Measured on 6.0.4.9: a second call with an id that has
+// already been discharged segfaults inside the engine - it does not return `.Load_Failed`, and the
+// first call gave no sign that the id was about to become unusable. This is the same shape as
+// over-releasing a borrowed handle (see `unuse_element` in `dom.odin`): the return code answers "was
+// this a request I could answer", never "is this id still live". Drop the id once it is answered.
+//
+// The answer is applied without a reload: a stylesheet that arrives this way re-styles a document that
+// was already laid out without it. `examples/custom_loader.odin` has the test.
 data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sciter.Hrequest) -> Error {
 	w := utf16_from_string(uri, context.temp_allocator)
 	ok := sciter.api().SciterDataReadyAsync(

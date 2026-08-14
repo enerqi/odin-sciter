@@ -212,6 +212,13 @@ Loader :: struct {
 	// `serve`, and the result is recorded here.
 	push_inside: bool,
 	push_result: sciter_app.Error,
+
+	// When set, `style.css` is not answered at all: the callback returns `.DELAYED` and leaves the
+	// request id here for the test to discharge afterwards with `data_ready_async`. The id is the whole
+	// point - it is the only thing that identifies the request once the callback has returned.
+	delay_style: bool,
+	delayed_id:  sciter.Hrequest,
+	delayed_uri: string,
 }
 
 @(private = "file")
@@ -257,6 +264,9 @@ test_loader :: proc(t: ^testing.T, policy := Miss_Policy.Pass_Through) -> (ok: b
 	g_loader.policy = policy
 	g_loader.window = g_window
 	g_loader.push_result = nil
+	delete(g_loader.delayed_uri)
+	g_loader.delayed_uri = ""
+	g_loader.delayed_id = nil
 
 	// Before the load, always: the document's own resources go through this callback.
 	testing.expect_value(t, sciter_app.load_html(g_window, TEST_DOC, BASE_URL), nil)
@@ -277,6 +287,13 @@ test_load_data :: proc(
 	switch request.uri {
 	case BASE_URL + "style.css":
 		loader.served += 1
+		if loader.delay_style {
+			// The promise: the engine goes on without this resource, and whoever returned `.DELAYED`
+			// owes it an answer carrying this id - see `data_ready_async`.
+			loader.delayed_id = request.raw.requestId
+			loader.delayed_uri = strings.clone(request.uri)
+			return .DELAYED
+		}
 		if loader.push_inside {
 			// The copying push, from inside the callback - the only place it works.
 			loader.push_result = sciter_app.data_ready(
@@ -513,6 +530,55 @@ test_the_copying_push_fails_outside_a_load_callback :: proc(t: ^testing.T) {
 		sciter_app.data_ready(g_window, BASE_URL + "style.css", transmute([]u8)string(STYLE)),
 		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
 	)
+}
+
+// **`data_ready_async` is the answer-later half, and the request id is what makes it possible.** The
+// callback returned `.DELAYED` and kept the id; the load has long since returned; the stylesheet still
+// arrives and still styles the document.
+//
+// Two things this pins that nothing else does. The engine copies the bytes, so `STYLE` does not have to
+// outlive the call - unlike `serve`, which borrows. And the resource is applied without a reload: the
+// document was laid out without the stylesheet and re-styles itself when it turns up.
+//
+// **Answer each delayed request exactly once.** Measured on 6.0.4.9: a second `data_ready_async` with
+// an id already discharged does not return an error, it segfaults - the same shape as over-releasing a
+// borrowed handle. There is no test for that here for the obvious reason.
+@(test)
+test_a_delayed_request_is_answered_after_the_fact_with_data_ready_async :: proc(t: ^testing.T) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		return
+	}
+
+	g_loader.delay_style = true
+	defer g_loader.delay_style = false
+
+	if !test_loader(t) {return}
+
+	testing.expect(t, g_loader.delayed_id != nil, "the callback should have been handed a request id")
+	testing.expect_value(t, g_loader.delayed_uri, BASE_URL + "style.css")
+
+	// Nothing has answered it, so the one rule only this stylesheet carries is not in effect.
+	testing.expect(
+		t,
+		element_style("#h", "color") != "#00FF00",
+		"the delayed stylesheet must not be applied before it is answered",
+	)
+
+	testing.expect_value(
+		t,
+		sciter_app.data_ready_async(
+			g_window,
+			g_loader.delayed_uri,
+			transmute([]u8)string(STYLE),
+			g_loader.delayed_id,
+		),
+		nil,
+	)
+	sciter_app.heartbeat()
+
+	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
+	testing.expect_value(t, element_style("#p", "color"), "#0000FF")
 }
 
 @(private = "file")

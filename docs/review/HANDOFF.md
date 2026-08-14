@@ -29,30 +29,28 @@ The work is thirteen commits on top of `2a08d41 ci fix`:
 
 **These SHAs are post-rewrite.** The messages were rewritten to drop a `Co-Authored-By` trailer at the
 user's request; the trees are byte-identical to the pre-rewrite versions (verified: same tree hash,
-empty `git diff`). If `origin/master` still points at `5050302` the force-push has not happened yet:
-
-```
-git checkout master
-git reset --hard worktree-memory-safety-review
-git push --force-with-lease origin master
-```
-
-A backup of the pre-rewrite branch is at `refs/original/refs/heads/worktree-memory-safety-review`;
-delete it once the push is done.
+empty `git diff`). The force-push has since happened — `origin/master` is at `c5e4fa2`. A backup of the
+pre-rewrite branch is still at `refs/original/refs/heads/worktree-memory-safety-review` and can be
+deleted.
 
 ## Still open
 
-1. **`docs/review/README.md` needs the row for `09` and a rewritten "fix these first"** — six of the
-   items it lists are now fixed. It was left alone because it is **untracked** in the user's checkout,
-   so committing that path would make `git merge --ff-only` abort on an untracked-file collision. The
-   user has to `rm` it or `git add` it first. Every other file in `docs/review/` is untracked too, which
-   is worth resolving one way or the other.
-2. **The worktree** `.claude/worktrees/memory-safety-review` has nothing unique left in it once the push
-   lands. Safe to remove.
-3. **Windows.** Two breaking changes (`Owned_Element`, `Owned_Request`) and the leak gate have never run
-   there. `docs/WINDOWS-CHECKLIST.md` has a section listing exactly what to check and why.
-4. **Five procedures are still unreached by any test** and all five are pre-existing:
-   `data_ready_async`, `set_option`, `set_state`, and the two `draw_rounded_rect_*` proc-group members.
+1. **Windows.** Two breaking changes (`Owned_Element`, `Owned_Request`) and the leak gate have never run
+   there. `docs/WINDOWS-CHECKLIST.md` has a section listing exactly what to check and why, including
+   which half of the new `set_option` test is expected to answer differently.
+2. **The repository-size decision** (review finding R7-03): the 24 MB engine is in git with no LFS, and
+   both ways out are cheap now and expensive after a second binary lands. Written up in
+   `docs/UPGRADING.md`; deliberately not actioned, because it rewrites history.
+3. **The worktree** `.claude/worktrees/memory-safety-review` has nothing unique left in it. Safe to
+   remove.
+
+Closed since this was written: `docs/review/README.md` has the row for `09` and a status table in place
+of "fix these first"; `docs/review/` and `docs/typing.md` are tracked, which is what had blocked it; and
+the five procedures no test reached now have tests, taking coverage to 383 of 383. Each of those four
+subjects produced a measured fact — a second `data_ready_async` on an answered request id **segfaults**,
+`.SMOOTH_SCROLL` needs a window while four other options are refused outright, `.SET_INIT_SCRIPT`
+replaces rather than accumulates and is copied by the engine, and a compound literal cannot be passed
+through an overload group. All are recorded on the wrappers.
 
 ## What not to re-derive
 
@@ -100,7 +98,7 @@ just lint               # -vet over both packages AND all 30 examples
 just check-ownership    # allocator ⇒ owned, otherwise borrowed
 just parity --check     # C-API slot coverage against the baseline
 just stats --check      # the counts README.md and docs/PLAN.md quote
-just example-tests      # 376 tests across 24 files
+just example-tests      # 381 tests across 24 files
 just leak-check         # the engine-resource leak gate (needs -debug and a display)
 ```
 

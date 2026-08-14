@@ -1056,6 +1056,65 @@ test_a_uniform_radius_reaches_the_engine_as_eight_numbers :: proc(t: ^testing.T)
 	testing.expect(t, lit(raw, 32, 16, 16), "and the middle is still filled")
 }
 
+// The two members of the group, called by name, against the group itself. `draw_rounded_rect` is what
+// the examples call; `draw_rounded_rect_uniform` and `draw_rounded_rect_xy` are what it resolves to,
+// and neither is reachable through the group under a name of its own.
+//
+// What this pins is the expansion: `[4]f32{10, 8, 6, 4}` and `[4][2]f32{{10,10},{8,8},{6,6},{4,4}}`
+// must reach the engine as the same eight numbers, so their images are byte-identical. Different radii
+// per corner, because four equal ones would pass even if the expansion transposed them.
+@(test)
+test_the_uniform_form_expands_to_the_pair_form_and_the_group_picks_both :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	paint_uniform :: proc(gfx: Gfx, w, h: u32, user: rawptr) {
+		sciter_app.set_fill_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.draw_rounded_rect_uniform(gfx, 1, 1, 30, 30, [4]f32{10, 8, 6, 4})
+		sciter_app.flush(gfx)
+	}
+	paint_xy :: proc(gfx: Gfx, w, h: u32, user: rawptr) {
+		sciter_app.set_fill_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.draw_rounded_rect_xy(
+			gfx,
+			1,
+			1,
+			30,
+			30,
+			[4][2]f32{{10, 10}, {8, 8}, {6, 6}, {4, 4}},
+		)
+		sciter_app.flush(gfx)
+	}
+	paint_group :: proc(gfx: Gfx, w, h: u32, user: rawptr) {
+		sciter_app.set_fill_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.draw_rounded_rect(gfx, 1, 1, 30, 30, [4]f32{10, 8, 6, 4})
+		sciter_app.flush(gfx)
+	}
+
+	uniform := render(32, nil, paint_uniform)
+	defer delete(uniform)
+	xy := render(32, nil, paint_xy)
+	defer delete(xy)
+	group := render(32, nil, paint_group)
+	defer delete(group)
+
+	testing.expect(t, len(uniform) > 0 && len(uniform) == len(xy) && len(uniform) == len(group))
+
+	same_as_xy, same_as_group := true, true
+	for b, i in uniform {
+		if b != xy[i] {same_as_xy = false}
+		if b != group[i] {same_as_group = false}
+	}
+	testing.expect(t, same_as_xy, "one radius per corner must expand to that radius as both rx and ry")
+	testing.expect(t, same_as_group, "the group must resolve [4]f32 to the uniform member")
+
+	// And the corners really were cut, so "identical" is not two identical failures.
+	testing.expect(t, !lit(uniform, 32, 2, 2), "the 10px top-left corner is rounded away")
+	testing.expect(t, lit(uniform, 32, 16, 16), "and the middle is filled")
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Transforms
 //

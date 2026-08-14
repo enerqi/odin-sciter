@@ -151,6 +151,12 @@ string_from_utf16_cstring :: proc(p: [^]u16, allocator := context.allocator) -> 
 // A window and an element both have a "state", and they are different things - a window is shown or
 // minimized, an element is hovered or checked. The two are named apart so each can be called directly,
 // and grouped here so `state(x)` picks the right one.
+//
+// **Through the group the bit set has to be spelled out.** Overload resolution happens before a
+// compound literal's type is inferred, so `set_state(el, {.CHECKED})` is a compile error - "Missing
+// type in compound literal" - where `set_element_state(el, {.CHECKED})` is fine. Write
+// `set_state(el, sciter.Element_State_Bits{.CHECKED})`, or call the member. That is why both members
+// stay exported rather than becoming private behind the group.
 
 state :: proc {
 	window_state,

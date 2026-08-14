@@ -178,6 +178,17 @@ than the reason to skip it:
   should pass identically. If Python is missing from the Windows runner, that step is the one to skip
   rather than to fix in a hurry.
 
+**`set_option`'s per-option behaviour is measured on Linux and is expected to differ.**
+`examples/script_bridge.odin`'s `test_which_options_this_engine_takes_and_which_it_refuses` asserts two
+things unconditionally — an unknown option code is refused, and nine named options are accepted with no
+window — and puts the rest behind `when ODIN_OS == .Linux`, because what an engine build does with an
+option it does not implement is a property of that build. The guarded half says `.SMOOTH_SCROLL` needs a
+window, and that `.CONNECTION_TIMEOUT`, `.HTTPS_ERROR`, `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION` are
+refused either way. Several of those are Windows features (`TRANSPARENT_WINDOW`, `ALPHA_WINDOW` and
+`ENABLE_UIAUTOMATION` most obviously), so a different answer there is the expected outcome, not a
+failure: measure it, widen the `when`, and record it on `set_option` in `app.odin` next to the Linux
+column. If the unguarded half fails, that is a real finding.
+
 ## After it works
 
 - update the platform table in `README.md` (Windows row: vendored yes, tested yes)

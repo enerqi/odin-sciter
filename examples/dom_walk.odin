@@ -3106,3 +3106,51 @@ test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
 // **There is one order that survives, found later**: `hide`, then a turn of the pump, then `close`.
 // `examples/workbench.odin` has that test - it is the only place a secondary window is closed on
 // purpose - and the full table of what was tried is on `close` in `window.odin`.
+
+// **`state` and `set_state` are overload groups over two unrelated things**, and this is the test that
+// the group resolves - `element_state`/`set_element_state` for an element, `window_state`/
+// `set_window_state` for a window. The members are exercised all over this file by name; what is pinned
+// here is that reaching them through the shared name calls the same code and not something adjacent.
+//
+// The asymmetry is deliberate and shows up at the call site: the element half returns an `Error`, the
+// window half returns nothing at all, because the engine reports no failure for a window state - see
+// `set_window_state` in `window.odin`.
+@(test)
+test_the_state_overload_group_reaches_both_an_element_and_a_window :: proc(t: ^testing.T) {
+	window, _, ok := styled_window(t)
+	if !ok {return}
+	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
+
+	target := styled_target(window)
+	testing.expect(t, target != nil)
+
+	// The element half, set and cleared through the group. **The bit set has to be spelled out**:
+	// overload resolution runs before a compound literal's type is inferred, so the `{.CHECKED}` that
+	// `set_element_state` takes is a compile error here - "Missing type in compound literal". That is
+	// the cost of the group and the reason both members are still exported under their own names.
+	testing.expect_value(t, sciter_app.set_state(target, sciter.Element_State_Bits{.CHECKED}), nil)
+	set, serr := sciter_app.state(target)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, .CHECKED in set, "the group should have reached set_element_state")
+
+	testing.expect_value(
+		t,
+		sciter_app.set_state(target, sciter.Element_State_Bits{}, sciter.Element_State_Bits{.CHECKED}),
+		nil,
+	)
+	cleared, cerr := sciter_app.state(target)
+	testing.expect_value(t, cerr, nil)
+	testing.expect(t, .CHECKED not_in cleared)
+
+	// And the window half, from the same two names. `.SHOWN` because it is one of the two states this
+	// engine ever reports - and `.FULL_SCREEN` must never appear here, for the reason written above
+	// `test_asking_for_a_window_state_never_breaks_the_window`.
+	sciter_app.set_state(window, sciter.Sciter_Window_State.SHOWN)
+	sciter_app.heartbeat()
+	reported, reported_ok := sciter_app.state(window)
+	testing.expect(t, reported_ok, "a live window reports a state the enum has")
+	testing.expect_value(t, reported, sciter.Sciter_Window_State.SHOWN)
+
+	// The document is untouched by any of it.
+	testing.expect_value(t, styled_color(window), "#00FF00")
+}

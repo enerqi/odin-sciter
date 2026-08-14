@@ -41,6 +41,7 @@
 // opposite.
 package main
 
+import sciter ".."
 import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
@@ -514,4 +515,127 @@ test_eval_cannot_import_but_the_stash_can :: proc(t: ^testing.T) {
 	testing.expect(t, facts["home"] != "", "@env.home() answered")
 	testing.expect(t, facts["temp"] != "", "@sys.tmpdir() answered")
 	testing.expect(t, strings.contains(facts["sciterVersion"], "."), "@sciter.VERSION looks like a version")
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Engine options
+//
+// `set_script_features` above is one line over `set_option`, and these two tests are about the raw call
+// underneath it: what its untyped `uintptr` value really carries, and which options this engine will
+// take at all.
+
+// **`.SET_INIT_SCRIPT` is the option that shows why the value is untyped**: it is a pointer to UTF-8
+// source, not a number, and the script runs in every document loaded afterwards - before that
+// document's own scripts. It is also the way to publish something into `globalThis` that does not go
+// through `set_global`.
+//
+// Measured on 6.0.4.9: setting it again *replaces* the previous script rather than adding to it, and a
+// document loaded before the call never sees it. Both are pinned below.
+//
+// The free-then-scribble is the actual test of the header's "the engine copies this string inside the
+// call": the source is freed and its bytes are overwritten before the document that runs it is loaded.
+@(test)
+test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(t: ^testing.T) {
+	if !have_display() {
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; a windowless view still needs one")
+		return
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	context.allocator = runtime.default_allocator()
+
+	// Leave the engine as it was found: every later test in this file loads a document too.
+	defer {
+		empty := strings.clone_to_cstring("", context.temp_allocator)
+		testing.expect_value(t, sciter_app.set_option(.SET_INIT_SCRIPT, uintptr(rawptr(empty))), nil)
+	}
+
+	SOURCE :: "globalThis.initMark = 4321;"
+	src := strings.clone_to_cstring(SOURCE)
+	testing.expect_value(t, sciter_app.set_option(.SET_INIT_SCRIPT, uintptr(rawptr(src))), nil)
+
+	// Freed, and the block filled with something that is not the script. If the engine had kept the
+	// pointer rather than the bytes, the document below would run this instead.
+	delete(src)
+	scribble := make([]u8, len(SOURCE) + 1)
+	defer delete(scribble)
+	for &b in scribble {b = 'X'}
+
+	window, ok := test_view(t)
+	if !ok {return}
+
+	mark, err := sciter_app.eval(window, "globalThis.initMark")
+	testing.expect_value(t, err, nil)
+	defer sciter_app.value_clear(&mark)
+	n, nerr := sciter_app.value_to_int(&mark)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, n, 4321)
+
+	// Replaced, not accumulated: the second script runs and the first global is gone.
+	second := strings.clone_to_cstring("globalThis.initMark = 8642;", context.temp_allocator)
+	testing.expect_value(t, sciter_app.set_option(.SET_INIT_SCRIPT, uintptr(rawptr(second))), nil)
+
+	window2, ok2 := test_view(t)
+	if !ok2 {return}
+
+	again, aerr := sciter_app.eval(window2, "globalThis.initMark")
+	testing.expect_value(t, aerr, nil)
+	defer sciter_app.value_clear(&again)
+	n2, _ := sciter_app.value_to_int(&again)
+	testing.expect_value(t, n2, 8642)
+}
+
+// **The header's "hWnd = N/A" comments do not say which options need a window, and four of them are
+// refused outright.** `Sciter_Rt_Options` annotates only some entries with `hWnd`, and `.SMOOTH_SCROLL`
+// - annotated `value:TRUE - enable, value:FALSE - disable, enabled by default` and nothing else - is
+// refused with a nil window and accepted with one. So a nil `window` is not the safe default the
+// comment on `set_option` would suggest; it is the one to try second.
+//
+// Measured on 6.0.4.9 on Linux, which is why the platform-specific half is guarded: what an engine
+// build does with an option it has no implementation for is a property of that build.
+@(test)
+test_which_options_this_engine_takes_and_which_it_refuses :: proc(t: ^testing.T) {
+	window, ok := test_view(t)
+	if !ok {return}
+
+	// An option code the engine has never heard of is refused rather than ignored, which is what makes
+	// the return value worth checking at all.
+	testing.expect_value(
+		t,
+		sciter_app.set_option(sciter.Sciter_Rt_Options(999), 0),
+		sciter_app.Error(sciter_app.Api_Error.Option_Failed),
+	)
+
+	// The genuinely process-wide ones, all accepted with no window.
+	for option in ([]sciter.Sciter_Rt_Options {
+			.SET_SCRIPT_RUNTIME_FEATURES,
+			.SET_DEBUG_MODE,
+			.SET_UX_THEMING,
+			.SET_MAX_HTTP_DATA_LENGTH,
+			.USE_INTERNAL_HTTP_CLIENT,
+		}) {
+		testing.expectf(t, sciter_app.set_option(option, 1) == nil, "%v should be accepted", option)
+	}
+
+	when ODIN_OS == .Linux {
+		// Needs a window, despite reading like a global preference.
+		testing.expect_value(
+			t,
+			sciter_app.set_option(.SMOOTH_SCROLL, 1),
+			sciter_app.Error(sciter_app.Api_Error.Option_Failed),
+		)
+		testing.expect_value(t, sciter_app.set_option(.SMOOTH_SCROLL, 1, window), nil)
+
+		// Refused either way on this build - the option exists in the header and does nothing here.
+		for option in ([]sciter.Sciter_Rt_Options {
+				.CONNECTION_TIMEOUT,
+				.HTTPS_ERROR,
+				.FONT_SMOOTHING,
+				.ENABLE_UIAUTOMATION,
+			}) {
+			testing.expectf(t, sciter_app.set_option(option, 1) != nil, "%v with no window", option)
+			testing.expectf(t, sciter_app.set_option(option, 1, window) != nil, "%v with a window", option)
+		}
+	}
 }

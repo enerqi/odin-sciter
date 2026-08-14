@@ -76,6 +76,19 @@ against.
   of every pair are copied by the engine during the call, despite the request being asynchronous.
   Measured with a poisoned arena and a canary, for `.Get` and `.Post`; the comment asserted it and
   nothing had checked.
+- **Answering a `.DELAYED` request twice is a segfault.** A second `data_ready_async` with a request id
+  that has already been discharged does not return `.Load_Failed`; it dies inside the engine, the same
+  shape as over-releasing a borrowed handle. The first call gives no sign the id is about to become
+  unusable. Recorded on `data_ready_async`.
+- **`set_option`'s window argument is not optional for every option, and the header does not say which.**
+  Measured on 6.0.4.9 (Linux): `.SMOOTH_SCROLL` — documented as a plain on/off with no `hWnd` note —
+  is refused with a nil window and accepted with one, while `.CONNECTION_TIMEOUT`, `.HTTPS_ERROR`,
+  `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION` are refused either way on this build. Nine options are
+  accepted process-wide; an unknown option code is refused rather than ignored. The full table is on
+  `set_option`, and `docs/WINDOWS-CHECKLIST.md` says which half is expected to differ there.
+- **A compound literal cannot be passed through an overload group.** `set_state(el, {.CHECKED})` is a
+  compile error where `set_element_state(el, {.CHECKED})` is fine, because overload resolution runs
+  before the literal's type is inferred. Recorded on the group; it is why both members stay exported.
 
 ### Changed
 
@@ -136,6 +149,11 @@ against.
   reject — measured, and that is the exact shape that leaked in the examples.
 - **`just check-ownership`**, in CI — asserts the rule that if a procedure takes an allocator its result
   is yours and otherwise it is borrowed. It holds across all 30 procedures that return memory.
+- **Every exported procedure is now reached by a test**: 383 of 383, up from 378. The five that were
+  not — `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*`
+  members — took five tests, and each of the four subjects produced a measured fact the headers do not
+  carry (all three are in the documentation section above). The `.DELAYED` path in particular had never
+  been answered by a test, so `tracking.odin`'s `Delayed_Request` counter was instrumented and unused.
 - **[`docs/review/09-memory-safety-ownership.md`](docs/review/09-memory-safety-ownership.md)** — the
   memory-safety, resource-lifetime and ownership pass, with the measurements behind everything above.
 - **`just parity`** — which C-API slots `sciter_app` reaches, measured from the headers with comments
