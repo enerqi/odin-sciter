@@ -593,8 +593,17 @@ http_request :: proc(
 ) -> Error {
 	w := utf16_from_string(url, context.temp_allocator)
 
-	// The engine wants an array of {name, value} UTF-16 pointers; both strings have to stay alive for
-	// the call, which the temp allocator covers.
+	// The engine wants an array of {name, value} UTF-16 pointers, and everything here - the URL, the
+	// array, and both strings of every pair - is built in the temp allocator while the request itself is
+	// **asynchronous**, which is the shape a use-after-free hides in: a caller that frees its arena at
+	// the end of the turn would pull the memory out from under an in-flight request.
+	//
+	// Measured, because "the engine copies it" was an assumption and this is where being wrong is
+	// expensive. Against a local server, for `.Get` and `.Post` alike: issue the request, `free_all` the
+	// temp arena, overwrite it (a canary taken next to these allocations reads 0xAA afterwards, so the
+	// overwrite lands), then pump. The server received `?page=2&q=two%20words` and the POST body
+	// `page=2&q=two%20words` intact both times. So the engine copies during the call and the temp
+	// allocator is correct here.
 	encoded: []sciter.Request_Param
 	if len(params) > 0 {
 		encoded = make([]sciter.Request_Param, len(params), context.temp_allocator)

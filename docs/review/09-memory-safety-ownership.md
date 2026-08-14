@@ -305,6 +305,15 @@ Recorded because the absence of a finding here is itself the useful result.
   `n += copy(d[n:], b[:w])`), so an over-long diagnostic truncates rather than overflowing. The comment's
   cross-thread claim also holds: `fmt.eprintfln` was measured making **zero** allocations from
   `context.temp_allocator`, so the captured context's per-thread arena is not touched from another thread.
+- **`http_request`'s temp-allocator arguments survive an async request.** This was the last unmeasured
+  lifetime claim in the package and the one shaped most like a real bug: `events.odin:594-607` builds the
+  URL, the `Request_Param` array and both strings of every pair in `context.temp_allocator`, and the
+  request is asynchronous, so a caller freeing its arena at the end of the turn would be pulling memory
+  out from under an in-flight request. Measured against a local server, for `.Get` and `.Post`: issue,
+  `free_all`, overwrite the arena, then pump. A canary allocated next to those buffers reads `0xAA`
+  afterwards — so the overwrite really landed — and the server still received
+  `?page=2&q=two%20words` and the POST body `page=2&q=two%20words` intact. The engine copies during the
+  call. No bug, and the comment now says so with the evidence.
 - **The gradient-stop cast is layout-safe.** `set_fill_gradient_*` casts `[]Color_Stop` straight to
   `^sciter.Sc_Color_Stop`. `Color_Stop` is `{Color, f32}`, `Sc_Color_Stop` is `{Sc_Color, f32}` and
   `SC_COLOR_STOP` in `sciter-x-graphics.h:35-39` is `{SC_COLOR color; float offset;}` — all three agree.
