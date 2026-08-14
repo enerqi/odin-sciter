@@ -1320,6 +1320,73 @@ test_a_failing_eval_returns_an_error_string_and_is_still_released :: proc(t: ^te
 	testing.expect(t, strings.contains(text, "boom"))
 }
 
+// **The same split holds for all three calling procedures, and it is the whole failure model:**
+//
+//	the error code answers "could I call it?"   - a name nothing defines is a real error
+//	the returned Value answers "did it work?"   - a function that ran and threw is an error string
+//
+// Measured on 6.0.4.9 for `call`, `call_function` and `call_method` alike. The two halves never
+// overlap: a thrown exception is `err = nil` with an `.ERROR`-unit result, and a missing name is an
+// error code with an `.UNDEFINED` result. Which also settles the ownership question on each path - the
+// not-found result holds no reference and is safe to drop, and the *threw* result is a live string that
+// leaks if the caller only checks the code.
+@(test)
+test_a_script_call_reports_a_throw_in_the_value_and_a_missing_name_in_the_error :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	DOC :: `<html><head><script type="module">
+	globalThis.ok    = function(){ return 42; }
+	globalThis.boom  = function(){ throw new Error("call-boom"); }
+	document.$("#d").mboom = function(){ throw new Error("method-boom"); }
+	</script></head><body><div id=d>hi</div></body></html>`
+
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+	root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	d, derr := sciter_app.select_first(root, "#d")
+	testing.expect_value(t, derr, nil)
+
+	// A call that works is an ordinary value.
+	good, gerr := sciter_app.scoped_call(window, "ok")
+	testing.expect_value(t, gerr, nil)
+	testing.expect(t, !sciter_app.value_is_error(&good))
+	n, nerr := sciter_app.value_to_int(&good)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, n, 42)
+
+	// A function that throws: no error code, an error string in hand.
+	threw, terr := sciter_app.scoped_call(window, "boom")
+	testing.expect_value(t, terr, nil)
+	testing.expect(t, sciter_app.value_is_error(&threw))
+	msg, merr := sciter_app.value_to_string(&threw, context.temp_allocator)
+	testing.expect_value(t, merr, nil)
+	testing.expect(t, strings.contains(msg, "call-boom"))
+
+	// `call_function` reaches the same globals from an element, and reports the same way.
+	fthrew, ferr := sciter_app.scoped_call_function(d, "boom")
+	testing.expect_value(t, ferr, nil)
+	testing.expect(t, sciter_app.value_is_error(&fthrew))
+
+	// So does a method on the element's own script object.
+	mthrew, mmerr := sciter_app.scoped_call_method(d, "mboom")
+	testing.expect_value(t, mmerr, nil)
+	testing.expect(t, sciter_app.value_is_error(&mthrew))
+
+	// The other half: a name nothing defines *is* an error, and the result is undefined rather than a
+	// message. The codes differ per entry point - `call` goes through SciterCall, which reports a bare
+	// false, and the two element forms carry the DOM result through.
+	missing, cerr := sciter_app.scoped_call(window, "noSuchFunction")
+	testing.expect_value(t, cerr, sciter_app.Error(sciter_app.Api_Error.Call_Failed))
+	testing.expect(t, sciter_app.value_is_undefined(&missing))
+
+	_, fmerr := sciter_app.scoped_call_function(d, "noSuchFunction")
+	testing.expect_value(t, fmerr, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+
+	_, mmiss := sciter_app.scoped_call_method(d, "noSuchMethod")
+	testing.expect_value(t, mmiss, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+}
+
 // `scoped_make_element` gives up the reference the engine handed back, and inserting does not consume
 // it - the document takes its own - so the element is still in the tree after the scope ends.
 @(test)

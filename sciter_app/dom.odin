@@ -847,6 +847,11 @@ expando :: proc(element: Element) -> (value: Value, err: Error) {
 // a plain `function` in the document answers here and is `.OPERATION_FAILED` through `call_method`.
 //
 // The result owns a reference; `value_clear` it. The arguments do not.
+//
+// Same failure split as `call` in `window.odin`, measured: a name nothing defines is
+// `.OPERATION_FAILED` with an `.UNDEFINED` result, and a function that **ran and threw** is `err = nil`
+// with an error string as the result - `value_is_error` is the test, and the message carries a stack
+// trace. `scoped_call_function` releases that string whichever way the call went.
 call_function :: proc(element: Element, function: string, args: ..Value) -> (result: Value, err: Error) {
 	argv: ^sciter.Value
 	if len(args) > 0 {
@@ -865,6 +870,10 @@ call_function :: proc(element: Element, function: string, args: ..Value) -> (res
 }
 
 // Calls a method on the element's script object. The result owns a reference; `value_clear` it.
+//
+// Same failure split as `call_function` above, measured: a method nothing defines is
+// `.OPERATION_FAILED` with an `.UNDEFINED` result, and one that ran and threw is `err = nil` with an
+// error string as the result. `scoped_call_method` is the releasing form.
 call_method :: proc(element: Element, method: string, args: ..Value) -> (result: Value, err: Error) {
 	argv: ^sciter.Value
 	if len(args) > 0 {

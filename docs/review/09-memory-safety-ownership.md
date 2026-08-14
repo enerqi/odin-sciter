@@ -173,8 +173,28 @@ So `SciterEval` answers TRUE for a failed script and reports the failure *in the
 **Fix:** applied. `eval`'s doc comment now states the measured behaviour with the `value_is_error`
 recipe; the stale claims in `examples/eval.odin` are corrected; and
 `test_a_failing_eval_returns_an_error_string_and_is_still_released` pins it, in the file
-`just test_sanitize eval` runs under ASan. Whether `call`, `call_method` and `call_function` behave the
-same way was **not** measured — they are the obvious next check.
+`just test_sanitize eval` runs under ASan.
+
+**Follow-up, measured: `call`, `call_function` and `call_method` behave the same way, and the model is
+cleaner than "eval is odd".** The four entry points share one failure split, and the two halves never
+overlap:
+
+> **the error code answers "could I call it?"; the returned Value answers "did it work?"**
+
+| call | works | throws | name not defined |
+|---|---|---|---|
+| `call` | `nil`, INT | **`nil`**, error string | `.Call_Failed`, UNDEFINED |
+| `call_function` | `nil`, INT | **`nil`**, error string | `.OPERATION_FAILED`, UNDEFINED |
+| `call_method` | `nil`, INT | **`nil`**, error string | `.OPERATION_FAILED`, UNDEFINED |
+| `eval` | `nil`, INT | **`nil`**, error string | — |
+
+A *lookup* failure is a real error code with an `.UNDEFINED` result that holds no reference and is safe
+to drop — which is why the `_, _ = asset_call(…, "noSuchMethod")` sites in the examples are not leaks. A
+*script* failure is never in the error code, and its result is a live reference. So on all four, a
+caller who checks only `err` both misreads a thrown exception as success and leaks while doing it.
+
+All three doc comments now state this, and
+`test_a_script_call_reports_a_throw_in_the_value_and_a_missing_name_in_the_error` pins all six cases.
 
 ### R9-05 — `sciter.load` leaks the executable-directory candidate  [severity: minor]
 

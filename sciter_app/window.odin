@@ -352,6 +352,18 @@ eval :: proc(window: Window, script: string) -> (result: Value, err: Error) {
 //
 // The returned Value owns a reference; `clear` it when done. The arguments do not - they are still the
 // caller's to clear.
+//
+// **The error code and the result answer two different questions**, and the split is the same one
+// `eval` has (measured on 6.0.4.9 for this call, `call_function` and `call_method` alike):
+//
+//   - `err` answers *could I call it?* A name nothing defines is `.Call_Failed`, with an `.UNDEFINED`
+//     result that holds no reference.
+//   - the *result* answers *did it work?* A function that ran and threw comes back with `err = nil` and
+//     an error string - `value_is_error` is true, and `value_to_string` is the message plus a stack
+//     trace.
+//
+// So a caller that checks only `err` treats a thrown exception as success, and drops a live reference
+// while doing it. `scoped_call` releases it either way.
 call :: proc(window: Window, function: string, args: ..Value) -> (result: Value, err: Error) {
 	name := to_cstring(function, context.temp_allocator)
 	value_init(&result)
