@@ -76,6 +76,13 @@ jobs:
       - name: Check the documented counts
         run: just stats --check
 
+      # The ownership rule in docs/rules.md section 4 - if it takes an allocator the result is yours,
+      # otherwise it is borrowed. It holds across all 30 procedures that return memory today, and it
+      # only keeps holding if something checks: a rule with no check is the same shape as a lint job
+      # that never runs. Headers and signatures only, so it needs no engine.
+      - name: Check the ownership rule
+        run: just check-ownership
+
       - name: Type check and build everything
         run: just check
 
