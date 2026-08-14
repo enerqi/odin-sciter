@@ -115,6 +115,15 @@ against.
 
 ### Added
 
+- **`sciter_app/value_scope.odin`** — a `Value_Scope` holds a batch of engine references with one
+  lifetime and releases them together, which is what `scoped_` cannot do for a pile produced in a loop
+  (`@(deferred_out)` fires at the end of the calling scope, which there is one iteration). The same
+  move rule 4 already recommends for allocations, applied to the other half: an arena for the Odin
+  memory and a scope for the references, released at the same `defer`.
+- **`just leak-check`**, in CI — builds `examples/leak_sweep.odin` with `-debug`, exercises the
+  resource-owning paths, and fails if the engine is still holding anything at exit. It is a program
+  rather than a test because an Odin test binary has no end-of-run hook: measured, neither `@(fini)`
+  nor a libc `atexit` handler runs in one, since the runner leaves through `os.exit`.
 - **`sciter_app/tracking.odin`** — debug-build tracking for the resources that live *inside* the engine,
   which `mem.Tracking_Allocator` cannot see: Values, element and node references, taken requests,
   images, paths, texts and archives, plus the graphics state stack and unanswered `.DELAYED` requests.

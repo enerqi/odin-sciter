@@ -69,6 +69,24 @@ _, _ = sciter_app.scoped_eval(window, "refresh()")      // released too, discard
 Reach for the plain one when the Value has to outlive the scope — stored in a struct, returned upwards,
 handed to the engine to keep — and for `scoped_` otherwise. See `sciter_app/scoped.odin`.
 
+**For a pile rather than one value, use a `Value_Scope`.** `scoped_` releases at the end of the calling
+scope, which for something produced inside a loop is one iteration — so a batch whose size is decided at
+run time needs the other shape, and it is the same one rule 4 recommends for allocations:
+
+```odin
+scope: sciter_app.Value_Scope
+defer sciter_app.scope_destroy(&scope)
+
+rows := sciter_app.scope_add(&scope, sciter_app.call(window, "getRows")) or_return
+for i in 0 ..< sciter_app.value_len(&rows) or_return {
+    row := sciter_app.scope_add(&scope, sciter_app.value_at(&rows, i)) or_return
+    // ... no value_clear anywhere ...
+}
+```
+
+An arena for the Odin memory and a scope for the engine references, released at the same `defer`, is the
+whole pattern.
+
 What this costs to skip is not theoretical: measured on the vendored engine, 2000 discarded `eval`s of
 a 100 kB string grow the process by **390 MB**, and the same loop cleared grows it by 76 kB. And the
 shape of the script is no guide — an assignment (`x = "hi"`) evaluates to a STRING and

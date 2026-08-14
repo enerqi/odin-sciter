@@ -159,6 +159,25 @@ territory, in `core:dynlib`, and worth reporting upstream rather than working ar
 `file:///C:/x/y`. Confirm it, since it is the only place in the repository that builds a URL from a
 filesystem path.
 
+**The ownership types and the leak sweep are new since this list was written, and none of it has run on
+Windows.** All of it is platform-independent by construction, which is the reason to check it rather
+than the reason to skip it:
+
+- `Owned_Element` and `Owned_Request` are `distinct` types over the same handles, so they cannot behave
+  differently per platform — but they changed the signature of `use_element`, `remove_element` and
+  `use_request`, and every example was touched. A build failure here is a missed call site, not a
+  platform difference.
+- `just leak-check` builds `examples/leak_sweep.odin` with `-debug` and fails if the engine is still
+  holding anything at exit. It needs a display (it makes a windowless view, which still needs one — see
+  `windowless.odin`), so run it after the window canary. A leak reported *only* on Windows would be a
+  genuine finding: it would mean a reference-counting path differs there, which nothing in the wrapper
+  intends.
+- `sciter_app/tracking.odin` compiles to nothing without `-debug`, so confirm the ordinary
+  `just example-tests` run is unaffected and only `leak-check` pays for it.
+- `just check-ownership` is a Python script over the source and needs neither engine nor display; it
+  should pass identically. If Python is missing from the Windows runner, that step is the one to skip
+  rather than to fix in a hurry.
+
 ## After it works
 
 - update the platform table in `README.md` (Windows row: vendored yes, tested yes)

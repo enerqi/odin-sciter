@@ -1560,3 +1560,65 @@ test_every_scoped_value_producer_releases :: proc(t: ^testing.T) {
 	testing.expect_value(t, berr, nil)
 	testing.expect_value(t, handled, false)
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Value_Scope: a batch of references with one lifetime
+//
+// `scoped_eval` covers the Value that dies at the end of the scope it was taken in. It cannot cover a
+// pile produced in a loop - `@(deferred_out)` releases at the end of the *calling* scope, which for a
+// loop body is one iteration. That is what a scope is for, and the tracker is what proves it works.
+@(test)
+test_a_value_scope_releases_the_whole_batch :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	DOC :: `<html><head><script type="module">
+	globalThis.getRows = function(){ return [{name:"a"},{name:"b"},{name:"c"}]; }
+	</script></head><body></body></html>`
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(true)
+	before := sciter_app.outstanding_resources()
+
+	scope: sciter_app.Value_Scope
+	names: [dynamic]string
+	defer delete(names)
+
+	{
+		rows, rerr := sciter_app.scope_add(&scope, sciter_app.call(window, "getRows"))
+		testing.expect_value(t, rerr, nil)
+
+		n, nerr := sciter_app.value_len(&rows)
+		testing.expect_value(t, nerr, nil)
+		testing.expect_value(t, n, 3)
+
+		for i in 0 ..< n {
+			row, err := sciter_app.scope_add(&scope, sciter_app.value_at(&rows, i))
+			testing.expect_value(t, err, nil)
+			name, gerr := sciter_app.scope_add(&scope, sciter_app.value_get(&row, "name"))
+			testing.expect_value(t, gerr, nil)
+			s, serr := sciter_app.value_to_string(&name, context.temp_allocator)
+			testing.expect_value(t, serr, nil)
+			append(&names, s)
+		}
+	}
+
+	testing.expect_value(t, len(names), 3)
+	testing.expect_value(t, names[0], "a")
+	testing.expect_value(t, names[2], "c")
+
+	// Seven references are outstanding at this point: the array, and a row plus a name for each of three
+	// rows. Nothing has been cleared by hand.
+	when ODIN_DEBUG {
+		during := sciter_app.outstanding_resources()
+		testing.expect_value(t, sciter_app.scope_len(&scope), 7)
+		testing.expect(t, during[.Value] > before[.Value], "the batch should be outstanding before release")
+	}
+
+	sciter_app.scope_destroy(&scope)
+
+	after := sciter_app.outstanding_resources()
+	testing.expect_value(t, after[.Value], before[.Value])
+	testing.expect_value(t, sciter_app.scope_len(&scope), 0)
+}

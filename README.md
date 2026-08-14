@@ -8,7 +8,7 @@ browser and not Electron: the whole engine is a single ~25 MB shared library wit
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and 30 examples, 375 tests and eleven
+> engine, there is an Odin-shaped layer on top of them, and 30 examples, 376 tests and eleven
 > guides cover it (`just stats` prints those; they are measured, not maintained by hand). Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
 > been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.

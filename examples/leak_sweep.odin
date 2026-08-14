@@ -62,6 +62,7 @@ main :: proc() {
 	sweep_nodes(view.window)
 	sweep_graphics()
 	sweep_scoped(view.window)
+	sweep_value_scope(view.window)
 
 	// The view's own surface is Odin memory, not an engine resource, but tearing it down here keeps the
 	// report about the engine alone.
@@ -223,6 +224,33 @@ sweep_graphics :: proc() {
 	check("path_move_to", sciter_app.path_move_to(path, 0, 0))
 	check("path_line_to", sciter_app.path_line_to(path, 10, 10))
 	check("release_path", sciter_app.release_path(path))
+}
+
+// A batch with one lifetime: nothing here is cleared by hand, and the scope gives the lot back.
+sweep_value_scope :: proc(window: sciter_app.Window) {
+	scope: sciter_app.Value_Scope
+	defer sciter_app.scope_destroy(&scope)
+
+	doc, perr := sciter_app.scope_add(&scope, sciter_app.value_parse(`{"a":"one","b":"two"}`))
+	check("scope_add(value_parse)", perr)
+
+	for key in ([]string{"a", "b"}) {
+		_, gerr := sciter_app.scope_add(&scope, sciter_app.value_get(&doc, key))
+		check("scope_add(value_get)", gerr)
+	}
+
+	// `scope_release` empties it without giving the list's own memory back, which is what a handler
+	// reusing one scope per turn of the pump wants.
+	sciter_app.scope_release(&scope)
+	if n := sciter_app.scope_len(&scope); n != 0 {
+		fmt.eprintfln("  ! scope_release left %d value(s)", n)
+		failures += 1
+	}
+
+	// And it is usable again afterwards.
+	again, aerr := sciter_app.scope_add(&scope, sciter_app.eval(window, `"reused"`))
+	check("scope_add after release", aerr)
+	_ = again
 }
 
 // The scoped forms release on the way out of the scope, so the sweep should see nothing left even
