@@ -462,7 +462,8 @@ test_elements_created_later_are_asked_about :: proc(t: ^testing.T) {
 	before := len(app.requested)
 	body, _ := sciter_app.select_first(root, "body")
 
-	el, err := sciter_app.make_element("div", "")
+	el_owned, err := sciter_app.make_element("div", "")
+	el := sciter_app.borrow_element(el_owned)
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, sciter_app.set_attribute(el, "style", "behavior: my-gauge"), nil)
 	testing.expect_value(t, sciter_app.insert_element(el, body), nil) // nil index: append
@@ -483,7 +484,8 @@ test_removing_the_element_detaches_the_behavior :: proc(t: ^testing.T) {
 
 	g2, err := sciter_app.select_first(root, "#g2")
 	testing.expect_value(t, err, nil)
-	testing.expect_value(t, sciter_app.remove_element(g2), nil)
+	_, g2_rmerr := sciter_app.remove_element(g2)
+	testing.expect_value(t, g2_rmerr, nil)
 	sciter_app.heartbeat()
 
 	testing.expect_value(t, app.freed, freed_before + 1)

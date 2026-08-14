@@ -1403,7 +1403,7 @@ test_a_scoped_element_stays_in_the_document_after_insertion :: proc(t: ^testing.
 	{
 		item, ierr := sciter_app.scoped_make_element("li", "only")
 		testing.expect_value(t, ierr, nil)
-		testing.expect_value(t, sciter_app.insert_element(item, list), nil)
+		testing.expect_value(t, sciter_app.insert_element(sciter_app.borrow_element(item), list), nil)
 	} // the caller's reference goes here; the document's does not
 
 	n, nerr := sciter_app.child_count(list)
@@ -1425,8 +1425,9 @@ test_a_scoped_element_stays_in_the_document_after_insertion :: proc(t: ^testing.
 	{
 		copy, cerr := sciter_app.scoped_clone_element(first)
 		testing.expect_value(t, cerr, nil)
-		testing.expect_value(t, sciter_app.insert_element(copy, list), nil)
-		testing.expect_value(t, sciter_app.set_text(copy, "second"), nil)
+		borrowed := sciter_app.borrow_element(copy)
+		testing.expect_value(t, sciter_app.insert_element(borrowed, list), nil)
+		testing.expect_value(t, sciter_app.set_text(borrowed, "second"), nil)
 	}
 
 	after, aerr := sciter_app.child_count(list)
@@ -1467,7 +1468,8 @@ test_the_resource_tracker_sees_a_leaked_value_and_a_leaked_element :: proc(t: ^t
 	_ = leaked
 
 	// And an element reference that is never given back.
-	orphan, oerr := sciter_app.make_element("li", "never inserted")
+	orphan_owned, oerr := sciter_app.make_element("li", "never inserted")
+	orphan := sciter_app.borrow_element(orphan_owned)
 	testing.expect_value(t, oerr, nil)
 
 	during := sciter_app.outstanding_resources()
@@ -1482,7 +1484,7 @@ test_the_resource_tracker_sees_a_leaked_value_and_a_leaked_element :: proc(t: ^t
 
 	// Now settle both, and the ledger comes back to where it started.
 	sciter_app.value_clear(&leaked)
-	testing.expect_value(t, sciter_app.unuse_element(orphan), nil)
+	testing.expect_value(t, sciter_app.unuse_element(orphan_owned), nil)
 
 	settled := sciter_app.outstanding_resources()
 	testing.expect_value(t, settled[.Value], before[.Value])

@@ -79,6 +79,14 @@ against.
 
 ### Changed
 
+- **`make_element`, `clone_element`, `use_element` and `remove_element(finalize = false)` hand back an
+  `Owned_Element`.** The borrowed handle every lookup returns and the one that owes an `unuse_element`
+  are now separate types, and `unuse_element` accepts only the second — so releasing a handle you never
+  held does not compile. `use_element` returns `(Owned_Element, Error)` and `remove_element` returns
+  `(Owned_Element, Error)`, the handle being nil when it destroyed the element. `borrow_element(owned)`
+  is the free cast for everything that reads, writes or moves it; borrowing once at the top of a scope
+  is the idiom, and is what kept this change to a handful of lines per call site. **Breaking**, for code
+  that creates, clones, holds or removes elements.
 - **`take_request` and `use_request` hand back an `Owned_Request`.** The borrowed handle a load callback
   receives and the taken one that owes an `unuse_request` are now separate types, and `unuse_request`
   accepts only the second — so releasing a handle you never took does not compile. This is the type
@@ -107,6 +115,12 @@ against.
 
 ### Added
 
+- **`sciter_app/tracking.odin`** — debug-build tracking for the resources that live *inside* the engine,
+  which `mem.Tracking_Allocator` cannot see: Values, element and node references, taken requests,
+  images, paths, texts and archives, plus the graphics state stack and unanswered `.DELAYED` requests.
+  `track_resources(true)` then `report_leaked_resources()`. Handles are reported with the site that
+  acquired them; Values are counted rather than identified, because a Value is passed by value and
+  `value_copy` makes two of them share a payload. Compiles to nothing without `-debug`.
 - **`scoped_` procedures** (`sciter_app/scoped.odin`) — a twin of every `Value` producer plus
   `scoped_make_element` / `scoped_clone_element`, releasing at the end of the calling scope via
   `@(deferred_out)`. It fires even when the caller writes `_, _ =`, which `@(require_results)` does not

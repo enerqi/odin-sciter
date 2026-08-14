@@ -96,14 +96,27 @@ after a load is the whole time you are looking at it. To hold one longer — acr
 struct that outlives the callback — take a reference:
 
 ```odin
-sciter_app.use_element(el)
-defer sciter_app.unuse_element(el)
+held, err := sciter_app.use_element(el)   // an Owned_Element
+defer sciter_app.unuse_element(held)
 ```
 
 Otherwise the handle dangles the moment script removes the element.
 
 The exception is an element you **made** rather than found: `make_element` and `clone_element` hand back
 a reference that is already yours, and it stays yours after the element is inserted.
+
+The two are different types, for the reason requests are: `Element` is the borrowed handle every
+lookup returns, and `Owned_Element` is what `make_element`, `clone_element`, `use_element` and
+`remove_element(finalize = false)` hand back. `unuse_element` accepts only the second, so releasing a
+handle you never held does not compile. `borrow_element(owned)` is the free cast for everything that
+reads, writes or moves it, and borrowing once at the top of a scope is the shape to use:
+
+```odin
+item := sciter_app.make_element("li", "third") or_return
+defer sciter_app.unuse_element(item)
+el := sciter_app.borrow_element(item)       // then `el` everywhere below
+sciter_app.insert_element(el, list) or_return
+```
 
 **Nodes** are the same, with one addition: a node you created belongs to you until `node_insert` puts it
 in a document. Insert it, or release it, or it leaks.
@@ -113,17 +126,33 @@ one alive past that, and every `take_request` owes an `unuse_request`. A request
 is a resource the document waits on forever. This was measured, not assumed: the engine hands out the
 *same* pointer for a later, unrelated request once the first is finished with.
 
-Requests are also the one place where the *type* enforces this rather than the prose, because the
-failure is unrecoverable and immediate. `take_request` and `use_request` hand back an `Owned_Request`;
-`unuse_request` takes only that; and the readers and answerers take only the borrowed `Request`, so
-`borrow_request(owned)` marks each crossing. Measured on 6.0.4.9: a single `unuse_request` on a borrowed
-handle answers `.OK` and then segfaults the process a request or two later, with nothing on the stack
-pointing at the mistake. Under-flowing a reference count is not a leak you find later — it is a crash
-somewhere else, so it is worth a type.
+The same split applies, in the same spelling: `take_request` and `use_request` hand back an
+`Owned_Request`, `unuse_request` takes only that, and `borrow_request(owned)` marks each crossing.
 
-The same asymmetry applies to elements, and there it is still only documented: `unuse_element` on a
-borrowed handle is `.OK` the first time and a segfault the second (see `use_element`). Only unuse what
-`make_element`, `clone_element`, `remove_element(finalize = false)` or your own `use_element` gave you.
+**Why both of these are types rather than paragraphs.** The two ways to get a reference count wrong
+fail in opposite directions, and only one is survivable. Forgetting to release leaks — bad, and exactly
+what the debug tracker below finds. Releasing something you never held under-flows the count, and that
+is a crash somewhere else entirely: measured on 6.0.4.9, one spurious `unuse_request` on a borrowed
+handle answers `.OK` and then kills the process a request or two later, and for `unuse_element` it is
+`.OK` on the first and a segfault on the second. Every one of those calls reports success. Nothing at
+run time can catch that, so the type does.
+
+### Finding what you did leak
+
+`mem.Tracking_Allocator` sees every allocation this package makes on your behalf and none of the
+engine's own, so a leaked `Value` or element reference is invisible to it. `sciter_app/tracking.odin`
+is the other half, and it is only compiled in a `-debug` build:
+
+```odin
+sciter_app.track_resources(true)
+defer sciter_app.report_leaked_resources()   // names what is outstanding, and where it came from
+```
+
+Handles are reported exactly, with the site that acquired them. Values are counted rather than
+identified — a `Value` is passed by value and `value_copy` makes two of them share one payload, so
+there is no identity to report — which still names the site. It also counts the two obligations that are
+otherwise fatal rather than diagnosable: an unbalanced `save_state`, and a `.DELAYED` load request
+nobody answered.
 
 ---
 

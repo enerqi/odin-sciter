@@ -649,8 +649,9 @@ test_expando_crosses_both_ways :: proc(t: ^testing.T) {
 	testing.expect_value(t, ns, "set by Odin")
 
 	// A detached element has no document and so no object.
-	orphan, _ := sciter_app.make_element("div")
-	defer sciter_app.unuse_element(orphan)
+	orphan_owned, _ := sciter_app.make_element("div")
+	orphan := sciter_app.borrow_element(orphan_owned)
+	defer sciter_app.unuse_element(orphan_owned)
 	_, oerr := sciter_app.expando(orphan)
 	testing.expect_value(t, oerr, sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
 }
@@ -701,8 +702,9 @@ test_combine_url_resolves_against_the_document :: proc(t: ^testing.T) {
 		testing.expectf(t, got == pair[1], "combine_url(%q) = %q, want %q", pair[0], got, pair[1])
 	}
 
-	orphan, _ := sciter_app.make_element("div")
-	defer sciter_app.unuse_element(orphan)
+	orphan_owned, _ := sciter_app.make_element("div")
+	orphan := sciter_app.borrow_element(orphan_owned)
+	defer sciter_app.unuse_element(orphan_owned)
 	_, oerr := sciter_app.combine_url(orphan, "x.css", context.temp_allocator)
 	testing.expect_value(t, oerr, sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
 }
@@ -794,8 +796,9 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 		sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE),
 	)
 
-	orphan, _ := sciter_app.make_element("div")
-	defer sciter_app.unuse_element(orphan)
+	orphan_owned, _ := sciter_app.make_element("div")
+	orphan := sciter_app.borrow_element(orphan_owned)
+	defer sciter_app.unuse_element(orphan_owned)
 	testing.expect_value(
 		t,
 		sciter_app.http_request(orphan, "file://examples/input.odin"),

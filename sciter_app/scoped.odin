@@ -132,13 +132,13 @@ scoped_behavior_value :: proc(element: Element) -> (value: Value, handled: bool,
 
 // `make_element`, with the reference it hands back released at the end of the calling scope.
 @(deferred_out = release_scoped_element)
-scoped_make_element :: proc(tag: string, text := "") -> (element: Element, err: Error) {
+scoped_make_element :: proc(tag: string, text := "") -> (element: Owned_Element, err: Error) {
 	return make_element(tag, text)
 }
 
 // `clone_element`, with the reference it hands back released at the end of the calling scope.
 @(deferred_out = release_scoped_element)
-scoped_clone_element :: proc(element: Element) -> (copy: Element, err: Error) {
+scoped_clone_element :: proc(element: Element) -> (copy: Owned_Element, err: Error) {
 	return clone_element(element)
 }
 
@@ -160,7 +160,7 @@ release_scoped_behavior_value :: proc(value: Value, handled: bool, err: Error) {
 }
 
 @(private = "file")
-release_scoped_element :: proc(element: Element, err: Error) {
+release_scoped_element :: proc(element: Owned_Element, err: Error) {
 	if err == nil && element != nil {
 		unuse_element(element)
 	}

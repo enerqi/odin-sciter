@@ -16,8 +16,41 @@ import sciter ".."
 import "base:runtime"
 import "core:mem"
 
-// A DOM element. Sciter's HELEMENT.
+// A DOM element, **borrowed**. Sciter's HELEMENT.
+//
+// This is what `select_*`, `child`, `parent`, `root`, `element_at` and an event's parameters hand back:
+// a pointer into the engine's document tree that you hold no reference to. It is valid while the
+// element is in the document, which for anything reached during an event handler or straight after a
+// load is the whole time you are looking at it.
 Element :: distinct sciter.Helement
+
+// An element you hold a reference to, and therefore **owe an `unuse_element`**. It comes from
+// `make_element`, `clone_element`, `remove_element(finalize = false)` and `use_element`, and from
+// nowhere else.
+//
+// Separate from `Element` for the reason `Owned_Request` is separate from `Request`: the two regimes
+// fail in opposite directions and only one is recoverable. An element you made and never unused leaks
+// inside the engine, where Odin's allocator tracking cannot see it - bad, survivable. Releasing one you
+// never held under-flows the engine's reference count, and that is measured on 6.0.4.9 as `.OK` for the
+// first spurious `unuse_element` and a **segfault on the second**, with nothing on the stack pointing
+// at either.
+//
+// `unuse_element` therefore takes this type and nothing else. Where an owned element has to be passed
+// to anything that reads or moves it - `set_text`, `insert_element`, `select_first` - `borrow_element`
+// says so, and borrowing once at the top of a scope is the usual shape.
+Owned_Element :: distinct Element
+
+// Views an owned element as a borrowed one, for the calls that read, write or move it.
+//
+//	item := sciter_app.make_element("li", "third") or_return
+//	defer sciter_app.unuse_element(item)
+//	sciter_app.insert_element(sciter_app.borrow_element(item), list) or_return
+//
+// It takes no reference and gives none up - it is a cast, and the `Owned_Element` still owes the
+// release.
+borrow_element :: proc(element: Owned_Element) -> Element {
+	return Element(element)
+}
 
 // A DOM node - text and comments, the things that are not elements.
 Node :: distinct sciter.Hnode
@@ -35,15 +68,16 @@ Node :: distinct sciter.Hnode
 // The elements that owe an `unuse_element` are exactly the ones this package says hand back a reference
 // of their own: `make_element`, `clone_element`, `remove_element(finalize = false)`, and anything you
 // called `use_element` on yourself. Everything else is borrowed.
-use_element :: proc(element: Element, loc := #caller_location) -> Error {
-	err := dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
-	if err == nil {
-		track_acquire(.Element, rawptr(element), loc)
+use_element :: proc(element: Element, loc := #caller_location) -> (owned: Owned_Element, err: Error) {
+	err = dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
+	if err != nil {
+		return nil, err
 	}
-	return err
+	track_acquire(.Element, rawptr(element), loc)
+	return Owned_Element(element), nil
 }
 
-unuse_element :: proc(element: Element) -> Error {
+unuse_element :: proc(element: Owned_Element) -> Error {
 	err := dom_err(sciter.api().Sciter_UnuseElement(sciter.Helement(element)))
 	if err == nil {
 		track_release(.Element, rawptr(element))
@@ -564,7 +598,7 @@ set_element_value :: proc(element: Element, value: ^Value) -> Error {
 //
 // The returned element carries a reference that belongs to the caller: `unuse_element` it once it has
 // been inserted, or to throw it away.
-make_element :: proc(tag: string, text := "", loc := #caller_location) -> (element: Element, err: Error) {
+make_element :: proc(tag: string, text := "", loc := #caller_location) -> (element: Owned_Element, err: Error) {
 	he: sciter.Helement
 
 	w: [^]u16
@@ -577,19 +611,19 @@ make_element :: proc(tag: string, text := "", loc := #caller_location) -> (eleme
 		return nil, .Not_Found
 	}
 	track_acquire(.Element, rawptr(he), loc)
-	return Element(he), nil
+	return Owned_Element(he), nil
 }
 
 // A deep copy of `element`, disconnected from any document: children, attributes and all. Same
 // ownership as `make_element` - the copy carries a reference that is yours.
-clone_element :: proc(element: Element, loc := #caller_location) -> (copy: Element, err: Error) {
+clone_element :: proc(element: Element, loc := #caller_location) -> (copy: Owned_Element, err: Error) {
 	he: sciter.Helement
 	dom_err(sciter.api().SciterCloneElement(sciter.Helement(element), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
 	track_acquire(.Element, rawptr(he), loc)
-	return Element(he), nil
+	return Owned_Element(he), nil
 }
 
 // Puts `element` into `parent` at `index`. **`nil` appends**, which is what the type says rather than
@@ -628,18 +662,26 @@ insert_element :: proc(element: Element, parent: Element, index: Maybe(Child_Ind
 // rather than left to the caller because the C API does not take one - a bare `SciterDetachElement`
 // drops the last reference to an element nobody else is holding, and the next use of the handle is a
 // segfault rather than an error code.
-remove_element :: proc(element: Element, finalize := true) -> Error {
+//
+// The reference comes back as the first result, so the ownership is in the signature rather than only
+// in this comment:
+//
+//	detached, err := sciter_app.remove_element(row, finalize = false)
+//	defer sciter_app.unuse_element(detached)
+//
+// `detached` is nil for `finalize = true`, which destroys the element and hands back nothing to hold.
+remove_element :: proc(element: Element, finalize := true) -> (detached: Owned_Element, err: Error) {
 	if finalize {
-		return dom_err(sciter.api().SciterDeleteElement(sciter.Helement(element)))
+		return nil, dom_err(sciter.api().SciterDeleteElement(sciter.Helement(element)))
 	}
 
 	// Before, not after: after the detach there may be nothing left to take a reference to.
-	use_element(element) or_return
-	if err := dom_err(sciter.api().SciterDetachElement(sciter.Helement(element))); err != nil {
-		unuse_element(element)
-		return err
+	owned := use_element(element) or_return
+	if e := dom_err(sciter.api().SciterDetachElement(sciter.Helement(element))); e != nil {
+		unuse_element(owned)
+		return nil, e
 	}
-	return nil
+	return owned, nil
 }
 
 // Exchanges the positions of two elements - both their indexes and their parents, so this moves them

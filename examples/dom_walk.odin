@@ -152,9 +152,10 @@ main :: proc() {
 	// content coming from data wants, and the only way to *move* an element rather than re-create it.
 
 	// The reference that comes back is yours and stays yours after the insert, so unuse it either way.
-	extra, eerr := sciter_app.make_element("li", "written by Odin, not by markup")
+	extra_owned, eerr := sciter_app.make_element("li", "written by Odin, not by markup")
+	extra := sciter_app.borrow_element(extra_owned)
 	if eerr == nil {
-		defer sciter_app.unuse_element(extra)
+		defer sciter_app.unuse_element(extra_owned)
 		sciter_app.set_attribute(extra, "class", "todo")
 		sciter_app.insert_element(extra, list) // no index: appended
 	}
@@ -1109,10 +1110,11 @@ test_make_element_and_insert :: proc(t: ^testing.T) {
 	before, cerr := sciter_app.child_count(list)
 	testing.expect_value(t, cerr, nil)
 
-	item, merr := sciter_app.make_element("li", "fifth")
+	item_owned, merr := sciter_app.make_element("li", "fifth")
+	item := sciter_app.borrow_element(item_owned)
 	testing.expect_value(t, merr, nil)
 	testing.expect(t, item != nil)
-	defer sciter_app.unuse_element(item)
+	defer sciter_app.unuse_element(item_owned)
 
 	// Made, but nowhere: the document does not know about it until it is inserted.
 	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before)
@@ -1146,8 +1148,9 @@ test_make_element_does_not_parse_its_text :: proc(t: ^testing.T) {
 	root, _ := sciter_app.root(window)
 	list, _ := sciter_app.select_first(root, "#tasks")
 
-	item, _ := sciter_app.make_element("li", "<b>not bold</b>")
-	defer sciter_app.unuse_element(item)
+	item_owned, _ := sciter_app.make_element("li", "<b>not bold</b>")
+	item := sciter_app.borrow_element(item_owned)
+	defer sciter_app.unuse_element(item_owned)
 	testing.expect_value(t, sciter_app.insert_element(item, list), nil)
 
 	text, _ := sciter_app.text(item, context.temp_allocator)
@@ -1167,8 +1170,9 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 	list, _ := sciter_app.select_first(root, "#tasks")
 	before, _ := sciter_app.child_count(list)
 
-	first, _ := sciter_app.make_element("li", "zeroth")
-	defer sciter_app.unuse_element(first)
+	first_owned, _ := sciter_app.make_element("li", "zeroth")
+	first := sciter_app.borrow_element(first_owned)
+	defer sciter_app.unuse_element(first_owned)
 	testing.expect_value(t, sciter_app.insert_element(first, list, 0), nil)
 
 	at_zero, _ := sciter_app.child(list, 0)
@@ -1179,8 +1183,9 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 	// clamps to the child count and this is the regression test for that. Note that "append" is now
 	// spelled `nil` rather than `-1`; an out-of-range *number* still clamps, because the engine's
 	// segfault does not care how the caller arrived at it.
-	tail, _ := sciter_app.make_element("li", "way past")
-	defer sciter_app.unuse_element(tail)
+	tail_owned, _ := sciter_app.make_element("li", "way past")
+	tail := sciter_app.borrow_element(tail_owned)
+	defer sciter_app.unuse_element(tail_owned)
 	testing.expect_value(t, sciter_app.insert_element(tail, list, max(sciter_app.Child_Index)), nil)
 
 	after, _ := sciter_app.child_count(list)
@@ -1190,15 +1195,17 @@ test_insert_at_an_index :: proc(t: ^testing.T) {
 
 	// A negative index clamps up rather than arriving as `max(u32)`, which is the same segfault from
 	// the other end.
-	low, _ := sciter_app.make_element("li", "clamped up")
-	defer sciter_app.unuse_element(low)
+	low_owned, _ := sciter_app.make_element("li", "clamped up")
+	low := sciter_app.borrow_element(low_owned)
+	defer sciter_app.unuse_element(low_owned)
 	testing.expect_value(t, sciter_app.insert_element(low, list, -3), nil)
 	first_now, _ := sciter_app.child(list, 0)
 	testing.expect_value(t, first_now, low)
 
 	// And a moderate over-run behaves the same way.
-	spare, _ := sciter_app.make_element("li", "also past")
-	defer sciter_app.unuse_element(spare)
+	spare_owned, _ := sciter_app.make_element("li", "also past")
+	spare := sciter_app.borrow_element(spare_owned)
+	defer sciter_app.unuse_element(spare_owned)
 	testing.expect_value(t, sciter_app.insert_element(spare, list, 9999), nil)
 	count, _ := sciter_app.child_count(list)
 	last_now, _ := sciter_app.child(list, count - 1)
@@ -1246,9 +1253,10 @@ test_clone_is_a_detached_deep_copy :: proc(t: ^testing.T) {
 	list, _ := sciter_app.select_first(root, "#tasks")
 	original_count, _ := sciter_app.child_count(list)
 
-	copy, cerr := sciter_app.clone_element(list)
+	copy_owned, cerr := sciter_app.clone_element(list)
+	copy := sciter_app.borrow_element(copy_owned)
 	testing.expect_value(t, cerr, nil)
-	defer sciter_app.unuse_element(copy)
+	defer sciter_app.unuse_element(copy_owned)
 
 	testing.expect(t, copy != list, "a clone is a different element")
 
@@ -1290,10 +1298,12 @@ test_what_a_detached_element_allows :: proc(t: ^testing.T) {
 
 	// Assembling a subtree offline works: `insert_element` is happy with two detached elements, and
 	// inserting the outer one brings the whole thing in.
-	outer, _ := sciter_app.make_element("div", "")
-	defer sciter_app.unuse_element(outer)
-	inner, _ := sciter_app.make_element("span", "inner")
-	defer sciter_app.unuse_element(inner)
+	outer_owned, _ := sciter_app.make_element("div", "")
+	outer := sciter_app.borrow_element(outer_owned)
+	defer sciter_app.unuse_element(outer_owned)
+	inner_owned, _ := sciter_app.make_element("span", "inner")
+	inner := sciter_app.borrow_element(inner_owned)
+	defer sciter_app.unuse_element(inner_owned)
 
 	testing.expect_value(t, sciter_app.insert_element(inner, outer), nil)
 	testing.expect_value(t, sciter_app.child_count(outer) or_else -1, 1)
@@ -1304,8 +1314,9 @@ test_what_a_detached_element_allows :: proc(t: ^testing.T) {
 
 	// Markup does not: `set_html` needs a document, and says so with INVALID_HWND rather than quietly
 	// doing nothing. Insert first, then set the markup.
-	orphan, _ := sciter_app.make_element("li", "")
-	defer sciter_app.unuse_element(orphan)
+	orphan_owned, _ := sciter_app.make_element("li", "")
+	orphan := sciter_app.borrow_element(orphan_owned)
+	defer sciter_app.unuse_element(orphan_owned)
 	testing.expect_value(
 		t,
 		sciter_app.set_html(orphan, "<b>bold</b>"),
@@ -1320,8 +1331,9 @@ test_what_a_detached_element_allows :: proc(t: ^testing.T) {
 	// And a detached element's *descendants* are passive handles: readable, not writable, and
 	// `use_element` does not change that. The element you hold a reference to is writable - it is the
 	// tree underneath it that is not.
-	copy, _ := sciter_app.clone_element(list)
-	defer sciter_app.unuse_element(copy)
+	copy_owned, _ := sciter_app.clone_element(list)
+	copy := sciter_app.borrow_element(copy_owned)
+	defer sciter_app.unuse_element(copy_owned)
 
 	child, _ := sciter_app.child(copy, 0)
 	readable, rerr := sciter_app.text(child, context.temp_allocator)
@@ -1329,13 +1341,14 @@ test_what_a_detached_element_allows :: proc(t: ^testing.T) {
 	testing.expect(t, readable != "", "a detached element's children are readable")
 
 	testing.expect_value(t, sciter_app.set_text(child, "nope"), sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
-	testing.expect_value(t, sciter_app.use_element(child), nil)
+	held, uerr := sciter_app.use_element(child)
+	testing.expect_value(t, uerr, nil)
 	testing.expect_value(
 		t,
 		sciter_app.set_text(child, "still nope"),
 		sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE),
 	)
-	testing.expect_value(t, sciter_app.unuse_element(child), nil)
+	testing.expect_value(t, sciter_app.unuse_element(held), nil)
 
 	// The clone itself, though, takes an attribute while detached.
 	testing.expect_value(t, sciter_app.set_attribute(copy, "id", "clone"), nil)
@@ -1353,15 +1366,22 @@ test_remove_element_destroys_or_detaches :: proc(t: ^testing.T) {
 
 	// finalize = true: gone, and the handle with it.
 	doomed, _ := sciter_app.child(list, 0)
-	testing.expect_value(t, sciter_app.remove_element(doomed), nil)
+	// `finalize = true` hands back no handle - there is nothing left to hold.
+	gone, derr := sciter_app.remove_element(doomed)
+	testing.expect_value(t, derr, nil)
+	testing.expect_value(t, gone, nil)
 	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before - 1)
 
 	// finalize = false: out of the document but still alive, holding the reference this call took on
 	// the caller's behalf. Without that reference the handle would be dangling here, and reading it
 	// would be a segfault rather than an error - which is why the wrapper takes it.
-	detached, _ := sciter_app.child(list, 0)
-	text_before, _ := sciter_app.text(detached, context.temp_allocator)
-	testing.expect_value(t, sciter_app.remove_element(detached, finalize = false), nil)
+	found, _ := sciter_app.child(list, 0)
+	text_before, _ := sciter_app.text(found, context.temp_allocator)
+	// The reference this call takes comes back as the result, which is what makes the release below
+	// type-check: `unuse_element` accepts only a handle somebody was given ownership of.
+	detached_owned, rmerr := sciter_app.remove_element(found, finalize = false)
+	testing.expect_value(t, rmerr, nil)
+	detached := sciter_app.borrow_element(detached_owned)
 	testing.expect_value(t, sciter_app.child_count(list) or_else -1, before - 2)
 
 	still_there, rerr := sciter_app.text(detached, context.temp_allocator)
@@ -1377,7 +1397,7 @@ test_remove_element_destroys_or_detaches :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_after, text_before)
 
 	// The reference is the caller's either way.
-	testing.expect_value(t, sciter_app.unuse_element(detached), nil)
+	testing.expect_value(t, sciter_app.unuse_element(detached_owned), nil)
 }
 
 @(test)
@@ -1602,9 +1622,10 @@ test_attributes_track_writes :: proc(t: ^testing.T) {
 	testing.expect_value(t, removed, before)
 
 	// An element with nothing on it reports no attributes and an empty slice, not a failure.
-	bare, berr := sciter_app.make_element("span", "bare")
+	bare_owned, berr := sciter_app.make_element("span", "bare")
+	bare := sciter_app.borrow_element(bare_owned)
 	testing.expect_value(t, berr, nil)
-	defer sciter_app.unuse_element(bare)
+	defer sciter_app.unuse_element(bare_owned)
 
 	none, cerr := sciter_app.attribute_count(bare)
 	testing.expect_value(t, cerr, nil)
@@ -1754,7 +1775,8 @@ test_element_value_holds_a_reference :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
-	made, merr := sciter_app.make_element("p", "made")
+	made_owned, merr := sciter_app.make_element("p", "made")
+	made := sciter_app.borrow_element(made_owned)
 	testing.expect_value(t, merr, nil)
 
 	v, err := sciter_app.element_to_value(made)
@@ -1763,13 +1785,14 @@ test_element_value_holds_a_reference :: proc(t: ^testing.T) {
 
 	// The only reference the caller had, given back. The handle is dead from here - touching it is a
 	// use-after-free, not an error code - so everything below goes through the Value.
-	testing.expect_value(t, sciter_app.unuse_element(made), nil)
+	testing.expect_value(t, sciter_app.unuse_element(made_owned), nil)
 
 	// Churn the engine's allocator, so a surviving element is a surviving element rather than memory
 	// that has not been reused yet.
 	for _ in 0 ..< 500 {
-		junk, _ := sciter_app.make_element("span", "junk junk junk junk junk")
-		sciter_app.unuse_element(junk)
+		junk_owned, _ := sciter_app.make_element("span", "junk junk junk junk junk")
+		junk := sciter_app.borrow_element(junk_owned)
+		sciter_app.unuse_element(junk_owned)
 	}
 
 	alive, aerr := sciter_app.element_from_value(&v)
@@ -1982,8 +2005,9 @@ test_element_index_counts_elements_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, after, 0)
 
 	// Inserting an element does shift it.
-	extra, _ := sciter_app.make_element("li", "first")
-	defer sciter_app.unuse_element(extra)
+	extra_owned, _ := sciter_app.make_element("li", "first")
+	extra := sciter_app.borrow_element(extra_owned)
+	defer sciter_app.unuse_element(extra_owned)
 	testing.expect_value(t, sciter_app.insert_element(extra, tasks, 0), nil)
 
 	moved, _ := sciter_app.element_index(items[0])
@@ -2350,9 +2374,10 @@ test_popup_refuses_a_detached_element :: proc(t: ^testing.T) {
 
 	// A popup is shown by the window the element is in, so an element in no document has no window to
 	// be shown by. The code says `PASSIVE_HANDLE` rather than anything about popups.
-	detached, derr := sciter_app.make_element("div", "detached")
+	detached_owned, derr := sciter_app.make_element("div", "detached")
+	detached := sciter_app.borrow_element(detached_owned)
 	testing.expect_value(t, derr, nil)
-	defer sciter_app.unuse_element(detached)
+	defer sciter_app.unuse_element(detached_owned)
 
 	testing.expect_value(
 		t,
@@ -2419,9 +2444,10 @@ test_capture_accepts_document_elements_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.release_capture(tasks), nil)
 
 	// The capture belongs to the window, so an element in no document cannot have it.
-	detached, derr := sciter_app.make_element("div", "detached")
+	detached_owned, derr := sciter_app.make_element("div", "detached")
+	detached := sciter_app.borrow_element(detached_owned)
 	testing.expect_value(t, derr, nil)
-	defer sciter_app.unuse_element(detached)
+	defer sciter_app.unuse_element(detached_owned)
 
 	testing.expect_value(t, sciter_app.set_capture(detached), sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
 	testing.expect_value(t, sciter_app.release_capture(detached), sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))

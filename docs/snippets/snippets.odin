@@ -271,8 +271,8 @@ odin_gave :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Val
 // dom.md
 
 dom1 :: proc(el: sciter_app.Element) {
-	sciter_app.use_element(el)
-	defer sciter_app.unuse_element(el)
+	held, _ := sciter_app.use_element(el)
+	defer sciter_app.unuse_element(held)
 }
 
 dom2 :: proc(window: sciter_app.Window) {
@@ -358,7 +358,7 @@ dom9 :: proc(window: sciter_app.Window) {
 dom9b :: proc(list: sciter_app.Element) {
 	item, _ := sciter_app.make_element("li", "third")
 	defer sciter_app.unuse_element(item)
-	sciter_app.insert_element(item, list)
+	sciter_app.insert_element(sciter_app.borrow_element(item), list)
 }
 
 dom9c :: proc(el, parent, other_parent, a, b, list: sciter_app.Element) {

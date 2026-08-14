@@ -454,9 +454,10 @@ test_do_click_on_an_element_without_a_behavior :: proc(t: ^testing.T) {
 	testing.expect(t, !handled, "a <div> has nothing to click")
 
 	// A detached element is a real failure, not an unhandled call.
-	orphan, oerr := sciter_app.make_element("button", "x")
+	orphan_owned, oerr := sciter_app.make_element("button", "x")
+	orphan := sciter_app.borrow_element(orphan_owned)
 	testing.expect_value(t, oerr, nil)
-	defer sciter_app.unuse_element(orphan)
+	defer sciter_app.unuse_element(orphan_owned)
 	_, derr := sciter_app.do_click(orphan)
 	testing.expect_value(t, derr, sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
 }
