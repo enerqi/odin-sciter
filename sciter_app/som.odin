@@ -323,6 +323,13 @@ asset_method_arity :: proc(asset: ^sciter.Som_Asset_T, method: string) -> (arity
 // is a direct call rather than anything routed through script - which is what makes it work for
 // members script cannot see.
 //
+// **That also means a failure here is not the error string `eval` and `call` produce.** Measured
+// against `<input type=text>`'s `edit` asset: `insertText` answers a plain `BOOL` and
+// `asset_get("selectionStart")` a plain `INT`, with `value_is_error` false on both. There is no script
+// evaluation in this path to throw, so a failure is the thunk's `false` - which arrives here as
+// `.Call_Failed` - and nothing richer. Do not reach for `value_is_error` on a SOM result the way you
+// would on an `eval` one.
+//
 // **`.Wrong_Arity` is a guard against a segfault, not a nicety.** The *engine's* thunks read their
 // arguments positionally with no check on `argc`: measured on 6.0.4.9, calling `edit`'s `insertText`
 // - which the passport declares as one parameter - with none faults inside

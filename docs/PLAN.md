@@ -9,7 +9,7 @@ background threads, drag-and-drop, graphics (both a custom-painted element and a
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 374 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
+`just example-tests` runs 375 `@(test)` procs, and the eleven guides in `docs/` are written. Coverage of
 the wrapper is 374 of its 379 exported procedures called from a test; the rest are proc-group members
 reached through their group.
 

@@ -314,6 +314,24 @@ Recorded because the absence of a finding here is itself the useful result.
   afterwards — so the overwrite really landed — and the server still received
   `?page=2&q=two%20words` and the POST body `page=2&q=two%20words` intact. The engine copies during the
   call. No bug, and the comment now says so with the evidence.
+- **`value_from_function`'s record is freed by the engine exactly once.** The header says the engine
+  owns it after the wrap, and both ways of being wrong are silent - a leak per functor, or a double free
+  landing elsewhere. Measured with a `mem.Tracking_Allocator` as the functor allocator: one live
+  allocation after `value_from_function`, and **zero live with zero bad frees** after `value_clear`.
+  Clean under ASan. Pinned by a test.
+- **`GET_VALUE` and `SET_VALUE` own their Values in the directions `rules.md` claims.** This was the
+  one contract stated in prose in two places and measured in none, and it is the direction the docs
+  themselves say is easy to get backwards. With a handler implementing each: a `GET_VALUE` that writes
+  a fresh string and does not clear it gives the caller a Value that reads intact and is cleared once;
+  a `SET_VALUE` that reads `args.val` without clearing leaves the caller's Value **still readable after
+  the call**, which is what "not consumed" has to mean. Clean under ASan, where either mistake would be
+  a double free or a use-after-free rather than a wrong answer.
+- **An engine asset's methods do not use the error-string convention.** Since `eval` and the call family
+  report script failures in the returned Value (R9-09), the obvious question is whether SOM does too. It
+  does not: measured against `<input type=text>`'s `edit` asset, `insertText` answers a plain `BOOL` and
+  `asset_get("selectionStart")` a plain `INT`, `value_is_error` false on both. There is no script
+  evaluation in that path to throw - the thunk's `false` is the whole failure signal, and it arrives as
+  `.Call_Failed`. So `value_is_error` is right for `eval` and wrong for `asset_call`.
 - **The gradient-stop cast is layout-safe.** `set_fill_gradient_*` casts `[]Color_Stop` straight to
   `^sciter.Sc_Color_Stop`. `Color_Stop` is `{Color, f32}`, `Sc_Color_Stop` is `{Sc_Color, f32}` and
   `SC_COLOR_STOP` in `sciter-x-graphics.h:35-39` is `{SC_COLOR color; float offset;}` — all three agree.

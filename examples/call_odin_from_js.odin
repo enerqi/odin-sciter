@@ -29,6 +29,7 @@ import sciter ".."
 import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -978,4 +979,41 @@ returns_nothing :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_a
 returns_an_error_value :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
 	v, _ := sciter_app.value_parse("nonsense json {")
 	return v
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Who frees the functor record
+//
+// `value_from_function` allocates a small record - the procedure, the user data, the calling context -
+// and the C API's contract is that the *engine* frees it when the last reference to the Value goes.
+// That is the header's word for it, and it is the kind of claim worth checking rather than believing,
+// because both ways of being wrong are silent: a leak per functor, or a double free that lands
+// somewhere else entirely.
+//
+// A tracking allocator answers it exactly, and needs no window and no document.
+@(test)
+test_the_engine_frees_the_functor_record_exactly_once :: proc(t: ^testing.T) {
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+
+	fn := sciter_app.value_from_function(counts_its_arguments, nil, mem.tracking_allocator(&track))
+	testing.expect_value(t, len(track.allocation_map), 1)
+	testing.expect(t, sciter_app.value_is_function(&fn))
+
+	sciter_app.value_clear(&fn)
+
+	// Zero live is "not leaked"; zero bad frees is "not freed twice". Both are needed - the contract
+	// says the engine owns the record from here, and either half being wrong is invisible otherwise.
+	testing.expect_value(t, len(track.allocation_map), 0)
+	testing.expect_value(t, len(track.bad_free_array), 0)
+}
+
+@(private = "file")
+counts_its_arguments :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
+	return sciter_app.value_from(i32(len(args)))
 }

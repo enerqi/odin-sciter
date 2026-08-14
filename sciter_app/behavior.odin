@@ -193,6 +193,13 @@ call_behavior_method :: proc(element: Element, params: rawptr) -> (handled: bool
 //     so keeping the value past the call means `value_copy`, and clearing it is a use-after-free in
 //     the caller.
 //
+// Both directions are measured rather than read off the header, with a handler that implements each:
+// a `GET_VALUE` handler that writes a fresh string and does not clear it produces a Value the caller
+// reads intact and clears exactly once; and a `SET_VALUE` handler that reads `args.val` without
+// clearing leaves the caller's Value **still readable after the call returns**, which is what "not
+// consumed" has to mean. Clean under ASan, which is where getting either backwards would show up as a
+// double free or a use-after-free rather than as a wrong answer.
+//
 // One measured rule that shapes where the handler goes: **a method call is delivered only to handlers
 // attached to that exact element.** It does not sink, it does not bubble, and a handler attached with
 // `attach_window_handler` never sees one. `attach_handler` on the element itself is the only
