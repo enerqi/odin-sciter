@@ -28,13 +28,43 @@ import "core:fmt"
 import "core:mem"
 import "core:time"
 
-// The engine's HREQUEST. Distinct so it cannot be passed where a `Window` or an `Element` belongs.
+// The engine's HREQUEST, **borrowed**. Distinct so it cannot be passed where a `Window` or an
+// `Element` belongs.
 //
 // A handle is only valid while the engine holds a reference to it, which for a request arriving through
 // `SC_LOAD_DATA` is the duration of the callback. Keeping one past that means `use_request` first - see
 // `take_request`. This was measured, not assumed: the probe saw the engine hand out the *same* pointer
 // for a later, unrelated request once the first was finished with.
 Request :: distinct sciter.Hrequest
+
+// A request this host has taken a reference to, and therefore **owes an `unuse_request`**. It comes
+// from `take_request` or `use_request` and from nowhere else.
+//
+// It is a separate type because the two regimes fail in opposite directions and only one of them is
+// recoverable. Forgetting to release a taken request leaves the document waiting on an answer - bad,
+// visible, survivable. Releasing one you never took under-flows the engine's reference count, and that
+// is **a segfault on the first call**: measured on 6.0.4.9, a single `unuse_request` on a handle from
+// `request_of` inside `on_load_data` answers `.OK` and then kills the process a request or two later,
+// with nothing on the stack pointing at the mistake.
+//
+// `unuse_request` therefore takes this type and nothing else, which makes that mistake unspellable: the
+// only handles you can release are the ones you were given ownership of. Where a taken request has to
+// be passed to a reader or an answerer, `borrow_request` says so out loud.
+//
+// This is the same shape `graphics.odin` already uses, where an owned `Image` and a borrowed `Graphics`
+// are different types for the same reason.
+Owned_Request :: distinct Request
+
+// Views a taken request as a borrowed one, for the calls that read or answer it.
+//
+//	sciter_app.succeed_request(sciter_app.borrow_request(app.deferred), bytes)
+//	sciter_app.unuse_request(app.deferred)
+//
+// It takes no reference and gives none up - it is a cast, and the `Owned_Request` is still the thing
+// that owes the release.
+borrow_request :: proc(request: Owned_Request) -> Request {
+	return Request(request)
+}
 
 // The request API is a second function table, reached through the main one. `sciter.api()` is cheap but
 // this is one more indirection on every call, so it is fetched once.
@@ -103,26 +133,32 @@ request_of :: proc(request: ^Load_Request) -> Request {
 //	return result   // .MYSELF - the engine will not load this URL itself
 //
 //	// later, on the engine's thread:
-//	sciter_app.succeed_request(app.pending, bytes)
+//	sciter_app.succeed_request(sciter_app.borrow_request(app.pending), bytes)
 //	sciter_app.unuse_request(app.pending)
 //
 // The reference this takes is the whole point: without it the handle is the engine's to recycle the
 // moment the callback returns. **Every `take_request` needs a matching `unuse_request`**, and a request
 // that is never answered is a resource the document waits on forever.
 //
+// What comes back is an `Owned_Request` rather than a `Request`, which is what makes the second half of
+// that rule checkable: `unuse_request` accepts only this type, and the readers and answerers accept
+// only the borrowed one, so `borrow_request` marks every place a held handle is used as an ordinary
+// one. The cast is free; being made to write it is the point.
+//
 // Answering late works - measured with an image, whose `.INCOMPLETE` and `.BUSY` element state both
 // cleared once the answer arrived. What it does **not** do is rewind the document: a `<script src>`
 // answered after parsing has moved on is fetched but never executed. Defer resources that the document
 // consumes when they arrive (images, fonts, media), not ones it consumes in order.
-take_request :: proc(request: ^Load_Request) -> (rq: Request, result: Load_Result) {
-	rq = request_of(request)
-	if rq == nil {
+take_request :: proc(request: ^Load_Request) -> (rq: Owned_Request, result: Load_Result) {
+	borrowed := request_of(request)
+	if borrowed == nil {
 		return nil, .OK
 	}
-	if use_request(rq) != nil {
+	owned, err := use_request(borrowed)
+	if err != nil {
 		return nil, .OK
 	}
-	return rq, .MYSELF
+	return owned, .MYSELF
 }
 
 // Answers a load request through the request API, inside the callback, and returns `.MYSELF`.
@@ -163,15 +199,25 @@ serve_request :: proc(
 
 // Takes a reference - the engine's `RequestUse`, an AddRef. Needed before a handle outlives the callback
 // it arrived in.
-use_request :: proc(request: Request) -> Error {
+//
+// The reference comes back as an `Owned_Request`, which is what `unuse_request` accepts: taking is the
+// only way to produce one, so the release can only be aimed at something that was taken. On failure the
+// handle is nil and nothing was taken.
+use_request :: proc(request: Request) -> (owned: Owned_Request, err: Error) {
 	if request == nil {
-		return sciter.Request_Result.BAD_PARAM
+		return nil, sciter.Request_Result.BAD_PARAM
 	}
-	return request_err(request_api().RequestUse(sciter.Hrequest(request)))
+	if e := request_err(request_api().RequestUse(sciter.Hrequest(request))); e != nil {
+		return nil, e
+	}
+	return Owned_Request(request), nil
 }
 
 // Releases a reference taken by `use_request` or `take_request`.
-unuse_request :: proc(request: Request) -> Error {
+//
+// Takes an `Owned_Request` deliberately - see that type. Releasing a borrowed handle is a segfault
+// rather than an error, so the type is the guard.
+unuse_request :: proc(request: Owned_Request) -> Error {
 	if request == nil {
 		return sciter.Request_Result.BAD_PARAM
 	}

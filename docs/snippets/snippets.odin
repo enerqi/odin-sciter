@@ -838,7 +838,8 @@ delayed_answer :: proc(window: sciter_app.Window, uri: string, bytes: []u8, app:
 // resources.md and api.md, taking a request over
 
 Request_App :: struct {
-	pending: sciter_app.Request,
+	// `take_request` hands back an `Owned_Request` - the type that owes an `unuse_request`.
+	pending: sciter_app.Owned_Request,
 }
 
 request_serve_now :: proc(request: ^sciter_app.Load_Request, css: []u8) -> sciter_app.Load_Result {
@@ -857,7 +858,7 @@ request_take :: proc(request: ^sciter_app.Load_Request, app: ^Request_App) -> sc
 }
 
 request_answer_later :: proc(app: ^Request_App, bytes: []u8) {
-	sciter_app.succeed_request(app.pending, bytes)
+	sciter_app.succeed_request(sciter_app.borrow_request(app.pending), bytes)
 	sciter_app.unuse_request(app.pending)
 }
 

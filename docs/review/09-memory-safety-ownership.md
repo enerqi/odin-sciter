@@ -462,9 +462,36 @@ arrives borrowed from a `.DRAW` event or `paint_image`, is a **different type**,
 only to extend a pattern this package already found for itself.
 
 **Where to apply it first: `Request`, not `Element`.** It is the same borrowed/taken split with a
-twentieth of the surface, the taking is already an explicit call (`take_request`), the docs already say
-"every `take_request` owes an `unuse_request`", and the same under-flow hazard applies. It is a
-contained pilot of the idea. `Element` is an API version's worth of change and should follow it.
+twentieth of the surface, the taking is already an explicit call (`take_request`), and the docs already
+say "every `take_request` owes an `unuse_request`".
+
+**Done — and the hazard is worse here than for elements.** Measured before building it, because the
+whole case rests on the under-flow being real: inside `on_load_data`, **one** spurious `unuse_request`
+on a handle from `request_of` answers `.OK` and then segfaults the process a request or two later. Not
+two calls as with elements — one. Every call reports success.
+
+The shape now shipped:
+
+```odin
+Request       :: distinct sciter.Hrequest   // borrowed: valid for the callback
+Owned_Request :: distinct Request           // taken: owes an unuse_request
+
+take_request   :: proc(^Load_Request) -> (Owned_Request, Load_Result)
+use_request    :: proc(Request) -> (Owned_Request, Error)
+unuse_request  :: proc(Owned_Request) -> Error       // a borrowed handle does not compile
+borrow_request :: proc(Owned_Request) -> Request     // free cast, marks each crossing
+```
+
+**What the migration actually cost**, since the review's own objection to this pattern was call-site
+noise: two struct fields changed type, three answering calls gained a `borrow_request`, one test's local
+gained one, and `use_request`'s extra result changed one assertion. That is it, across the example, the
+snippets and `docs/api.md`. The twelve compiler errors that looked like the worst of it all came from a
+*single* local — `rq := g_probe.deferred` — and were fixed by borrowing once at the top of the scope,
+which is the idiom to teach: **borrow once at the boundary, then use it as an ordinary handle.** The
+friction is per-scope, not per-call, which is materially better than this review estimated.
+
+`Element` is still an API version's worth of change and should follow. But the estimate that made it
+look expensive was measured here and came in low, which is worth knowing before pricing that one.
 
 **4. A `Value_Scope` batch, matching `rules.md`'s existing arena advice — best fit for handlers.**
 

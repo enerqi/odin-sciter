@@ -113,6 +113,18 @@ one alive past that, and every `take_request` owes an `unuse_request`. A request
 is a resource the document waits on forever. This was measured, not assumed: the engine hands out the
 *same* pointer for a later, unrelated request once the first is finished with.
 
+Requests are also the one place where the *type* enforces this rather than the prose, because the
+failure is unrecoverable and immediate. `take_request` and `use_request` hand back an `Owned_Request`;
+`unuse_request` takes only that; and the readers and answerers take only the borrowed `Request`, so
+`borrow_request(owned)` marks each crossing. Measured on 6.0.4.9: a single `unuse_request` on a borrowed
+handle answers `.OK` and then segfaults the process a request or two later, with nothing on the stack
+pointing at the mistake. Under-flowing a reference count is not a leak you find later — it is a crash
+somewhere else, so it is worth a type.
+
+The same asymmetry applies to elements, and there it is still only documented: `unuse_element` on a
+borrowed handle is `.OK` the first time and a segfault the second (see `use_element`). Only unuse what
+`make_element`, `clone_element`, `remove_element(finalize = false)` or your own `use_element` gave you.
+
 ---
 
 ## 4. Allocation: the library takes an allocator, you decide the lifetime

@@ -72,8 +72,9 @@ LOGO :: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" 
 App :: struct {
 	handler:  sciter_app.Host_Handler,
 
-	// The deferred request, kept alive by `take_request` until it is answered.
-	deferred: sciter_app.Request,
+	// The deferred request, kept alive by `take_request` until it is answered. `Owned_Request` is what
+	// that call hands back, and storing it as one is what makes the release below type-check.
+	deferred: sciter_app.Owned_Request,
 	log:      [dynamic]string,
 }
 
@@ -126,7 +127,7 @@ main :: proc() {
 			data := transmute([]u8)string(LOGO)
 
 			// The answer: status, bytes, and the reference `take_request` took, given back.
-			if err := sciter_app.succeed_request(app.deferred, data, 200); err != nil {
+			if err := sciter_app.succeed_request(sciter_app.borrow_request(app.deferred), data, 200); err != nil {
 				fmt.eprintln("could not answer the deferred request:", err)
 			}
 			sciter_app.unuse_request(app.deferred)
@@ -226,7 +227,12 @@ test_request_api_table_resolves :: proc(t: ^testing.T) {
 test_nil_request_is_bad_param :: proc(t: ^testing.T) {
 	bad := sciter_app.Error(sciter.Request_Result.BAD_PARAM)
 
-	testing.expect_value(t, sciter_app.use_request(nil), bad)
+	// `use_request` hands back the taken handle as well as the error - see `Owned_Request` - and a
+	// refused take produces no handle to release.
+	taken, use_err := sciter_app.use_request(nil)
+	testing.expect_value(t, use_err, bad)
+	testing.expect_value(t, taken, nil)
+
 	testing.expect_value(t, sciter_app.unuse_request(nil), bad)
 	testing.expect_value(t, sciter_app.succeed_request(nil, nil), bad)
 	testing.expect_value(t, sciter_app.fail_request(nil), bad)
@@ -325,7 +331,7 @@ Probe :: struct {
 	handler:    sciter_app.Host_Handler,
 	seen:       [dynamic]string, // every uri, in order
 	css:        Snapshot,
-	deferred:   sciter_app.Request, // the image, held past the callback
+	deferred:   sciter_app.Owned_Request, // the image, held past the callback
 	fail_image: bool, // 404 the image instead of deferring it
 	api:        Api_Call,
 }
@@ -477,7 +483,7 @@ test_document :: proc(t: ^testing.T, fail_image := false) -> bool {
 @(private = "file")
 answer_deferred :: proc() {
 	if g_probe.deferred == nil {return}
-	sciter_app.succeed_request(g_probe.deferred, transmute([]u8)string(LOGO))
+	sciter_app.succeed_request(sciter_app.borrow_request(g_probe.deferred), transmute([]u8)string(LOGO))
 	sciter_app.unuse_request(g_probe.deferred)
 	g_probe.deferred = nil
 }
@@ -531,17 +537,17 @@ test_deferred_request_survives_the_callback :: proc(t: ^testing.T) {
 	}
 
 	// Still readable out here, after the callback is long over.
-	url, err := sciter_app.request_url(g_probe.deferred, context.temp_allocator)
+	url, err := sciter_app.request_url(sciter_app.borrow_request(g_probe.deferred), context.temp_allocator)
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, url, "res://test/t.svg")
 
-	state, status, _ := sciter_app.request_status(g_probe.deferred)
+	state, status, _ := sciter_app.request_status(sciter_app.borrow_request(g_probe.deferred))
 	testing.expect_value(t, state, sciter.Request_State.PENDING)
 	testing.expect_value(t, status, u32(0))
 
-	testing.expect_value(t, sciter_app.succeed_request(g_probe.deferred, transmute([]u8)string(LOGO)), nil)
+	testing.expect_value(t, sciter_app.succeed_request(sciter_app.borrow_request(g_probe.deferred), transmute([]u8)string(LOGO)), nil)
 
-	state, status, _ = sciter_app.request_status(g_probe.deferred)
+	state, status, _ = sciter_app.request_status(sciter_app.borrow_request(g_probe.deferred))
 	testing.expect_value(t, state, sciter.Request_State.SUCCESS)
 	testing.expect_value(t, status, u32(200))
 
@@ -679,7 +685,10 @@ test_the_indexed_and_whole_list_header_getters_agree :: proc(t: ^testing.T) {
 	if !testing.expect(t, g_probe.deferred != nil, "the image request should have been taken over") {
 		return
 	}
-	rq := g_probe.deferred
+	// Borrowed once, here, and then used as an ordinary handle for the rest of the scope - which is the
+	// shape `Owned_Request` is meant to produce. The held handle is still the thing that owes the
+	// release, and `answer_deferred` above is what gives it back.
+	rq := sciter_app.borrow_request(g_probe.deferred)
 
 	testing.expect_value(t, sciter_app.set_request_header(rq, "X-One", "1"), nil)
 	testing.expect_value(t, sciter_app.set_request_header(rq, "X-Two", "2"), nil)

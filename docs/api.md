@@ -729,20 +729,29 @@ app.pending = rq
 return result
 
 // ... later, on the engine's thread
-sciter_app.succeed_request(app.pending, bytes)   // or fail_request(rq, 404)
+sciter_app.succeed_request(sciter_app.borrow_request(app.pending), bytes)
 sciter_app.unuse_request(app.pending)
 ```
 
-`Request` is a distinct `sciter.Hrequest`, `request_of(load_request)` gets one out of a callback, and
-`request_api()` is the raw `SciterRequestAPI` table.
+`Request` is a distinct `sciter.Hrequest` and is **borrowed** — valid for the callback it arrived in.
+`request_of(load_request)` gets one out of a callback, and `request_api()` is the raw
+`SciterRequestAPI` table.
+
+`take_request` and `use_request` hand back an **`Owned_Request`** instead, which is the one that owes an
+`unuse_request` — and `unuse_request` accepts nothing else, so releasing a handle you never took does
+not compile. That is not a style preference: a single `unuse_request` on a borrowed handle answers `.OK`
+and then segfaults the process a request or two later, measured, with nothing on the stack pointing at
+it. `borrow_request(owned)` is the free cast for passing a held handle to the readers and answerers,
+and borrowing once at the top of a scope is the usual shape.
 
 Answering: `serve_request(request, data, mime := "", encoding := "", status := 200) -> Load_Result`,
 `succeed_request(rq, data, status := 200)`, `fail_request(rq, status := 404, data = nil)`,
 `append_request_data(rq, chunk)` (chunks accumulate; `succeed_request(rq, nil)` completes them),
 `set_request_mime`, `set_request_encoding`, `set_request_header`, `set_response_header`.
 
-Lifetime: `use_request` / `unuse_request`, and `take_request` which is `use_request` plus `.MYSELF`.
-A handle is the engine's to recycle the moment the callback returns unless a reference is taken.
+Lifetime: `use_request` → `(Owned_Request, Error)` / `unuse_request(owned)`, and `take_request` which is
+`use_request` plus `.MYSELF`. A handle is the engine's to recycle the moment the callback returns unless
+a reference is taken.
 
 Reading: `request_url`, `request_content_url`, `request_method` (`"GET"`), `request_data_type`,
 `request_mime`, `request_times` (engine-clock timestamps) and `request_time` → `(elapsed, done)` for
