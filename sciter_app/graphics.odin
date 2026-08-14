@@ -134,9 +134,10 @@ rgb :: proc(r, g, b: u8) -> Color {
 // Images
 
 // An empty image, `width` x `height` pixels. `with_alpha` false makes it opaque.
-create_image :: proc(width, height: int, with_alpha := true) -> (image: Image, err: Error) {
+create_image :: proc(width, height: int, with_alpha := true, loc := #caller_location) -> (image: Image, err: Error) {
 	img: sciter.Himg
 	gfx_err(graphics_api().imageCreate(&img, u32(width), u32(height), b32(with_alpha))) or_return
+	track_acquire(.Image, rawptr(img), loc)
 	return Image(img), nil
 }
 
@@ -157,6 +158,7 @@ image_from_pixels :: proc(
 	}
 	img: sciter.Himg
 	gfx_err(graphics_api().imageCreateFromPixmap(&img, u32(width), u32(height), format, raw_data(pixels))) or_return
+	track_acquire(.Image, rawptr(img))
 	return Image(img), nil
 }
 
@@ -167,6 +169,7 @@ load_image :: proc(bytes: []u8) -> (image: Image, err: Error) {
 	}
 	img: sciter.Himg
 	gfx_err(graphics_api().imageLoad(raw_data(bytes), u32(len(bytes)), &img)) or_return
+	track_acquire(.Image, rawptr(img))
 	return Image(img), nil
 }
 
@@ -180,6 +183,7 @@ load_image :: proc(bytes: []u8) -> (image: Image, err: Error) {
 image_from_element :: proc(element: Element) -> (image: Image, err: Error) {
 	img: sciter.Himg
 	gfx_err(graphics_api().imageCreateFromElement(&img, sciter.Helement(element))) or_return
+	track_acquire(.Image, rawptr(img))
 	return Image(img), nil
 }
 
@@ -265,15 +269,23 @@ paint_image :: proc(image: Image, painter: Painter, user: rawptr = nil) -> Error
 	return gfx_err(graphics_api().imagePaint(sciter.Himg(image), paint_trampoline, &call))
 }
 
-retain_image :: proc(image: Image) -> Error {
-	return gfx_err(graphics_api().imageAddRef(sciter.Himg(image)))
+retain_image :: proc(image: Image, loc := #caller_location) -> Error {
+	err := gfx_err(graphics_api().imageAddRef(sciter.Himg(image)))
+	if err == nil {
+		track_acquire(.Image, rawptr(image), loc)
+	}
+	return err
 }
 
 release_image :: proc(image: Image) -> Error {
 	if image == nil {
 		return nil
 	}
-	return gfx_err(graphics_api().imageRelease(sciter.Himg(image)))
+	err := gfx_err(graphics_api().imageRelease(sciter.Himg(image)))
+	if err == nil {
+		track_release(.Image, rawptr(image))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -286,8 +298,12 @@ release_image :: proc(image: Image) -> Error {
 // stack still pushed aborts on the way out - `terminate called without an active exception` - with no
 // error code anywhere to react to. The other direction is harmless: see `restore_state`.
 
-save_state :: proc(gfx: Graphics) -> Error {
-	return gfx_err(graphics_api().gStateSave(sciter.Hgfx(gfx)))
+save_state :: proc(gfx: Graphics, loc := #caller_location) -> Error {
+	err := gfx_err(graphics_api().gStateSave(sciter.Hgfx(gfx)))
+	if err == nil {
+		track_acquire(.Graphics_State, rawptr(gfx), loc)
+	}
+	return err
 }
 
 // Pops the state stack.
@@ -296,7 +312,11 @@ save_state :: proc(gfx: Graphics) -> Error {
 // empty stack as well as past a matched pair, so it will never tell you the pairing is wrong that way
 // round. Getting it wrong the other way is fatal - see `save_state`.
 restore_state :: proc(gfx: Graphics) -> Error {
-	return gfx_err(graphics_api().gStateRestore(sciter.Hgfx(gfx)))
+	err := gfx_err(graphics_api().gStateRestore(sciter.Hgfx(gfx)))
+	if err == nil {
+		track_release(.Graphics_State, rawptr(gfx))
+	}
+	return err
 }
 
 set_line_color :: proc(gfx: Graphics, color: Color) -> Error {
@@ -604,9 +624,10 @@ release_graphics :: proc(gfx: Graphics) -> Error {
 // A path is built once and drawn many times, and it outlives any one context. `relative` on each
 // segment means "from where the pen is" rather than "in path coordinates".
 
-create_path :: proc() -> (path: Path, err: Error) {
+create_path :: proc(loc := #caller_location) -> (path: Path, err: Error) {
 	p: sciter.Hpath
 	gfx_err(graphics_api().pathCreate(&p)) or_return
+	track_acquire(.Path, rawptr(p), loc)
 	return Path(p), nil
 }
 
@@ -665,15 +686,23 @@ path_close :: proc(path: Path) -> Error {
 	return gfx_err(graphics_api().pathClosePath(sciter.Hpath(path)))
 }
 
-retain_path :: proc(path: Path) -> Error {
-	return gfx_err(graphics_api().pathAddRef(sciter.Hpath(path)))
+retain_path :: proc(path: Path, loc := #caller_location) -> Error {
+	err := gfx_err(graphics_api().pathAddRef(sciter.Hpath(path)))
+	if err == nil {
+		track_acquire(.Path, rawptr(path), loc)
+	}
+	return err
 }
 
 release_path :: proc(path: Path) -> Error {
 	if path == nil {
 		return nil
 	}
-	return gfx_err(graphics_api().pathRelease(sciter.Hpath(path)))
+	err := gfx_err(graphics_api().pathRelease(sciter.Hpath(path)))
+	if err == nil {
+		track_release(.Path, rawptr(path))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -698,6 +727,7 @@ create_text :: proc(element: Element, text: string, class_name := "") -> (out: T
 	gfx_err(
 		graphics_api().textCreateForElement(&t, raw_data(w), u32(len(w) - 1), sciter.Helement(element), class),
 	) or_return
+	track_acquire(.Text, rawptr(t))
 	return Text(t), nil
 }
 
@@ -724,6 +754,7 @@ create_text_with_style :: proc(element: Element, text: string, style: string) ->
 			u32(len(s) - 1),
 		),
 	) or_return
+	track_acquire(.Text, rawptr(t))
 	return Text(t), nil
 }
 
@@ -789,15 +820,23 @@ draw_text :: proc(gfx: Graphics, text: Text, x, y: f32, anchor := Text_Anchor.To
 	return gfx_err(graphics_api().gDrawText(sciter.Hgfx(gfx), sciter.Htext(text), x, y, u32(anchor)))
 }
 
-retain_text :: proc(text: Text) -> Error {
-	return gfx_err(graphics_api().textAddRef(sciter.Htext(text)))
+retain_text :: proc(text: Text, loc := #caller_location) -> Error {
+	err := gfx_err(graphics_api().textAddRef(sciter.Htext(text)))
+	if err == nil {
+		track_acquire(.Text, rawptr(text), loc)
+	}
+	return err
 }
 
 release_text :: proc(text: Text) -> Error {
 	if text == nil {
 		return nil
 	}
-	return gfx_err(graphics_api().textRelease(sciter.Htext(text)))
+	err := gfx_err(graphics_api().textRelease(sciter.Htext(text)))
+	if err == nil {
+		track_release(.Text, rawptr(text))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------

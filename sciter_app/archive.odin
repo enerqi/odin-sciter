@@ -24,7 +24,7 @@ Archive :: distinct sciter.Archive
 //
 //	RESOURCES :: #load("assets/app.pak")
 //	archive, err := sciter_app.open_archive(RESOURCES)
-open_archive :: proc(blob: []u8) -> (archive: Archive, err: Error) {
+open_archive :: proc(blob: []u8, loc := #caller_location) -> (archive: Archive, err: Error) {
 	if len(blob) == 0 {
 		return nil, .Not_Found
 	}
@@ -32,6 +32,7 @@ open_archive :: proc(blob: []u8) -> (archive: Archive, err: Error) {
 	if h == nil {
 		return nil, .Archive_Failed
 	}
+	track_acquire(.Archive, rawptr(h), loc)
 	return Archive(h), nil
 }
 
@@ -42,6 +43,9 @@ close_archive :: proc(archive: Archive) -> Error {
 		return nil
 	}
 	ok := sciter.api().SciterCloseArchive(sciter.Archive(archive))
+	if ok {
+		track_release(.Archive, rawptr(archive))
+	}
 	return nil if ok else Api_Error.Archive_Failed
 }
 

@@ -35,12 +35,20 @@ Node :: distinct sciter.Hnode
 // The elements that owe an `unuse_element` are exactly the ones this package says hand back a reference
 // of their own: `make_element`, `clone_element`, `remove_element(finalize = false)`, and anything you
 // called `use_element` on yourself. Everything else is borrowed.
-use_element :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
+use_element :: proc(element: Element, loc := #caller_location) -> Error {
+	err := dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
+	if err == nil {
+		track_acquire(.Element, rawptr(element), loc)
+	}
+	return err
 }
 
 unuse_element :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().Sciter_UnuseElement(sciter.Helement(element)))
+	err := dom_err(sciter.api().Sciter_UnuseElement(sciter.Helement(element)))
+	if err == nil {
+		track_release(.Element, rawptr(element))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -524,7 +532,7 @@ set_element_state :: proc(
 // <select>, the checked state of a checkbox. The result owns a reference; `value_clear` it.
 element_value :: proc(element: Element) -> (value: Value, err: Error) {
 	dom_err(sciter.api().SciterGetValue(sciter.Helement(element), &value)) or_return
-	return value, nil
+	return tracked(value), nil
 }
 
 // Sets the element's value. `value` is not consumed.
@@ -556,7 +564,7 @@ set_element_value :: proc(element: Element, value: ^Value) -> Error {
 //
 // The returned element carries a reference that belongs to the caller: `unuse_element` it once it has
 // been inserted, or to throw it away.
-make_element :: proc(tag: string, text := "") -> (element: Element, err: Error) {
+make_element :: proc(tag: string, text := "", loc := #caller_location) -> (element: Element, err: Error) {
 	he: sciter.Helement
 
 	w: [^]u16
@@ -568,17 +576,19 @@ make_element :: proc(tag: string, text := "") -> (element: Element, err: Error) 
 	if he == nil {
 		return nil, .Not_Found
 	}
+	track_acquire(.Element, rawptr(he), loc)
 	return Element(he), nil
 }
 
 // A deep copy of `element`, disconnected from any document: children, attributes and all. Same
 // ownership as `make_element` - the copy carries a reference that is yours.
-clone_element :: proc(element: Element) -> (copy: Element, err: Error) {
+clone_element :: proc(element: Element, loc := #caller_location) -> (copy: Element, err: Error) {
 	he: sciter.Helement
 	dom_err(sciter.api().SciterCloneElement(sciter.Helement(element), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
+	track_acquire(.Element, rawptr(he), loc)
 	return Element(he), nil
 }
 
@@ -789,7 +799,7 @@ element_to_value :: proc(element: Element) -> (v: Value, err: Error) {
 	// Declared as returning UINT rather than SCDOM_RESULT, but the codes are that enum's - a wrap of a
 	// null handle or an unwrap of the wrong type answers .OPERATION_FAILED.
 	dom_err(sciter.Scdom_Result(sciter.api().SciterElementWrap(&v, sciter.Helement(element)))) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 // The element inside a Value, from script or from `element_to_value`. `.OPERATION_FAILED` if the Value
@@ -812,7 +822,7 @@ eval_element :: proc(element: Element, script: string) -> (result: Value, err: E
 	dom_err(
 		sciter.api().SciterEvalElementScript(sciter.Helement(element), raw_data(w), u32(len(w) - 1), &result),
 	) or_return
-	return result, nil
+	return tracked(result), nil
 }
 
 // The element's script object, as a Value - what script reaches through `document.$(sel)` and hangs
@@ -847,7 +857,7 @@ eval_element :: proc(element: Element, script: string) -> (result: Value, err: E
 // The result owns a reference; `value_clear` it.
 expando :: proc(element: Element) -> (value: Value, err: Error) {
 	dom_err(sciter.api().SciterGetExpando(sciter.Helement(element), &value, true)) or_return
-	return value, nil
+	return tracked(value), nil
 }
 
 // Calls a *function* from the element's scope - one the document defined, reached with the element as
@@ -877,7 +887,7 @@ call_function :: proc(element: Element, function: string, args: ..Value) -> (res
 			&result,
 		),
 	) or_return
-	return result, nil
+	return tracked(result), nil
 }
 
 // Calls a method on the element's script object. The result owns a reference; `value_clear` it.
@@ -899,7 +909,7 @@ call_method :: proc(element: Element, method: string, args: ..Value) -> (result:
 			&result,
 		),
 	) or_return
-	return result, nil
+	return tracked(result), nil
 }
 
 // ---------------------------------------------------------------------------------------------------

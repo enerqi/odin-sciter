@@ -28,12 +28,25 @@ value_init :: proc(v: ^Value) {
 
 // Releases whatever the Value holds and returns it to undefined. Safe to call twice.
 value_clear :: proc(v: ^Value) {
+	when ODIN_DEBUG {
+		// Counted before the clear, because afterwards it owns nothing and there is nothing to see.
+		if value_owns_reference(v) {
+			track_release_counted(.Value)
+		}
+	}
 	sciter.api().ValueClear(v)
 }
 
 // Takes a second reference to `src`. Both `dst` and `src` then owe a clear.
-value_copy :: proc(dst: ^Value, src: ^Value) -> Error {
-	return value_err(sciter.api().ValueCopy(dst, src))
+value_copy :: proc(dst: ^Value, src: ^Value, loc := #caller_location) -> Error {
+	err := value_err(sciter.api().ValueCopy(dst, src))
+	when ODIN_DEBUG {
+		// A second reference, so a second clear is owed.
+		if err == nil && value_owns_reference(dst) {
+			track_acquire_counted(.Value, loc)
+		}
+	}
+	return err
 }
 
 // Meant to detach the Value from anything sharing it, so a write to it cannot be observed elsewhere -
@@ -178,9 +191,9 @@ value_parse :: proc(s: string, how := sciter.Value_String_Cvt_Type.JSON_LITERAL)
 	w := utf16_from_string(s, context.temp_allocator)
 	value_err(sciter.api().ValueFromString(&v, raw_data(w), u32(len(w) - 1), how)) or_return
 	if value_is_error(&v) {
-		return v, .Parse_Failed
+		return tracked(v), .Parse_Failed
 	}
-	return v, nil
+	return tracked(v), nil
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -303,7 +316,7 @@ value_len :: proc(v: ^Value) -> (n: int, err: Error) {
 // The nth element. The result owns a reference; `value_clear` it.
 value_at :: proc(v: ^Value, n: int) -> (element: Value, err: Error) {
 	value_err(sciter.api().ValueNthElementValue(v, sciter.Int(n), &element)) or_return
-	return element, nil
+	return tracked(element), nil
 }
 
 // The nth key of a map. The result owns a reference; `value_clear` it.
@@ -317,7 +330,7 @@ value_at :: proc(v: ^Value, n: int) -> (element: Value, err: Error) {
 // are not.
 value_key_at :: proc(v: ^Value, n: int) -> (key: Value, err: Error) {
 	value_err(sciter.api().ValueNthElementKey(v, sciter.Int(n), &key)) or_return
-	return key, nil
+	return tracked(key), nil
 }
 
 // Writes the nth element, growing the array if needed. `element` is copied, not consumed.
@@ -329,7 +342,7 @@ value_set_at :: proc(v: ^Value, n: int, element: ^Value) -> Error {
 // reference; `value_clear` it.
 value_get_key :: proc(v: ^Value, key: ^Value) -> (result: Value, err: Error) {
 	value_err(sciter.api().ValueGetValueOfKey(v, key, &result)) or_return
-	return result, nil
+	return tracked(result), nil
 }
 
 // The value stored under a string key. The result owns a reference; `value_clear` it.
@@ -486,5 +499,5 @@ value_invoke :: proc(fn: ^Value, this: ^Value = nil, args: []Value = nil) -> (re
 
 	// The trailing URL is what script sees as the call site in a stack trace.
 	value_err(sciter.api().ValueInvoke(fn, self, u32(len(args)), argv, &result, nil)) or_return
-	return result, nil
+	return tracked(result), nil
 }

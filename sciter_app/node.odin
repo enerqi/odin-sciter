@@ -21,12 +21,20 @@ import sciter ".."
 // Lifetime
 
 // Keeps the node alive while a handle to it is held. Pair with `node_release`.
-node_add_ref :: proc(node: Node) -> Error {
-	return dom_err(sciter.api().SciterNodeAddRef(sciter.Hnode(node)))
+node_add_ref :: proc(node: Node, loc := #caller_location) -> Error {
+	err := dom_err(sciter.api().SciterNodeAddRef(sciter.Hnode(node)))
+	if err == nil {
+		track_acquire(.Node, rawptr(node), loc)
+	}
+	return err
 }
 
 node_release :: proc(node: Node) -> Error {
-	return dom_err(sciter.api().SciterNodeRelease(sciter.Hnode(node)))
+	err := dom_err(sciter.api().SciterNodeRelease(sciter.Hnode(node)))
+	if err == nil {
+		track_release(.Node, rawptr(node))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -71,7 +79,7 @@ node_type :: proc(node: Node) -> (type: sciter.Node_Type, err: Error) {
 
 node_to_value :: proc(node: Node) -> (v: Value, err: Error) {
 	dom_err(sciter.Scdom_Result(sciter.api().SciterNodeWrap(&v, sciter.Hnode(node)))) or_return
-	return v, nil
+	return tracked(v), nil
 }
 
 node_from_value :: proc(v: ^Value) -> (node: Node, err: Error) {

@@ -203,13 +203,14 @@ serve_request :: proc(
 // The reference comes back as an `Owned_Request`, which is what `unuse_request` accepts: taking is the
 // only way to produce one, so the release can only be aimed at something that was taken. On failure the
 // handle is nil and nothing was taken.
-use_request :: proc(request: Request) -> (owned: Owned_Request, err: Error) {
+use_request :: proc(request: Request, loc := #caller_location) -> (owned: Owned_Request, err: Error) {
 	if request == nil {
 		return nil, sciter.Request_Result.BAD_PARAM
 	}
 	if e := request_err(request_api().RequestUse(sciter.Hrequest(request))); e != nil {
 		return nil, e
 	}
+	track_acquire(.Request, rawptr(request), loc)
 	return Owned_Request(request), nil
 }
 
@@ -221,7 +222,11 @@ unuse_request :: proc(request: Owned_Request) -> Error {
 	if request == nil {
 		return sciter.Request_Result.BAD_PARAM
 	}
-	return request_err(request_api().RequestUnUse(sciter.Hrequest(request)))
+	err := request_err(request_api().RequestUnUse(sciter.Hrequest(request)))
+	if err == nil {
+		track_release(.Request, rawptr(request))
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------

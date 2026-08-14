@@ -92,6 +92,9 @@ data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sc
 		u32(len(data)),
 		rawptr(request_id),
 	)
+	if ok {
+		track_release_counted(.Delayed_Request)
+	}
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -335,7 +338,14 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 			type = ld.dataType,
 			raw  = ld,
 		}
-		return u32(handler.on_load_data(handler, &request))
+		result := handler.on_load_data(handler, &request)
+		// `.DELAYED` is a promise to answer later, and sciter-x-def.h is explicit that an unanswered one
+		// leaks. It is the only obligation in this package with no handle to hang it on, so it is counted
+		// here, where the host's answer is visible, and `data_ready_async` discharges it.
+		if result == .DELAYED {
+			track_acquire_counted(.Delayed_Request)
+		}
+		return u32(result)
 
 	case sciter.SC_DATA_LOADED:
 		if handler.on_data_loaded == nil {

@@ -1415,4 +1415,143 @@ test_a_scoped_element_stays_in_the_document_after_insertion :: proc(t: ^testing.
 	text, terr := sciter_app.text(first, context.temp_allocator)
 	testing.expect_value(t, terr, nil)
 	testing.expect_value(t, text, "only")
+
+	// `scoped_clone_element` owns its copy the same way, and the copy is independent of the original.
+	//
+	// The write comes *after* the insertion, and it has to: measured, `set_text` on a detached clone is
+	// `.PASSIVE_HANDLE` even though the clone carries a reference of its own. Building an element's
+	// content before putting it in the document works through `make_element`'s `text` argument and
+	// through `set_attribute`, but not through `set_text`.
+	{
+		copy, cerr := sciter_app.scoped_clone_element(first)
+		testing.expect_value(t, cerr, nil)
+		testing.expect_value(t, sciter_app.insert_element(copy, list), nil)
+		testing.expect_value(t, sciter_app.set_text(copy, "second"), nil)
+	}
+
+	after, aerr := sciter_app.child_count(list)
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, after, sciter_app.Child_Index(2))
+
+	original, oerr := sciter_app.child(list, 0)
+	testing.expect_value(t, oerr, nil)
+	original_text, oterr := sciter_app.text(original, context.temp_allocator)
+	testing.expect_value(t, oterr, nil)
+	testing.expect_value(t, original_text, "only") // the clone's edit did not reach it
+}
+
+// The debug tracker, which is the other half of the ownership story: `scoped_` covers the Value that
+// dies with its scope, and this covers the one that does not.
+//
+// Only meaningful in a debug build - every entry point compiles to nothing otherwise - so the test
+// asserts the release-build behaviour too rather than being skipped.
+@(test)
+test_the_resource_tracker_sees_a_leaked_value_and_a_leaked_element :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(false)
+
+	when !ODIN_DEBUG {
+		// Compiled out: no map, no branch, nothing to report.
+		testing.expect_value(t, sciter_app.report_leaked_resources(), 0)
+		return
+	}
+
+	before := sciter_app.outstanding_resources()
+
+	// A Value that owns engine memory, dropped on the floor - the shape measured at 195 kB a call.
+	leaked, err := sciter_app.eval(window, `"x".repeat(100)`)
+	testing.expect_value(t, err, nil)
+	_ = leaked
+
+	// And an element reference that is never given back.
+	orphan, oerr := sciter_app.make_element("li", "never inserted")
+	testing.expect_value(t, oerr, nil)
+
+	during := sciter_app.outstanding_resources()
+	testing.expect_value(t, during[.Value] - before[.Value], 1)
+	testing.expect_value(t, during[.Element] - before[.Element], 1)
+
+	// A scalar Value owns nothing, so it must *not* be counted - otherwise a real leak drowns in noise.
+	scalar := sciter_app.value_from(i32(42))
+	after_scalar := sciter_app.outstanding_resources()
+	testing.expect_value(t, after_scalar[.Value] - during[.Value], 0)
+	sciter_app.value_clear(&scalar)
+
+	// Now settle both, and the ledger comes back to where it started.
+	sciter_app.value_clear(&leaked)
+	testing.expect_value(t, sciter_app.unuse_element(orphan), nil)
+
+	settled := sciter_app.outstanding_resources()
+	testing.expect_value(t, settled[.Value], before[.Value])
+	testing.expect_value(t, settled[.Element], before[.Element])
+}
+
+// The rest of the scoped producers, exercised once each so that every one of them is on a path the
+// test suite runs - the release happens on the way out of this procedure, and under ASan that is the
+// assertion. Grouped rather than one test apiece because what is being checked is the wrapper, not the
+// underlying call: each of these has its own test elsewhere in this file or in another example.
+@(test)
+test_every_scoped_value_producer_releases :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	DOC :: `<html><head><script type="module">
+	globalThis.tally = 7;
+	</script></head><body>
+	<input id="field" type="text" value="typed" />
+	<div id="d">hi</div>
+	</body></html>`
+
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+	root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	field, ferr := sciter_app.select_first(root, "#field")
+	testing.expect_value(t, ferr, nil)
+	d, derr := sciter_app.select_first(root, "#d")
+	testing.expect_value(t, derr, nil)
+
+	// A container built by parsing, then read two levels down - three producers, one expression each.
+	doc, perr := sciter_app.scoped_value_parse(`{"rows":[10,20]}`)
+	testing.expect_value(t, perr, nil)
+	rows, gerr := sciter_app.scoped_value_get(&doc, "rows")
+	testing.expect_value(t, gerr, nil)
+	first, aerr := sciter_app.scoped_value_at(&rows, 0)
+	testing.expect_value(t, aerr, nil)
+	n, nerr := sciter_app.value_to_i64(&first)
+	testing.expect_value(t, nerr, nil)
+	testing.expect_value(t, n, i64(10))
+
+	// A global the document defined.
+	tally, terr := sciter_app.scoped_global(window, "tally")
+	testing.expect_value(t, terr, nil)
+	tally_n, tnerr := sciter_app.value_to_i64(&tally)
+	testing.expect_value(t, tnerr, nil)
+	testing.expect_value(t, tally_n, i64(7))
+
+	// An <input>'s value, which is `SciterGetValue` rather than the behavior's GET_VALUE.
+	typed, verr := sciter_app.scoped_element_value(field)
+	testing.expect_value(t, verr, nil)
+	typed_s, tserr := sciter_app.value_to_string(&typed, context.temp_allocator)
+	testing.expect_value(t, tserr, nil)
+	testing.expect_value(t, typed_s, "typed")
+
+	// The element's script object, and a script evaluated against it.
+	expando, xerr := sciter_app.scoped_expando(d)
+	testing.expect_value(t, xerr, nil)
+	testing.expect(t, !sciter_app.value_is_undefined(&expando))
+
+	tag, eerr := sciter_app.scoped_eval_element(d, `this.tag`)
+	testing.expect_value(t, eerr, nil)
+	tag_s, tagerr := sciter_app.value_to_string(&tag, context.temp_allocator)
+	testing.expect_value(t, tagerr, nil)
+	testing.expect_value(t, tag_s, "div")
+
+	// `behavior_value` asks the *behavior*, and no intrinsic behavior implements GET_VALUE on Sciter 6 -
+	// so `handled` is false and the Value is undefined. The scoped form still has to release it.
+	_, handled, berr := sciter_app.scoped_behavior_value(field)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, handled, false)
 }

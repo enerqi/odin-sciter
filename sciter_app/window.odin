@@ -343,7 +343,7 @@ eval :: proc(window: Window, script: string) -> (result: Value, err: Error) {
 		value_clear(&result)
 		return {}, .Eval_Failed
 	}
-	return result, nil
+	return tracked(result), nil
 }
 
 // Calls a function defined in the document's global scope.
@@ -378,7 +378,7 @@ call :: proc(window: Window, function: string, args: ..Value) -> (result: Value,
 		value_clear(&result)
 		return {}, .Call_Failed
 	}
-	return result, nil
+	return tracked(result), nil
 }
 
 // Publishes a value into the document's global scope, where script sees it as `globalThis.name`.
@@ -415,7 +415,7 @@ global :: proc(window: Window, name: string) -> (value: Value, err: Error) {
 			sciter.api().SciterGetVariable(rawptr(window), to_cstring(name, context.temp_allocator), &value),
 		),
 	) or_return
-	return value, nil
+	return tracked(value), nil
 }
 
 // The DOM's document element - `<html>`. Every traversal starts here.
