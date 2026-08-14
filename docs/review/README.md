@@ -43,8 +43,10 @@ Every item this section used to list has landed, along with the rest of angles 1
 
 1. **Windows.** Two breaking changes (`Owned_Element`, `Owned_Request`) and the leak gate have never run
    there. `docs/WINDOWS-CHECKLIST.md` lists what to check and why.
-2. **This directory is untracked** apart from `09` and `HANDOFF.md`. Track it or delete it; leaving the
-   files loose is what stopped this README being committed with the rest of the work.
+2. **The repository-size decision** (R7-03): the 24 MB engine is in git with no LFS, and both ways out
+   — LFS, or a `just fetch-engine` recipe with a committed SHA-256 — are cheap now and expensive once a
+   second binary lands. Written up in `docs/UPGRADING.md` and deliberately not actioned, because it
+   rewrites history.
 
 Closed since: the five procedures no test reached — `set_option`, `data_ready_async`, the `set_state`
 group and the two `draw_rounded_rect_*` members — now have tests, and coverage is 383 of 383. Each of
@@ -60,10 +62,11 @@ A finding that CI does not check is a finding that comes back — it did, once, 
 ```
 just check            # both packages, doc snippets, all 30 examples build
 just lint             # -vet over both packages and all 30 examples
+just cross-check      # the same, type checked for windows_amd64 and darwin_amd64
 just check-ownership  # allocator ⇒ owned, otherwise borrowed
 just parity --check   # C-API slot coverage against the baseline
 just stats --check    # the counts README.md and docs/PLAN.md quote
-just example-tests    # 376 tests across 24 files
+just example-tests    # 381 tests across 24 files
 just leak-check       # the engine-resource leak gate (needs -debug and a display)
 ```
 

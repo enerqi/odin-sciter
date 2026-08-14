@@ -95,6 +95,7 @@ Everything below was measured on the vendored 6.0.4.9 engine this session. The p
 ```
 just check              # both packages, doc snippets, all 30 examples build
 just lint               # -vet over both packages AND all 30 examples
+just cross-check        # the same, type checked for windows_amd64 and darwin_amd64
 just check-ownership    # allocator ⇒ owned, otherwise borrowed
 just parity --check     # C-API slot coverage against the baseline
 just stats --check      # the counts README.md and docs/PLAN.md quote

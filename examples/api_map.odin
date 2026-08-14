@@ -64,6 +64,12 @@ import "core:os"
 import "core:reflect"
 import "core:strings"
 
+// Used by `wide_to_string`, which is inside `when ODIN_OS == .Windows`. `-vet` sees an unused import on
+// every other platform and `odin check -target:windows_amd64` sees an undeclared name without it, so
+// neither gate alone is enough: dropping this line passes `just lint` on Linux and fails `just
+// cross-check`, which is exactly how it got dropped once. `@(require)` is what says "keep it".
+@(require) import "core:unicode/utf16"
+
 // ---------------------------------------------------------------------------------------------------
 // Symbol resolution
 
