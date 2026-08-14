@@ -44,8 +44,8 @@ main :: proc() {
 	defer delete(url)
 
 	fmt.println("loading", url)
-	if err := sciter_app.load_file(window, url); err != nil {
-		fmt.eprintln("could not load the document:", err)
+	if lerr := sciter_app.load_file(window, url); lerr != nil {
+		fmt.eprintln("could not load the document:", lerr)
 		fmt.eprintln("(run this from the repository root - the path above is resolved against $PWD)")
 		os.exit(1)
 	}

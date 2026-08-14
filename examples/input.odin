@@ -570,7 +570,7 @@ test_scroll_and_attribute_events_reach_the_element_only :: proc(t: ^testing.T) {
 
 @(test)
 test_animation_frame_is_one_shot :: proc(t: ^testing.T) {
-	window, root, ok := test_window(t)
+	_, root, ok := test_window(t)
 	if !ok {return}
 
 	bar, _ := sciter_app.select_first(root, "#bar")

@@ -174,7 +174,7 @@ render :: proc(app: ^App) -> sciter_app.Error {
 	list := sciter_app.select_first(root, "#list") or_return
 
 	builder := strings.builder_make(context.temp_allocator)
-	for task, i in app.tasks {
+	for task in app.tasks {
 		fmt.sbprintf(
 			&builder,
 			`<li id="task-%d" class="%s"><span class="box">%s</span><span class="title">%s</span></li>`,

@@ -403,7 +403,7 @@ main :: proc() {
 
 		typed := "-"
 		if field, err := sciter_app.select_first(root, "#name"); err == nil {
-			if value, verr := sciter_app.element_value(field); verr == nil {
+			if value, everr := sciter_app.element_value(field); everr == nil {
 				defer sciter_app.value_clear(&value)
 				if s, serr := sciter_app.value_to_string(&value, context.temp_allocator); serr == nil && s != "" {
 					typed = s

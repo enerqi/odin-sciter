@@ -143,8 +143,10 @@ against.
   slot added by a future SDK is a one-line diff during the upgrade rather than a silent gap.
 - **`just stats`** — the counts the docs quote about this repository. `--check` fails when they drift;
   they had, by 29 tests.
-- **`just lint` runs in CI**, and now covers `sciter_app` as well as the root package. The `-vet` flags
-  were configured and enforcing nothing.
+- **`just lint` runs in CI**, and now covers `sciter_app` and **all 30 examples** as well as the root
+  package. The `-vet` flags were configured and enforcing nothing; the examples were then excluded from
+  them, which left the flags off the 23k lines most likely to be skim-read. Letting them in took 25
+  fixes - unused imports, unused locals, shadowed `err`s - and no behaviour changed.
 - **[`docs/README.md`](docs/README.md)** — an index and a reading order for the 27 documents.
 - **[`docs/rules.md`](docs/rules.md)** — the four cross-cutting contracts (thread affinity, `Value`
   ownership, handle lifetime, allocator conventions) in one place.
@@ -155,8 +157,7 @@ against.
 - `just format` exits 1 on `examples/dom_walk.odin` (a local named `inline`) and rewrites
   `custom_loader.odin` and `extension.odin` on every run. Pre-existing; it is why there is no formatter
   gate in CI yet.
-- The `examples/` files do not pass `-vet` (unused imports, shadowed `err` in a dozen files), so the CI
-  lint step covers the two library packages only.
+
 - The timer tests in `examples/events.odin` flake under load.
 
 ## Unreleased — v6.0.4.9

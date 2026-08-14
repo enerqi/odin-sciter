@@ -336,8 +336,8 @@ main :: proc() {
 		}
 		defer sciter_app.destroy_windowless(&view)
 
-		if err := sciter_app.load_html(view.window, DOC, "about:blank"); err != nil {
-			fmt.eprintln("could not load the document:", err)
+		if lerr := sciter_app.load_html(view.window, DOC, "about:blank"); lerr != nil {
+			fmt.eprintln("could not load the document:", lerr)
 			os.exit(1)
 		}
 

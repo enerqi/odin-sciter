@@ -331,7 +331,7 @@ test_heartbeat_alone_delivers :: proc(t: ^testing.T) {
 
 	// `heartbeat` services tasks without processing input, and posted messages are among them - so a
 	// thread that is driving the engine without a real message loop still gets them.
-	for i in 0 ..< 200 {
+	for _ in 0 ..< 200 {
 		if len(r.got) > 0 {
 			break
 		}

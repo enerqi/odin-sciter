@@ -63,7 +63,6 @@ import "core:fmt"
 import "core:os"
 import "core:reflect"
 import "core:strings"
-import "core:unicode/utf16"
 
 // ---------------------------------------------------------------------------------------------------
 // Symbol resolution

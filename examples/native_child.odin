@@ -197,8 +197,8 @@ main :: proc() {
 		fmt.eprintln("could not create the window:", err)
 		os.exit(1)
 	}
-	if err := sciter_app.load_html(window, DOC); err != nil {
-		fmt.eprintln("could not load the document:", err)
+	if lerr := sciter_app.load_html(window, DOC); lerr != nil {
+		fmt.eprintln("could not load the document:", lerr)
 		os.exit(1)
 	}
 	sciter_app.show(window)

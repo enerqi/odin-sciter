@@ -130,8 +130,20 @@ format:
 # ---
 # lint checks for style and potential bugs. No code generation
 lint *args:
+	#!/usr/bin/env bash
+	set -euo pipefail
 	odin check . -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
 	odin check sciter_app -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
+	# The examples are 23k of the repository's ~34k lines, and they used to be excluded here - which
+	# meant the vet flags covered the third of the code least likely to be read closely. They pass now;
+	# the whole cleanup was 25 findings, all unused imports, unused locals and shadowed `err`s.
+	#
+	# `-no-entry-point` for all of them: `extension.odin` and `sqlite_extension.odin` are native
+	# extensions built as shared libraries and have no `main`, and the flag is harmless for the rest.
+	for f in examples/*.odin; do
+	    odin check "$f" -file -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
+	done
+	echo "ok: both library packages and all $(ls examples/*.odin | wc -l) examples pass -vet" 
 
 
 # Every `run_*`, `test*` and `diagnose` recipe depends on this, so it runs before every build - which

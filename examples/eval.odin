@@ -1472,7 +1472,6 @@ test_the_resource_tracker_sees_a_leaked_value_and_a_leaked_element :: proc(t: ^t
 
 	// And an element reference that is never given back.
 	orphan_owned, oerr := sciter_app.make_element("li", "never inserted")
-	orphan := sciter_app.borrow_element(orphan_owned)
 	testing.expect_value(t, oerr, nil)
 
 	during := sciter_app.outstanding_resources()

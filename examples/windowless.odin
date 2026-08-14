@@ -165,8 +165,8 @@ main :: proc() {
 
 	// `about:blank` as the base URL, as the SDK's own demo does: relative references in the document
 	// need something to resolve against even when nothing is on disk.
-	if err := sciter_app.load_html(view.window, DOC, "about:blank"); err != nil {
-		fmt.eprintln("could not load the document:", err)
+	if lerr := sciter_app.load_html(view.window, DOC, "about:blank"); lerr != nil {
+		fmt.eprintln("could not load the document:", lerr)
 		os.exit(1)
 	}
 
@@ -203,7 +203,7 @@ main :: proc() {
 
 	// **Typing works, clicking does not.** Focus the field, send a few characters, and read back what
 	// the DOM holds - all with no window and no pump.
-	if field, err := sciter_app.select_first(root, "#field"); err == nil {
+	if field, fielderr := sciter_app.select_first(root, "#field"); fielderr == nil {
 		sciter_app.set_focus(field)
 		sciter_app.windowless_focus(&view)
 		for c in "typed with no window" {
@@ -226,7 +226,7 @@ main :: proc() {
 	sciter_app.windowless_mouse(&view, .MOUSE_DOWN, {W / 2, 40})
 	sciter_app.windowless_mouse(&view, .MOUSE_UP, {W / 2, 40})
 	frame(&view, 600 * time.Millisecond)
-	if seen, err := sciter_app.eval(view.window, "globalThis.mouse"); err == nil {
+	if seen, merr := sciter_app.eval(view.window, "globalThis.mouse"); merr == nil {
 		defer sciter_app.value_clear(&seen)
 		text, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
 		fmt.printfln("the document saw %q - m(ove), d(own), u(p), c(lick synthesised by the engine)", text)

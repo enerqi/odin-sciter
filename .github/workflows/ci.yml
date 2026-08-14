@@ -56,8 +56,9 @@ jobs:
       # never run by anything, so they enforced nothing. Seconds, no engine and no display, so it goes
       # first: a shadowed declaration is cheaper to hear about before a 45-minute test job.
       #
-      # Both library packages only. The examples do not lint clean today (unused imports, shadowed
-      # `err` in a dozen files) and cleaning them is its own change; `just check` still builds them.
+      # Both library packages *and* every example. The examples used to be excluded - which meant the
+      # vet flags covered the third of the code least likely to be read closely - and the cleanup that
+      # let them in was 25 findings, all unused imports, unused locals and shadowed `err`s.
       - name: Lint
         run: just lint
 

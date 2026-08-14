@@ -113,8 +113,8 @@ main :: proc() {
 	}
 
 	// select_first is the same search, stopping at the first hit. `.Not_Found` is a normal answer.
-	if _, err := sciter_app.select_first(root, "#nothing-matches-this"); err != nil {
-		fmt.println("selector for a missing element returned:", err)
+	if _, missing := sciter_app.select_first(root, "#nothing-matches-this"); missing != nil {
+		fmt.println("selector for a missing element returned:", missing)
 	}
 
 	// --- traversal by hand --------------------------------------------------------------------
@@ -170,11 +170,11 @@ main :: proc() {
 	sciter_app.sort_children(list, by_length)
 
 	fmt.println("#tasks after building, moving and sorting:")
-	if n, cerr := sciter_app.child_count(list); cerr == nil {
-		for i in 0 ..< n {
+	if count, cerr := sciter_app.child_count(list); cerr == nil {
+		for i in 0 ..< count {
 			item, _ := sciter_app.child(list, i)
-			line, _ := sciter_app.text(item, context.temp_allocator)
-			fmt.printfln("  %d %s", i, line)
+			text, _ := sciter_app.text(item, context.temp_allocator)
+			fmt.printfln("  %d %s", i, text)
 		}
 	}
 
@@ -1772,7 +1772,7 @@ test_element_value_round_trip :: proc(t: ^testing.T) {
 // document and would prove nothing.
 @(test)
 test_element_value_holds_a_reference :: proc(t: ^testing.T) {
-	window, ok := test_window(t)
+	_, ok := test_window(t)
 	if !ok {return}
 
 	made_owned, merr := sciter_app.make_element("p", "made")
@@ -1791,7 +1791,6 @@ test_element_value_holds_a_reference :: proc(t: ^testing.T) {
 	// that has not been reused yet.
 	for _ in 0 ..< 500 {
 		junk_owned, _ := sciter_app.make_element("span", "junk junk junk junk junk")
-		junk := sciter_app.borrow_element(junk_owned)
 		sciter_app.unuse_element(junk_owned)
 	}
 

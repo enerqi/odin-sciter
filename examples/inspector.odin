@@ -21,7 +21,6 @@
 // docs/PLAN.md section 1.
 package main
 
-import sciter ".."
 import "../sciter_app"
 import "core:fmt"
 import "core:os"

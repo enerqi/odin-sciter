@@ -275,8 +275,8 @@ main :: proc() {
 	}
 	defer sciter_app.destroy_windowless(&view)
 
-	if err := sciter_app.load_html(view.window, DOC, "about:blank"); err != nil {
-		fmt.eprintln("could not load the document:", err)
+	if lerr := sciter_app.load_html(view.window, DOC, "about:blank"); lerr != nil {
+		fmt.eprintln("could not load the document:", lerr)
 		os.exit(1)
 	}
 	// The module script runs asynchronously, so the interface is not there the instant the load
@@ -292,12 +292,12 @@ main :: proc() {
 	}
 
 	// Text, which is the easy half.
-	if ok, err := put_text(view.window, "written by Odin, through the document"); err != nil {
-		fmt.eprintln("clipboard write failed:", err)
+	if ok, werr := put_text(view.window, "written by Odin, through the document"); werr != nil {
+		fmt.eprintln("clipboard write failed:", werr)
 	} else {
 		fmt.println("wrote text:", ok)
 	}
-	if text, err := get_text(view.window, context.temp_allocator); err == nil {
+	if text, rerr := get_text(view.window, context.temp_allocator); rerr == nil {
 		fmt.printfln("read back: %q", text)
 	}
 
@@ -308,8 +308,8 @@ main :: proc() {
 		os.exit(1)
 	}
 	defer sciter_app.value_clear(&payload)
-	if ok, err := put_flavour(view.window, "json", &payload); err != nil {
-		fmt.eprintln("clipboard json write failed:", err)
+	if ok, jerr := put_flavour(view.window, "json", &payload); jerr != nil {
+		fmt.eprintln("clipboard json write failed:", jerr)
 	} else {
 		fmt.println("wrote json:", ok)
 	}
@@ -334,7 +334,7 @@ main :: proc() {
 	// HTML, which is where the surprise is.
 	fragment := sciter_app.value_from_string("<b>bold</b> and <i>italic</i>")
 	defer sciter_app.value_clear(&fragment)
-	if _, err := put_flavour(view.window, "html", &fragment); err == nil {
+	if _, herr := put_flavour(view.window, "html", &fragment); herr == nil {
 		if got, gerr := read_clipboard(view.window, context.temp_allocator); gerr == nil {
 			defer sciter_app.value_clear(&got.json)
 			fmt.printfln("html as stored:   %q", got.html)

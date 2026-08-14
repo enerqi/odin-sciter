@@ -78,8 +78,8 @@ main :: proc() {
 		os.exit(1)
 	}
 
-	counts := sciter_app.outstanding_resources()
 	when ODIN_DEBUG {
+		counts := sciter_app.outstanding_resources()
 		fmt.printfln("leak sweep: clean - nothing outstanding across %d resource kinds", len(counts))
 	} else {
 		fmt.println("leak sweep: built without -debug, so the tracker is compiled out and this proved nothing")
