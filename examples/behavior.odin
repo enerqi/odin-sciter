@@ -808,3 +808,75 @@ test_a_select_opens_through_its_asset_not_through_do_click :: proc(t: ^testing.T
 	testing.expect_value(t, herr, nil)
 	settle()
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The one borrowed Value whose warning is literally true
+//
+// `docs/rules.md` 2 says clearing `SET_VALUE`'s `args.val` is a use-after-free in the caller. Two other
+// shapes of "borrowed Value" were measured and are not - a functor's arguments belong to the script
+// that passed them, and a visitor's values silently empty the container (`call_odin_from_js.odin` and
+// `eval.odin` hold those). This one is, and it is the worst kind: **the caller's Value reads correctly
+// right after the call and stops reading correctly later**, when the freed payload is reused. A test
+// that checked it the obvious way would report the bug as safe.
+
+@(private = "file")
+Value_Clearer :: struct {
+	using handler: sciter_app.Event_Handler,
+	saw:           bool,
+}
+
+@(private = "file")
+on_clearing_set_value :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	clearer := (^Value_Clearer)(h)
+	mc, ok := sciter_app.method_call(event)
+	if !ok || mc.id != u32(sciter.Behavior_Method_Identifiers.SET_VALUE) {
+		return false
+	}
+	params := (^sciter.Value_Params)(mc.params)
+	clearer.saw = true
+	// The thing under test, and the thing never to write in real code.
+	sciter_app.value_clear(&params.val)
+	return true
+}
+
+@(test)
+test_clearing_set_values_argument_frees_the_callers_value_under_it :: proc(t: ^testing.T) {
+	window, root, ok := test_window(t)
+	if !ok {return}
+
+	meter_el, _ := sciter_app.select_first(root, "#meter")
+	clearer := Value_Clearer {
+		subscription = {.METHOD_CALL},
+		on_event     = on_clearing_set_value,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(meter_el, &clearer), nil)
+	defer sciter_app.detach_handler(meter_el, &clearer)
+
+	payload := sciter_app.value_from_string("the caller still owns this")
+	// No `defer value_clear` here on purpose: the handler below releases this reference, so clearing it
+	// again would be the double free that follows a use-after-free.
+
+	handled, err := sciter_app.set_behavior_value(meter_el, &payload)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, handled, "the handler claimed the method")
+	testing.expect(t, clearer.saw, "the handler saw SET_VALUE")
+
+	// The trap: immediately afterwards the caller's Value still reads correctly, because nothing has
+	// reused the freed payload yet.
+	right_after, rerr := sciter_app.value_to_string(&payload, context.temp_allocator)
+	testing.expect_value(t, rerr, nil)
+	testing.expect_value(t, right_after, "the caller still owns this")
+
+	// Churn the engine's heap, and the same Value now reads as something else - measured, empty. This
+	// is the assertion that says the reference really was given away.
+	for _ in 0 ..< 200 {
+		junk, _ := sciter_app.eval(window, `"z".repeat(5000)`)
+		sciter_app.value_clear(&junk)
+	}
+	after, _ := sciter_app.value_to_string(&payload, context.temp_allocator)
+	testing.expect(
+		t,
+		after != "the caller still owns this",
+		"the payload should be gone once the engine has reused the memory under it",
+	)
+}

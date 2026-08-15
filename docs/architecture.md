@@ -122,6 +122,9 @@ Two traps found the hard way:
 Sciter is single-threaded. Every `ISciterAPI` call has to come from the thread that ran
 `SCITER_APP_INIT`. There is no locking to opt into and no "call from any thread" mode.
 
+The patterns that follow from this - and the decision about whether to use a worker at all - are in
+[`threading.md`](./threading.md).
+
 To drive the UI from a worker, get back onto the engine's thread first.
 [`post_callback(window, wparam, lparam)`](./api.md#posting-work-to-the-engines-thread) is the way, and
 the only call in `sciter_app` that is safe from another thread: it returns immediately and the two

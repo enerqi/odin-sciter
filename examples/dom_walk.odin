@@ -404,7 +404,8 @@ test_node_insert :: proc(t: ^testing.T) {
 	root, _ := sciter_app.root(window)
 	summary, _ := sciter_app.select_first(root, "#summary")
 
-	// A detached node belongs to the caller until it is inserted.
+	// A node you made carries a reference, and inserting it does not hand that reference over -
+	// measured, and the reason `make_text_node` returns an `Owned_Node`. Insert *and* release.
 	created, err := sciter_app.make_text_node(" appended")
 	testing.expect_value(t, err, nil)
 
@@ -415,6 +416,14 @@ test_node_insert :: proc(t: ^testing.T) {
 	after, terr := sciter_app.text(summary, context.temp_allocator)
 	testing.expect_value(t, terr, nil)
 	testing.expect(t, strings.has_suffix(after, " appended"), after)
+
+	// Giving the reference back is not a removal: the document holds its own, so the node stays where
+	// it was put. That is the whole shape of the correction - insert *and* release, and the document
+	// is unharmed by the release.
+	testing.expect_value(t, sciter_app.node_release(created), nil)
+	still, serr := sciter_app.text(summary, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, strings.has_suffix(still, " appended"), still)
 }
 
 // **The first thing the node view surprises people with.** `<ul id="tasks">` is written across five
@@ -545,9 +554,10 @@ test_comments_are_nodes_that_survive_a_round_trip_but_never_appear_in_the_text :
 	// One built here. It is a `.COMMENT` before it is ever inserted - a detached node is a real node.
 	made, merr := sciter_app.make_comment_node(" made in Odin ")
 	testing.expect_value(t, merr, nil)
-	made_kind, _ := sciter_app.node_type(made)
+	defer testing.expect_value(t, sciter_app.node_release(made), nil)
+	made_kind, _ := sciter_app.node_type(sciter_app.borrow_node(made))
 	testing.expect_value(t, made_kind, sciter.Node_Type.COMMENT)
-	made_text, _ := sciter_app.node_text(made, context.temp_allocator)
+	made_text, _ := sciter_app.node_text(sciter_app.borrow_node(made), context.temp_allocator)
 	testing.expect_value(t, made_text, " made in Odin ")
 
 	testing.expect_value(t, sciter_app.node_insert(node, .APPEND, made), nil)
@@ -639,8 +649,11 @@ test_a_node_removed_without_finalizing_can_be_read_but_never_reinserted :: proc(
 	victim, _ := sciter_app.node_child(parent, 0)
 	first_text, _ := sciter_app.node_text(victim, context.temp_allocator)
 
-	// Take a reference first, which is the thing that ought to make this safe.
-	testing.expect_value(t, sciter_app.node_add_ref(victim), nil)
+	// Take a reference first, which is the thing that ought to make this safe. `node_add_ref` is also
+	// the only way to get an `Owned_Node` out of a borrowed one, which is what the insertions below
+	// need to be spelled at all.
+	held, aerr := sciter_app.node_add_ref(victim)
+	testing.expect_value(t, aerr, nil)
 	testing.expect_value(t, sciter_app.node_remove(victim, finalize = false), nil)
 
 	after, _ := sciter_app.node_child_count(parent)
@@ -660,13 +673,13 @@ test_a_node_removed_without_finalizing_can_be_read_but_never_reinserted :: proc(
 
 	// But not insertable, by any route.
 	invalid := sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE)
-	testing.expect_value(t, sciter_app.node_insert(parent, .APPEND, victim), invalid)
-	testing.expect_value(t, sciter_app.node_insert(elsewhere, .APPEND, victim), invalid)
+	testing.expect_value(t, sciter_app.node_insert(parent, .APPEND, held), invalid)
+	testing.expect_value(t, sciter_app.node_insert(elsewhere, .APPEND, held), invalid)
 	remaining, _ := sciter_app.node_child(parent, 0)
-	testing.expect_value(t, sciter_app.node_insert(remaining, .BEFORE, victim), invalid)
-	testing.expect_value(t, sciter_app.node_insert(remaining, .AFTER, victim), invalid)
+	testing.expect_value(t, sciter_app.node_insert(remaining, .BEFORE, held), invalid)
+	testing.expect_value(t, sciter_app.node_insert(remaining, .AFTER, held), invalid)
 
-	testing.expect_value(t, sciter_app.node_release(victim), nil)
+	testing.expect_value(t, sciter_app.node_release(held), nil)
 }
 
 // The same rule from the other side: a node built here goes into the document once. There is no
@@ -684,6 +697,7 @@ test_a_node_can_be_inserted_once_and_never_again :: proc(t: ^testing.T) {
 
 	made, err := sciter_app.make_text_node("once")
 	testing.expect_value(t, err, nil)
+	defer testing.expect_value(t, sciter_app.node_release(made), nil)
 
 	testing.expect_value(t, sciter_app.node_insert(first, .APPEND, made), nil)
 	testing.expect_value(
@@ -741,17 +755,21 @@ test_node_references_can_be_taken_and_dropped_on_both_kinds_of_node :: proc(t: ^
 
 	// A node in the document. The handle was not AddRef'ed on the way out, so this is what makes it
 	// safe to keep past the moment the document might drop it.
-	testing.expect_value(t, sciter_app.node_add_ref(node), nil)
-	testing.expect_value(t, sciter_app.node_release(node), nil)
+	held, aerr := sciter_app.node_add_ref(node)
+	testing.expect_value(t, aerr, nil)
+	testing.expect_value(t, sciter_app.node_release(held), nil)
 
-	// One this code made and has not inserted.
+	// One this code made and has not inserted. It arrives owing one release; the `node_add_ref` adds a
+	// second, so two are owed - and the type says which handle each one is for.
 	detached, err := sciter_app.make_text_node("mine")
 	testing.expect_value(t, err, nil)
-	testing.expect_value(t, sciter_app.node_add_ref(detached), nil)
-	testing.expect_value(t, sciter_app.node_release(detached), nil)
+	again, aerr2 := sciter_app.node_add_ref(sciter_app.borrow_node(detached))
+	testing.expect_value(t, aerr2, nil)
+	testing.expect_value(t, sciter_app.node_release(again), nil)
 	testing.expect_value(t, sciter_app.node_release(detached), nil)
 
-	testing.expect_value(t, sciter_app.node_add_ref(nil), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
+	_, nilerr := sciter_app.node_add_ref(nil)
+	testing.expect_value(t, nilerr, sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
 	testing.expect_value(t, sciter_app.node_release(nil), sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE))
 }
 
@@ -1997,6 +2015,7 @@ test_element_index_counts_elements_only :: proc(t: ^testing.T) {
 	list_node, _ := sciter_app.node_from_element(tasks)
 	text, terr := sciter_app.make_text_node("loose text")
 	testing.expect_value(t, terr, nil)
+	defer testing.expect_value(t, sciter_app.node_release(text), nil)
 	testing.expect_value(t, sciter_app.node_insert(list_node, .PREPEND, text), nil)
 
 	after, aerr := sciter_app.element_index(items[0])

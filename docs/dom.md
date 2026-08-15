@@ -153,19 +153,25 @@ for child, err := sciter_app.node_first_child(node); err == nil; child, err = sc
 Creating and moving:
 
 ```odin
-created, _ := sciter_app.make_text_node(" appended")   // detached: yours until inserted
+created, _ := sciter_app.make_text_node(" appended")   // an Owned_Node: owes one node_release
+defer sciter_app.node_release(created)                 // owed whether or not it is inserted
 target, _  := sciter_app.node_from_element(summary)
 sciter_app.node_insert(target, .APPEND, created)       // .BEFORE .AFTER .APPEND .PREPEND
 ```
 
-Two lifetime rules, both the C API's:
+Three lifetime rules, the first two the C API's and the third measured here:
 
 - **Node handles are not reference counted on the way out.** `sciter-x-dom.h` says so outright. A
   handle is valid while the node is in the document; holding one longer needs `node_add_ref` /
   `node_release`, which is `use_element` under a different name.
-- **A detached node is yours.** `make_text_node` and `make_comment_node` return a node in no document.
-  Insert it or release it. `node_remove(node, finalize = false)` detaches rather than destroys, which
-  is what moving a node between two places wants.
+- **A node you made is an `Owned_Node`.** `make_text_node`, `make_comment_node` and `node_add_ref` are
+  the only three sources of one, and `node_release` accepts nothing else — so releasing a node you
+  merely walked to does not compile. It used to, and one such call is enough to segfault the process
+  when the document is torn down.
+- **Inserting does not hand the reference over.** The document takes its own; yours is still owed.
+  Measured at +400 MB over 2000 inserted-and-never-released 100 kB nodes, against +200 kB when they are
+  released. `node_remove(node, finalize = false)` detaches without destroying and without giving you
+  anything to release — and the detached node can never be inserted again, so it is not half of a move.
 
 ## Text, HTML and attributes
 

@@ -1017,3 +1017,56 @@ test_the_engine_frees_the_functor_record_exactly_once :: proc(t: ^testing.T) {
 counts_its_arguments :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.Value {
 	return sciter_app.value_from(i32(len(args)))
 }
+
+// ---------------------------------------------------------------------------------------------------
+// What a borrowed Value actually is, measured
+//
+// `docs/rules.md` 2 says a Value handed *to* a callback is borrowed and that clearing it is a
+// use-after-free in the caller. That was inferred from the direction of travel rather than measured,
+// and measuring it turns one rule into three different answers depending on who the caller is. This is
+// the functor half; `eval.odin` has the visitor half and `behavior.odin` the `SET_VALUE` one, which is
+// the only shape where the warning is literally true.
+
+@(private = "file")
+clear_the_argument :: proc(args: []sciter_app.Value, user: rawptr) -> sciter_app.Value {
+	a := args
+	if len(a) > 0 {
+		sciter_app.value_clear(&a[0])
+	}
+	return sciter_app.value_from_int(1)
+}
+
+// **A functor's arguments belong to the script that passed them, and clearing one does not reach it.**
+// Measured on 6.0.4.9: a handler that clears `args[0]` leaves the script's own variable intact, still
+// the right length and the right contents, and the engine goes on running - including after enough
+// allocation churn to reuse anything that had really been freed.
+//
+// So this is not the use-after-free the rule warns about. It is still not something to do: the clear
+// drops a reference the wrapper did not take, and what saves it is that the caller's frame holds
+// another one. Copy what you need with `value_copy` and leave the argument alone.
+@(test)
+test_clearing_a_functor_argument_does_not_reach_the_script_that_passed_it :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	eater := publish(window, "odin_eat", clear_the_argument)
+	defer sciter_app.value_clear(&eater)
+
+	// The script keeps its own reference, hands a second to the functor, and reads it back afterwards.
+	testing.expect_value(
+		t,
+		eval_string(t, window, `let s = "x".repeat(1000); odin_eat(s); s.length`),
+		"1000",
+	)
+
+	// And again after a megabyte of churn, which is what would expose a freed payload.
+	testing.expect_value(
+		t,
+		eval_string(
+			t,
+			window,
+			`let junk = []; for (let i = 0; i < 2000; ++i) junk.push("y".repeat(500)); junk = null; s.length + ":" + s.substr(0, 4)`,
+		),
+		"1000:xxxx",
+	)
+}

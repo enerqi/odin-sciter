@@ -190,8 +190,13 @@ call_behavior_method :: proc(element: Element, params: rawptr) -> (handled: bool
 //     The `value_from(42)` above makes a fresh Value with one reference and gives that reference away;
 //     do not clear it here. Returning a Value you also keep means `value_copy` first.
 //   - **`SET_VALUE`: `args.val` is borrowed for the call only.** The caller still owns the reference,
-//     so keeping the value past the call means `value_copy`, and clearing it is a use-after-free in
-//     the caller.
+//     so keeping the value past the call means `value_copy`, and clearing it frees the payload out from
+//     under the caller. That last half used to be an inference from the direction of travel; it is now
+//     measured, and the measurement is worse than the claim: the caller's Value **reads correctly right
+//     after the call** and only starts reading as something else once the engine has reused the memory.
+//     Checking it the obvious way - call, then read - reports the bug as safe.
+//     `examples/behavior.odin` has that test, and `docs/rules.md` 2 tables it against the two other
+//     borrowed-Value shapes, which fail differently.
 //
 // Both directions are measured rather than read off the header, with a handler that implements each:
 // a `GET_VALUE` handler that writes a fresh string and does not clear it produces a Value the caller

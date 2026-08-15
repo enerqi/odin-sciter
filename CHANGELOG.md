@@ -86,6 +86,24 @@ against.
   `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION` are refused either way on this build. Nine options are
   accepted process-wide; an unknown option code is refused rather than ignored. The full table is on
   `set_option`, and `docs/WINDOWS-CHECKLIST.md` says which half is expected to differ there.
+- **Inserting a node into a document does not hand your reference over.** `node.odin` said it did -
+  "insert it, or release it, or it leaks" - and `node_insert` told the resource ledger the same thing,
+  so a node inserted and never released leaked *and* the leak gate was instructed to ignore it.
+  Measured, 2000 iterations of a 100 kB text node: made and released, **+200 kB**; made, inserted,
+  removed with `finalize = true` and never released, **+400 MB**. Only `node_release` settles it.
+- **`node_remove(finalize = false)` does not hand ownership back either**, which is where nodes and
+  elements part company - `remove_element(finalize = false)` returns an `Owned_Element` and this
+  returns nothing. Releasing what it detaches is the under-flow: `.OK` at the call, segfault at
+  document teardown.
+- **One spurious `node_release` on a borrowed node is fatal**, where an element takes two. It answers
+  `.OK`, the document goes on reading correctly, and the process dies in `html::element::~element()`
+  when the document is torn down.
+- **What a "borrowed Value" costs depends on who lent it, and only one of the three is the
+  use-after-free `docs/rules.md` warned about.** Measured: clearing a `SET_VALUE` handler's `args.val`
+  frees the caller's payload - and the caller's Value **still reads correctly immediately afterwards**,
+  so the obvious check reports it safe; clearing a `Value_Visitor`'s value silently leaves that slot
+  `.UNDEFINED` in a container the caller still owns; clearing a `Native_Function` argument does nothing
+  observable at all, because the script's own reference outlives it. Three tests, one per shape.
 - **A compound literal cannot be passed through an overload group.** `set_state(el, {.CHECKED})` is a
   compile error where `set_element_state(el, {.CHECKED})` is fine, because overload resolution runs
   before the literal's type is inferred. Recorded on the group; it is why both members stay exported.
@@ -126,6 +144,18 @@ against.
   member for it was the alternative and would have put the binding out of step with the C API.
   **Breaking**.
 
+- **`make_text_node`, `make_comment_node` and `node_add_ref` hand back an `Owned_Node`**, `node_release`
+  takes only that, `node_insert`'s `what` is one, and `borrow_node(owned)` is the free cast - the same
+  shape `Owned_Element` and `Owned_Request` already had, for the same measured reason. `node_add_ref`
+  gains a result. **Breaking**.
+- **`event_code`, `event_phase`, `event_handled` and `mouse_code` take an `Event_Cmd`** rather than a
+  bare `u32`. A `cmd` word carries the phase bits and the code `event_code` returns does not, so
+  `event_phase(event_code(cmd))` used to compile and always answer `.Bubbling`. **Breaking**, at the
+  call sites that decode a raw `cmd`.
+- **`set_timer` and `stop_timer` take a `Timer_Id`**, and `Timer_Event.id` is one - a distinct
+  `uintptr`, kept apart from the package's other `uintptr` tokens. Untyped constants are unaffected.
+  **Breaking** only where an id is stored in a variable.
+
 ### Added
 
 - **`sciter_app/value_scope.odin`** — a `Value_Scope` holds a batch of engine references with one
@@ -149,6 +179,26 @@ against.
   reject — measured, and that is the exact shape that leaked in the examples.
 - **`just check-ownership`**, in CI — asserts the rule that if a procedure takes an allocator its result
   is yours and otherwise it is borrowed. It holds across all 30 procedures that return memory.
+- **[`docs/threading.md`](docs/threading.md)** - the guide that `rules.md` 1 needed: the doorbell
+  pattern and why two words is not a transport, naming the allocator on both sides of a thread
+  boundary, the terminal-message discipline (a worker that returns without posting leaves the UI
+  waiting forever, the same bug as an unanswered `.DELAYED`), cooperative cancellation, generation
+  numbers for answers that arrive too late, guarding your own state, and the decision table for
+  time-slicing versus a worker versus blocking the user. Records the fact that settles the last one:
+  **there is no modal window in the C API** - `Sciter_Window_Cmd` has `SET_STATE`, `GET_STATE`,
+  `ACTIVATE`, placement and the Vulkan trio and nothing else - so modality is script's
+  `window.modal()` or nothing.
+- **`examples/worker_thread.odin` gained the two halves it never showed**: a worker that **fails**,
+  with the reason travelling in the shared struct because two words cannot carry a message, and
+  **cancellation**, which runs the other way and so is an atomic flag rather than a message. Plus the
+  ordering guarantee measured with two posters: each sender's sequence arrives intact and complete, and
+  nothing orders the senders against each other. Three tests; eight in the file.
+- **`released_resources()`** - what the debug ledger has released per kind, which is what tells "this
+  kind is balanced" apart from "this kind was never touched". `examples/leak_sweep.odin` now fails if
+  any kind was not exercised, and that check immediately found five of the ten unexercised: `Request`,
+  `Archive` and `Delayed_Request` had no sweep at all, and `Text` and `Graphics_State` were missed by
+  the graphics block. All ten are driven now, and the gate's closing line reports what it earned rather
+  than how many counters exist.
 - **Every exported procedure is now reached by a test**: 383 of 383, up from 378. The five that were
   not — `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*`
   members — took five tests, and each of the four subjects produced a measured fact the headers do not

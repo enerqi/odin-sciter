@@ -1621,3 +1621,53 @@ test_a_value_scope_releases_the_whole_batch :: proc(t: ^testing.T) {
 	testing.expect_value(t, after[.Value], before[.Value])
 	testing.expect_value(t, sciter_app.scope_len(&scope), 0)
 }
+
+// The visitor half of what a borrowed Value is - the functor half is in `call_odin_from_js.odin` and
+// the one that really is a use-after-free is in `behavior.odin`.
+//
+// **A visitor's key and value point into the container the caller still owns, and clearing one empties
+// that slot.** Measured on 6.0.4.9: no crash, no error, no complaint from the engine - the array keeps
+// its length and every element it visited is left `.UNDEFINED`. That is worse than a crash in the way that
+// matters for finding it: nothing at all reports the loss, and the array is still a valid array.
+//
+// So the rule is right and its reason is not "the process dies". `value_copy` anything a visitor needs
+// to keep; never clear what it is handed.
+@(private = "file")
+clear_each_element :: proc(key, value: ^sciter_app.Value, user: rawptr) -> bool {
+	cleared := (^int)(user)
+	cleared^ += 1
+	sciter_app.value_clear(value)
+	return true
+}
+
+@(test)
+test_clearing_a_visited_value_empties_the_container_the_caller_still_owns :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	array, perr := sciter_app.value_parse(`["alpha","beta","gamma"]`)
+	testing.expect_value(t, perr, nil)
+	defer sciter_app.value_clear(&array)
+
+	cleared := 0
+	testing.expect_value(t, sciter_app.value_each(&array, clear_each_element, &cleared), nil)
+	testing.expect_value(t, cleared, 3)
+
+	// Still an array, still three long - and empty all the way across.
+	n, lerr := sciter_app.value_len(&array)
+	testing.expect_value(t, lerr, nil)
+	testing.expect_value(t, n, 3)
+
+	for i in 0 ..< n {
+		element, eerr := sciter_app.value_at(&array, i)
+		testing.expect_value(t, eerr, nil)
+		defer sciter_app.value_clear(&element)
+
+		kind, _ := sciter_app.value_type(&element)
+		testing.expectf(t, kind == .UNDEFINED, "element %d should have been emptied, is %v", i, kind)
+
+		// And it does not even read as a string any more, which is how this shows up in real code: a
+		// container that still has the right shape and answers `.INCOMPATIBLE_TYPE` for its contents.
+		_, terr := sciter_app.value_to_string(&element, context.temp_allocator)
+		testing.expect_value(t, terr, sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE))
+	}
+}

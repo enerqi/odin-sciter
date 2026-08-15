@@ -207,6 +207,19 @@ outstanding_resources :: proc() -> (counts: [Resource_Kind]int) {
 	return
 }
 
+// How many resources of each kind have been released since tracking was turned on.
+//
+// `outstanding_resources` answers "is anything still held", which is zero both when a kind is balanced
+// and when it was never touched at all. This one tells those two apart, so a sweep can assert that it
+// really drove every kind rather than reporting a clean total it never earned - which is exactly what
+// `examples/leak_sweep.odin` was doing for `Request`, `Archive` and `Delayed_Request`.
+released_resources :: proc() -> (counts: [Resource_Kind]int) {
+	when ODIN_DEBUG {
+		counts = g_tracker.released
+	}
+	return
+}
+
 // Prints everything still outstanding, and returns how many there were.
 //
 // Identified resources are listed one per line with the site that acquired them. Counted ones are

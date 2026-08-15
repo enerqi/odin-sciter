@@ -11,8 +11,9 @@
 //     "node handles returned by functions below are not AddRef'ed". A handle is valid while the node
 //     is in the document, and holding one past that needs `node_add_ref` / `node_release` - the same
 //     arrangement as `use_element`, with a different spelling upstream.
-//   - **a detached node is owned by you.** `make_text_node` and `make_comment_node` return a node that
-//     is in no document. Insert it, or release it, or it leaks.
+//   - **a node you made carries one reference, and only `node_release` discharges it.** `make_text_node`
+//     and `make_comment_node` hand back an `Owned_Node`. Putting it in a document does **not** settle
+//     the debt - measured, see `node_insert` - so an insert without a release is a leak.
 package sciter_app
 
 import sciter ".."
@@ -20,16 +21,53 @@ import sciter ".."
 // ---------------------------------------------------------------------------------------------------
 // Lifetime
 
-// Keeps the node alive while a handle to it is held. Pair with `node_release`.
-node_add_ref :: proc(node: Node, loc := #caller_location) -> Error {
-	err := dom_err(sciter.api().SciterNodeAddRef(sciter.Hnode(node)))
-	if err == nil {
-		track_acquire(.Node, rawptr(node), loc)
-	}
-	return err
+// A node you hold a reference to, and therefore **owe a `node_release`**. It comes from
+// `make_text_node`, `make_comment_node` and `node_add_ref`, and from nowhere else - notably **not** from
+// `node_remove(finalize = false)`, which is where the element API mints one and this one does not.
+//
+// Separate from `Node` for the reason `Owned_Element` is separate from `Element`, and the numbers are
+// the same shape. Measured on 6.0.4.9, 2000 iterations of a 100 kB text node:
+//
+//   - made and released: **+200 kB** RSS. Balanced.
+//   - made and never released: **+400 MB**. The leak.
+//   - made, inserted into the document, removed with `finalize = true`, never released: **+400 MB**.
+//     The document does not take the reference over, which is the thing this type exists to say.
+//
+// The other direction is worse, as everywhere else in this API: one spurious `node_release` on a
+// borrowed node answers `.OK`, leaves the document readable, and then segfaults when the document is
+// torn down - inside `html::element::~element()`, freeing a node whose count this call already took to
+// zero. Nothing points at the release site by then.
+//
+// `node_release` therefore takes this type and nothing else, and `borrow_node` is the free cast for
+// everything that reads or moves it.
+Owned_Node :: distinct Node
+
+// Views an owned node as a borrowed one, for the calls that read or write it.
+//
+//	made := sciter_app.make_text_node(" appended") or_return
+//	defer sciter_app.node_release(made)
+//	sciter_app.node_set_text(sciter_app.borrow_node(made), "changed") or_return
+//
+// It takes no reference and gives none up - it is a cast, and the `Owned_Node` still owes the release.
+borrow_node :: proc(node: Owned_Node) -> Node {
+	return Node(node)
 }
 
-node_release :: proc(node: Node) -> Error {
+// Takes a reference to a borrowed node, so the engine will not free it while the handle is held.
+//
+// The result is the thing that owes a `node_release`; the `Node` that went in is still borrowed and
+// still must not be released. Not needed for a handle used and dropped inside one callback.
+node_add_ref :: proc(node: Node, loc := #caller_location) -> (owned: Owned_Node, err: Error) {
+	if err = dom_err(sciter.api().SciterNodeAddRef(sciter.Hnode(node))); err != nil {
+		return nil, err
+	}
+	track_acquire(.Node, rawptr(node), loc)
+	return Owned_Node(node), nil
+}
+
+// Gives back one reference. Pairs with exactly one `make_text_node`, `make_comment_node` or
+// `node_add_ref` - see `Owned_Node` for what the two ways of getting the count wrong cost.
+node_release :: proc(node: Owned_Node) -> Error {
 	err := dom_err(sciter.api().SciterNodeRelease(sciter.Hnode(node)))
 	if err == nil {
 		track_release(.Node, rawptr(node))
@@ -203,41 +241,46 @@ node_set_text :: proc(node: Node, text: string) -> Error {
 // ---------------------------------------------------------------------------------------------------
 // Creating and moving nodes
 
-// A detached text node. It belongs to the caller until `node_insert` puts it in a document.
+// A detached text node, carrying one reference: **`node_release` it when you are done, whether or not
+// you insert it**.
 //
 // `found_node` rather than a bare cast, as everywhere else here: OK plus a null handle would otherwise
 // hand back a nil Node that the file's own ownership rule then tells the caller to insert or release.
-make_text_node :: proc(text: string, loc := #caller_location) -> (node: Node, err: Error) {
+make_text_node :: proc(text: string, loc := #caller_location) -> (node: Owned_Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateTextNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
 	track_acquire(.Node, rawptr(hn), loc)
-	return found_node(hn)
+	found := found_node(hn) or_return
+	return Owned_Node(found), nil
 }
 
 // A detached comment node. Same ownership as `make_text_node`.
-make_comment_node :: proc(text: string, loc := #caller_location) -> (node: Node, err: Error) {
+make_comment_node :: proc(text: string, loc := #caller_location) -> (node: Owned_Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
 	dom_err(sciter.api().SciterCreateCommentNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
 	track_acquire(.Node, rawptr(hn), loc)
-	return found_node(hn)
+	found := found_node(hn) or_return
+	return Owned_Node(found), nil
 }
 
 // Puts `what` into the document, positioned relative to `node`: `.BEFORE`, `.AFTER`, `.APPEND` (as the
-// last child of `node`) or `.PREPEND` (as the first). The document takes ownership from here.
+// last child of `node`) or `.PREPEND` (as the first).
 //
-// **A node can be inserted once and never again.** A second insertion of the same handle - into another
-// parent, or anywhere at all - is `.INVALID_HANDLE`, and so is inserting a node that has been taken
-// back out with `node_remove`. See there.
-node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Node) -> Error {
-	err := dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
-	if err == nil {
-		// The document owns it from here, so the caller no longer owes a release - which is the whole
-		// difference between this and every other transfer in the package.
-		track_release(.Node, rawptr(what))
-	}
-	return err
+// **The document does not take your reference.** This is the correction that `Owned_Node` exists to
+// make: the doc comment here used to say ownership transferred, and the wrapper told the resource
+// ledger the same thing, so a node inserted and never released was a leak that the leak gate was
+// explicitly instructed to ignore. Measured, 2000 iterations of a 100 kB node: inserted and released,
+// **+200 kB**; inserted and not released, **+400 MB** - and that is with the node removed and finalized
+// afterwards, so not even destroying it settles the reference. Release it, or leak it.
+//
+// `what` is an `Owned_Node` because only a detached node can be inserted at all, and a detached node is
+// always one you own. **A node can be inserted once and never again.** A second insertion of the same
+// handle - into another parent, or anywhere at all - is `.INVALID_HANDLE`, and so is inserting a node
+// that is already in the document or one taken back out with `node_remove`. See there.
+node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Owned_Node) -> Error {
+	return dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
 }
 
 // Takes the node out of the document. `finalize = true` destroys it.
@@ -250,6 +293,12 @@ node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Node) -> E
 //
 // So there is no move. To relocate content, read it out (`html`, or `node_text`) and build a new node
 // from it - which is what `dom_walk`'s node tests do.
+//
+// **It does not mint an `Owned_Node` either**, which is where nodes and elements part company:
+// `remove_element(finalize = false)` hands back an owned element, and this hands back nothing.
+// Measured on a node the document made and this call detached with `finalize = false`: a `node_release`
+// on it is the borrowed-handle under-flow, `.OK` at the call and a segfault at teardown. Only
+// `make_text_node`, `make_comment_node` and `node_add_ref` produce something to release.
 node_remove :: proc(node: Node, finalize := true) -> Error {
 	return dom_err(sciter.api().SciterNodeRemove(sciter.Hnode(node), b32(finalize)))
 }

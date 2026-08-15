@@ -388,6 +388,12 @@ Value_Visitor :: proc(key: ^Value, value: ^Value, user_data: rawptr) -> bool
 //
 // Anything that is not a container - a number, a string - fails with `.INCOMPATIBLE_TYPE` rather than
 // visiting nothing.
+//
+// **The key and the value are borrowed, and clearing one edits the container.** Measured: a visitor
+// that clears what it is handed leaves the array its original length with every visited element
+// `.UNDEFINED`, and neither the call nor the engine reports anything. `value_copy` whatever has to
+// outlive the walk. `examples/eval.odin` pins it, and `docs/rules.md` 2 has the same test for the two
+// other shapes of borrowed Value.
 value_each :: proc(v: ^Value, visit: Value_Visitor, user_data: rawptr = nil) -> Error {
 	if visit == nil {
 		return sciter.Value_Result.BAD_PARAMETER

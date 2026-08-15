@@ -299,23 +299,26 @@ fake_element :: proc(address: uintptr) -> sciter_app.Element {
 
 @(test)
 test_event_code_strips_the_phase_bits :: proc(t: ^testing.T) {
-	SINKING :: u32(sciter.Phase_Mask.SINKING)
-	HANDLED :: u32(sciter.Phase_Mask.HANDLED)
+	// Untyped, so that `click | SINKING` is an `Event_Cmd` at the call sites below - which is the
+	// point of the type: a `cmd` word carries the phase bits and a code does not.
+	SINKING :: sciter_app.Event_Cmd(sciter.Phase_Mask.SINKING)
+	HANDLED :: sciter_app.Event_Cmd(sciter.Phase_Mask.HANDLED)
 
 	// The mask has to stop exactly where the phase bits start. If it were wider it would carry
 	// SINKING into the code; narrower and it would truncate an application code.
-	testing.expect_value(t, u32(sciter_app.EVENT_CODE_MASK) + 1, SINKING)
+	testing.expect_value(t, sciter_app.Event_Cmd(sciter_app.EVENT_CODE_MASK) + 1, SINKING)
 
-	click := u32(sciter.Behavior_Events.BUTTON_CLICK)
-	testing.expect_value(t, sciter_app.event_code(click), click)
+	code := u32(sciter.Behavior_Events.BUTTON_CLICK)
+	click := sciter_app.Event_Cmd(code)
+	testing.expect_value(t, sciter_app.event_code(click), code)
 	testing.expect_value(t, sciter_app.event_phase(click), sciter_app.Event_Phase.Bubbling)
 
-	testing.expect_value(t, sciter_app.event_code(click | SINKING), click)
+	testing.expect_value(t, sciter_app.event_code(click | SINKING), code)
 	testing.expect_value(t, sciter_app.event_phase(click | SINKING), sciter_app.Event_Phase.Sinking)
 
 	// HANDLED is an independent bit, not a third phase: it says something claimed the event, and says
 	// nothing about which way it is travelling. A handled event on the bubbling pass is still bubbling.
-	testing.expect_value(t, sciter_app.event_code(click | HANDLED), click)
+	testing.expect_value(t, sciter_app.event_code(click | HANDLED), code)
 	testing.expect_value(t, sciter_app.event_phase(click | HANDLED), sciter_app.Event_Phase.Bubbling)
 	testing.expect(t, sciter_app.event_handled(click | HANDLED))
 	testing.expect(t, !sciter_app.event_handled(click))
@@ -334,7 +337,7 @@ test_event_code_strips_the_phase_bits :: proc(t: ^testing.T) {
 	// BUTTON_CLICK is 0, so a naive `cmd == .BUTTON_CLICK` looks right until an event sinks. Codes
 	// that are not zero go through the same split, up to the largest one the mask can carry.
 	app_code := u32(sciter.Behavior_Events.FIRST_APPLICATION_EVENT_CODE) + 7
-	testing.expect_value(t, sciter_app.event_code(app_code | SINKING), app_code)
+	testing.expect_value(t, sciter_app.event_code(sciter_app.Event_Cmd(app_code) | SINKING), app_code)
 	testing.expect_value(t, sciter_app.event_code(0x7FFF | HANDLED), 0x7FFF)
 }
 
@@ -492,14 +495,14 @@ test_timer_event_maps_the_params :: proc(t: ^testing.T) {
 
 	te, ok := sciter_app.timer_event({group = {.TIMER}, params = &params})
 	testing.expect(t, ok)
-	testing.expect_value(t, te.id, uintptr(42))
+	testing.expect_value(t, te.id, sciter_app.Timer_Id(42))
 	testing.expect(t, te.raw == &params)
 
 	// Zero is the element's unnamed timer, not a missing one - `set_timer` defaults to it.
 	zero: sciter.Timer_Params
 	unnamed, uok := sciter_app.timer_event({group = {.TIMER}, params = &zero})
 	testing.expect(t, uok)
-	testing.expect_value(t, unnamed.id, uintptr(0))
+	testing.expect_value(t, unnamed.id, sciter_app.Timer_Id(0))
 }
 
 // The group is the only thing that says which struct `params` points at, so an accessor that cast
@@ -1018,7 +1021,7 @@ test_post_event_does_not_deliver_synchronously :: proc(t: ^testing.T) {
 @(private = "file")
 Ticks :: struct {
 	handler: sciter_app.Event_Handler,
-	ids:     [64]uintptr,
+	ids:     [64]sciter_app.Timer_Id,
 	count:   int,
 	keep:    bool, // what on_event returns: true to let the timer carry on
 }
@@ -1079,7 +1082,7 @@ test_a_timer_ticks_until_it_is_stopped :: proc(t: ^testing.T) {
 
 	testing.expectf(t, tk.count >= 3, "expected several ticks in %v, got %d", PUMP, tk.count)
 	for id in tk.ids[:min(tk.count, len(tk.ids))] {
-		testing.expect_value(t, id, uintptr(7))
+		testing.expect_value(t, id, sciter_app.Timer_Id(7))
 	}
 
 	// Stopping is a real stop, not a pause: nothing more arrives.
@@ -1141,7 +1144,7 @@ test_several_timers_on_one_element :: proc(t: ^testing.T) {
 }
 
 @(private = "file")
-count_id :: proc(tk: ^Ticks, id: uintptr) -> (n: int) {
+count_id :: proc(tk: ^Ticks, id: sciter_app.Timer_Id) -> (n: int) {
 	for seen in tk.ids[:min(tk.count, len(tk.ids))] {
 		if seen == id {
 			n += 1

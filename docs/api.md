@@ -295,19 +295,21 @@ ignores its `for_width` argument. To size a window to its document, ask `intrins
 
 ## Nodes — `node.odin`
 
-The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`.
+The text-and-comments half of the DOM. `Node` is a distinct `sciter.Hnode`, and `Owned_Node` is a
+distinct `Node` — the borrowed/owned split `Element` and `Request` also carry.
 
 | | |
 | --- | --- |
-| `node_add_ref` / `node_release` | node handles are **not** reference counted on the way out |
+| `node_add_ref` / `node_release` | node handles are **not** reference counted on the way out; `node_add_ref` hands back the `Owned_Node` that owes the release |
+| `borrow_node(owned)` | the free cast, for everything that reads or writes an owned node |
 | `node_from_element` / `node_to_element` | crossing between the two views; the latter fails on a text node |
 | `node_type` | `.ELEMENT`, `.TEXT`, `.COMMENT` |
 | `node_first_child` / `node_last_child` / `node_next_sibling` / `node_prev_sibling` | `.Not_Found` ends the walk |
 | `node_child` / `node_child_count` / `node_parent` | indices are `Node_Index`, `distinct` from `Child_Index` — text and comment nodes count here and do not there; `node_parent` returns an `Element` |
 | `node_text` / `node_set_text` | the text a `.TEXT` or `.COMMENT` node carries |
-| `make_text_node` / `make_comment_node` | detached, and yours until inserted |
-| `node_insert(node, where_, what)` | `.BEFORE`, `.AFTER`, `.APPEND`, `.PREPEND` |
-| `node_remove(node, finalize := true)` | `false` detaches instead of destroying — that is a move |
+| `make_text_node` / `make_comment_node` | detached `Owned_Node`s, each owing one `node_release` — inserting one does not settle it |
+| `node_insert(node, where_, what)` | `.BEFORE`, `.AFTER`, `.APPEND`, `.PREPEND`; `what` is an `Owned_Node`, and the document takes its own reference rather than yours |
+| `node_remove(node, finalize := true)` | `false` detaches instead of destroying, but the node can never be reinserted and you get no `Owned_Node` back — there is no node move |
 | `node_to_value` / `node_from_value` | the node half of `element_to_value`; an element's Value unwraps either way |
 
 ## Atoms — `atom.odin`
@@ -344,8 +346,11 @@ The handler must not move and must outlive the attachment. `subscription` is the
 engine's `SUBSCRIPTIONS_REQUEST`, which the wrapper replies to for you — a handler subscribing to
 nothing receives nothing.
 
-Decoding: `event_code(cmd)`, `event_phase(cmd)` → `Event_Phase{.Bubbling, .Sinking, .Handled}`, and
-the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, `exchange_event`,
+Decoding: `event_code(cmd)`, `event_phase(cmd)` → `Event_Phase{.Bubbling, .Sinking}` and
+`event_handled(cmd)` — the phase and the handled bit are independent, so they are two calls. `cmd` is an
+`Event_Cmd`, a distinct `u32`, because a raw `cmd` word and the code `event_code` strips out of it are
+not interchangeable: `event_phase` of a masked code always answers `.Bubbling`, which is a plausible
+answer to the wrong question. Then the typed accessors `behavior_event`, `mouse_event`, `key_event`, `timer_event`, `exchange_event`,
 `draw_event`, `method_call`, `focus_event`, `scroll_event`, `gesture_event`,
 `attribute_change_event(event, allocator)` and `data_arrived_event(event, allocator)` — each returning
 `ok = false` if the event is not of that group and each exposing `.raw` for what is not surfaced. The
@@ -377,8 +382,10 @@ decides whether it happens again** — the `.TIMER` inversion: true re-arms it f
 stops it. Measured, and the engine brackets each request with its own `.ANIMATION` events, `reason = 1`
 before and `reason = 0` after, which *do* bubble to a window handler.
 
-Timers: `set_timer(el, interval: time.Duration, id: uintptr = 0)` and `stop_timer(el, id)`. The event
-arrives in the `.TIMER` group as `Timer_Event{id, raw}`. **The return value is inverted for this
+Timers: `set_timer(el, interval: time.Duration, id: Timer_Id = 0)` and `stop_timer(el, id)`. The event
+arrives in the `.TIMER` group as `Timer_Event{id, raw}`. `Timer_Id` is a distinct `uintptr` — an opaque
+token the engine hands back unchanged, kept apart from the package's other `uintptr`s (`set_option`'s
+value, an animation frame's `reason`), and untyped constants still work. **The return value is inverted for this
 group** — `true` keeps the timer running, `false` stops it — and a timer is delivered only to handlers
 on the element it was set on. See [`events.md`](./events.md#timers).
 

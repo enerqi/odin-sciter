@@ -100,6 +100,17 @@ event_trampoline :: proc "system" (tag: rawptr, he: sciter.Helement, evtg: scite
 // The phase bits live above every real event code (SINKING is 0x8000, HANDLED is 0x10000).
 EVENT_CODE_MASK :: 0x7FFF
 
+// The raw `cmd` word out of a parameter struct: an event code with the phase bits OR'ed into it.
+//
+// Distinct from the plain `u32` code deliberately, because the two are not interchangeable and mixing
+// them fails **quietly**: `event_phase` of an already-masked code is always `.Bubbling`, which is a
+// correct-looking answer to a question that was asked of the wrong number. `event_code` returns a bare
+// `u32` for comparing against `sciter.Mouse_Events` and friends, so the compiler now stops
+// `event_phase(event_code(cmd))` instead of letting it read a phase that has been masked away.
+//
+//	phase := sciter_app.event_phase(sciter_app.Event_Cmd(params.cmd))
+Event_Cmd :: distinct u32
+
 // Which way the event is travelling. **This is not where "handled" lives**: the C API has SINKING as a
 // bit (0x8000) and HANDLED as a separate, independent one (0x10000), so an event can be sinking *and*
 // handled at once. Modelling all three as one enum made `.Handled` shadow the direction - every handler
@@ -112,8 +123,8 @@ Event_Phase :: enum {
 }
 
 // The event code with the phase bits removed.
-event_code :: proc(cmd: u32) -> u32 {
-	return cmd & EVENT_CODE_MASK
+event_code :: proc(cmd: Event_Cmd) -> u32 {
+	return u32(cmd) & EVENT_CODE_MASK
 }
 
 // **`sciter.Behavior_Events` names the engine's codes and does not close the set.** Everything at or
@@ -142,19 +153,19 @@ app_event :: proc(n: u32, loc := #caller_location) -> sciter.Behavior_Events {
 // survives `event_code`, which would leave a drag's `.MOUSE_MOVE` reading as 258 and matching nothing.
 // `Mouse_Event.dragging` carries the bit instead.
 @(private)
-mouse_code :: proc(cmd: u32) -> u32 {
+mouse_code :: proc(cmd: Event_Cmd) -> u32 {
 	return event_code(cmd) & ~u32(sciter.Mouse_Events.DRAGGING)
 }
 
 // The direction bit, and only that. Readable whether or not anything has claimed the event.
-event_phase :: proc(cmd: u32) -> Event_Phase {
-	return .Sinking if cmd & u32(sciter.Phase_Mask.SINKING) != 0 else .Bubbling
+event_phase :: proc(cmd: Event_Cmd) -> Event_Phase {
+	return .Sinking if u32(cmd) & u32(sciter.Phase_Mask.SINKING) != 0 else .Bubbling
 }
 
 // Whether something upstream has already claimed this event. Independent of the phase: an event can
 // arrive sinking and handled, or bubbling and handled.
-event_handled :: proc(cmd: u32) -> bool {
-	return cmd & u32(sciter.Phase_Mask.HANDLED) != 0
+event_handled :: proc(cmd: Event_Cmd) -> bool {
+	return u32(cmd) & u32(sciter.Phase_Mask.HANDLED) != 0
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -183,9 +194,9 @@ behavior_event :: proc(event: Event) -> (be: Behavior_Event, ok: bool) {
 	}
 	p := (^sciter.Behavior_Event_Params)(event.params)
 	return Behavior_Event {
-			code = sciter.Behavior_Events(event_code(p.cmd)),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = sciter.Behavior_Events(event_code(Event_Cmd(p.cmd))),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.heTarget),
 			source = Element(p.he),
 			reason = p.reason,
@@ -233,9 +244,9 @@ mouse_event :: proc(event: Event) -> (me: Mouse_Event, ok: bool) {
 	}
 	p := (^sciter.Mouse_Params)(event.params)
 	return Mouse_Event {
-			code = sciter.Mouse_Events(mouse_code(p.cmd)),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = sciter.Mouse_Events(mouse_code(Event_Cmd(p.cmd))),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
 			buttons = p.button_state,
@@ -262,9 +273,9 @@ key_event :: proc(event: Event) -> (ke: Key_Event, ok: bool) {
 	}
 	p := (^sciter.Key_Params)(event.params)
 	return Key_Event {
-			code = sciter.Key_Events(event_code(p.cmd)),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = sciter.Key_Events(event_code(Event_Cmd(p.cmd))),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			key_code = p.key_code,
 			modifiers = p.alt_state,
@@ -303,9 +314,9 @@ exchange_event :: proc(event: Event) -> (xe: Exchange_Event, ok: bool) {
 	}
 	p := (^sciter.Exchange_Params)(event.params)
 	return Exchange_Event {
-			code = sciter.Exchange_Cmd(event_code(p.cmd)),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = sciter.Exchange_Cmd(event_code(Event_Cmd(p.cmd))),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			source = Element(p.source),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
@@ -352,7 +363,7 @@ draw_event :: proc(event: Event) -> (de: Draw_Event, ok: bool) {
 }
 
 Timer_Event :: struct {
-	id:  uintptr, // the id given to `set_timer`; 0 for the element's unnamed timer
+	id:  Timer_Id, // the id given to `set_timer`; 0 for the element's unnamed timer
 	raw: ^sciter.Timer_Params,
 }
 
@@ -361,7 +372,7 @@ timer_event :: proc(event: Event) -> (te: Timer_Event, ok: bool) {
 		return {}, false
 	}
 	p := (^sciter.Timer_Params)(event.params)
-	return Timer_Event{id = p.timerId, raw = p}, true
+	return Timer_Event{id = Timer_Id(p.timerId), raw = p}, true
 }
 
 // The focus moving. Six codes, and the pair that matter are `.LOST` and `.GOT` on the element itself;
@@ -389,9 +400,9 @@ focus_event :: proc(event: Event) -> (fe: Focus_Event, ok: bool) {
 	}
 	p := (^sciter.Focus_Params)(event.params)
 	return Focus_Event {
-			code = sciter.Focus_Events(event_code(p.cmd)),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = sciter.Focus_Events(event_code(Event_Cmd(p.cmd))),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			cause = p.cause,
 			raw = p,
@@ -436,9 +447,9 @@ scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
 	}
 	p := (^sciter.Scroll_Params)(event.params)
 	return Scroll_Event {
-			code = event_code(p.cmd),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = event_code(Event_Cmd(p.cmd)),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			pos = p.pos,
 			vertical = bool(p.vertical),
@@ -503,9 +514,9 @@ gesture_event :: proc(event: Event) -> (ge: Gesture_Event, ok: bool) {
 	}
 	p := (^sciter.Gesture_Params)(event.params)
 	return Gesture_Event {
-			code = event_code(p.cmd),
-			phase = event_phase(p.cmd),
-			handled = event_handled(p.cmd),
+			code = event_code(Event_Cmd(p.cmd)),
+			phase = event_phase(Event_Cmd(p.cmd)),
+			handled = event_handled(Event_Cmd(p.cmd)),
 			target = Element(p.target),
 			pos = {i32(p.pos.x), i32(p.pos.y)},
 			raw = p,
@@ -721,6 +732,15 @@ release_capture :: proc(element: Element) -> Error {
 // A handler that ends in `return false` - the advice for every other group, so that nothing is
 // swallowed - stops the timer after its first tick.
 
+// Which timer on an element. It is an opaque token rather than a number the engine interprets: any
+// value distinguishes one timer from another, and it comes back unchanged as `Timer_Event.id`.
+//
+// Distinct because `uintptr` is the package's escape hatch elsewhere too - `set_option`'s value, an
+// animation frame's `reason` - and those are not the same thing, so passing one where another belongs
+// used to type check. Untyped constants still work (`set_timer(el, TICK, 7)`), which is how these ids
+// are written in practice.
+Timer_Id :: distinct uintptr
+
 // Starts, or restarts, a timer on `element`. The element must stay in the document: a timer goes away
 // with the element it belongs to.
 //
@@ -736,7 +756,7 @@ release_capture :: proc(element: Element) -> Error {
 // Both used to reach the engine as a `u32`: the first as 0, which silently *stopped* a running timer
 // from what was usually an arithmetic slip, and the second wrapped to whatever the low 32 bits held.
 // `stop_timer` is the only spelling of stopping.
-set_timer :: proc(element: Element, interval: time.Duration, id: uintptr = 0) -> Error {
+set_timer :: proc(element: Element, interval: time.Duration, id: Timer_Id = 0) -> Error {
 	if interval < 0 {
 		return sciter.Scdom_Result.INVALID_PARAMETER
 	}
@@ -747,12 +767,12 @@ set_timer :: proc(element: Element, interval: time.Duration, id: uintptr = 0) ->
 	if ms > i64(max(u32)) {
 		return sciter.Scdom_Result.INVALID_PARAMETER
 	}
-	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), u32(ms), id))
+	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), u32(ms), uintptr(id)))
 }
 
 // Stops the timer `id` on `element`. Stopping one that is not running is not an error.
-stop_timer :: proc(element: Element, id: uintptr = 0) -> Error {
-	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), 0, id))
+stop_timer :: proc(element: Element, id: Timer_Id = 0) -> Error {
+	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), 0, uintptr(id)))
 }
 
 // ---------------------------------------------------------------------------------------------------

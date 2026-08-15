@@ -10,7 +10,8 @@
 // the sweep is an ordinary `main`, which controls its own exit and can therefore be a gate.
 //
 // What it covers is the *resource-owning* half of the API rather than every path: Values out of the
-// engine, element and node references, taken requests, graphics objects, archives. Each block below
+// engine, element and node references, taken requests and unanswered delayed ones, graphics objects,
+// archives. Each block below
 // does the thing an application does and then releases what it took, so a non-zero report at the end is
 // a real defect in the wrapper - not in this file's discipline, which is deliberately strict.
 //
@@ -18,9 +19,11 @@
 // is the same one `docs/parity-baseline.txt` carries for a different question.
 package main
 
+import sciter ".."
 import "../sciter_app"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 
 DOC :: `<html><head><style>
 	#list li { color: #888; }
@@ -29,6 +32,9 @@ DOC :: `<html><head><style>
 	<input id="field" type="text" value="typed" />
 	<div id="box">boxed</div>
 </body></html>`
+
+// The same packed archive `examples/archive.odin` reads, embedded at compile time.
+RESOURCES :: #load("assets/app.pak")
 
 failures: int
 
@@ -60,9 +66,11 @@ main :: proc() {
 	sweep_values(view.window)
 	sweep_elements(view.window)
 	sweep_nodes(view.window)
-	sweep_graphics()
+	sweep_graphics(view.window)
 	sweep_scoped(view.window)
 	sweep_value_scope(view.window)
+	sweep_archive()
+	sweep_requests(&view)
 
 	// The view's own surface is Odin memory, not an engine resource, but tearing it down here keeps the
 	// report about the engine alone.
@@ -79,8 +87,21 @@ main :: proc() {
 	}
 
 	when ODIN_DEBUG {
-		counts := sciter_app.outstanding_resources()
-		fmt.printfln("leak sweep: clean - nothing outstanding across %d resource kinds", len(counts))
+		// "nothing outstanding" is also what a kind nothing touched reports, so the count of *kinds*
+		// meant nothing until this loop existed: three of the ten were instrumented and never driven.
+		untouched := 0
+		released := sciter_app.released_resources()
+		for n, kind in released {
+			if n == 0 {
+				fmt.eprintfln("  ! %v: nothing was released, so this sweep never exercised it", kind)
+				untouched += 1
+			}
+		}
+		if untouched != 0 {
+			fmt.eprintfln("\nleak sweep: %d resource kind(s) untested - add a block for each", untouched)
+			os.exit(1)
+		}
+		fmt.printfln("leak sweep: clean - %d resource kinds exercised and balanced", len(released))
 	} else {
 		fmt.println("leak sweep: built without -debug, so the tracker is compiled out and this proved nothing")
 		os.exit(1)
@@ -192,15 +213,18 @@ sweep_nodes :: proc(window: sciter_app.Window) {
 	text, terr := sciter_app.make_text_node(" appended")
 	check("make_text_node", terr)
 	check("node_insert", sciter_app.node_insert(target, .APPEND, text))
+	// Inserting does **not** hand the reference to the document - measured, +400 MB over 2000 nodes if
+	// this line is missing. This block used to end here, and the wrapper told the ledger the insert had
+	// settled it, so the gate could not have caught that.
+	check("node_release (after the insert)", sciter_app.node_release(text))
 
-	// A node the document took over is no longer the caller's to release, so nothing is owed here.
 	comment, cerr := sciter_app.make_comment_node("held, then released")
 	check("make_comment_node", cerr)
 	check("node_release", sciter_app.node_release(comment))
 }
 
 // Images, paths and text are reference counted the same way, with their own release calls.
-sweep_graphics :: proc() {
+sweep_graphics :: proc(window: sciter_app.Window) {
 	img, ierr := sciter_app.create_image(64, 64)
 	check("create_image", ierr)
 	check("clear_image", sciter_app.clear_image(img, sciter_app.rgb(0x20, 0x40, 0x80)))
@@ -224,6 +248,36 @@ sweep_graphics :: proc() {
 	check("path_move_to", sciter_app.path_move_to(path, 0, 0))
 	check("path_line_to", sciter_app.path_line_to(path, 10, 10))
 	check("release_path", sciter_app.release_path(path))
+
+	// A laid-out text object is the third reference-counted graphics resource, and it needs an element
+	// because it is laid out in that element's style.
+	root, rerr := sciter_app.root(window)
+	check("root", rerr)
+	box, berr2 := sciter_app.select_first(root, "#box")
+	check("select_first(#box)", berr2)
+
+	text, terr := sciter_app.create_text(box, "measured, then released")
+	check("create_text", terr)
+	check("retain_text", sciter_app.retain_text(text))
+	check("release_text (the retain)", sciter_app.release_text(text))
+	if _, merr := sciter_app.text_metrics(text); merr != nil {
+		check("text_metrics", merr)
+	}
+	check("release_text", sciter_app.release_text(text))
+
+	// The graphics state stack is the one obligation here that is not a handle: an unbalanced save
+	// aborts the process on the way out of the painter, so the ledger counts the pair. A `Graphics`
+	// only exists inside a painter, which is why this rides along on `paint_image`.
+	surface, serr2 := sciter_app.create_image(32, 32)
+	check("create_image (state stack)", serr2)
+	check("paint_image", sciter_app.paint_image(surface, proc(gfx: sciter_app.Graphics, w, h: u32, user: rawptr) {
+		if sciter_app.save_state(gfx) != nil {
+			return
+		}
+		sciter_app.scale(gfx, 2, 2)
+		sciter_app.restore_state(gfx)
+	}, nil))
+	check("release_image (state stack)", sciter_app.release_image(surface))
 }
 
 // A batch with one lifetime: nothing here is cleared by hand, and the scope gives the lot back.
@@ -272,4 +326,119 @@ sweep_scoped :: proc(window: sciter_app.Window) {
 		check("scoped_make_element", ierr)
 		_ = item
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The three kinds the ledger counts that nothing above drives
+//
+// `Request`, `Archive` and `Delayed_Request` were instrumented in `tracking.odin` and then never
+// exercised here, so an imbalance in any of them passed this gate. All three need a load callback or a
+// blob rather than a plain call, which is why they were skipped; none of it is hard.
+
+// An archive is the simplest of the three: a blob in, a handle out, one close.
+sweep_archive :: proc() {
+	resources := RESOURCES
+	archive, aerr := sciter_app.open_archive(resources)
+	check("open_archive", aerr)
+
+	if _, found := sciter_app.archive_item(archive, "index.htm"); !found {
+		fmt.eprintln("  ! archive_item(index.htm): not found - the sweep read nothing")
+		failures += 1
+	}
+	check("close_archive", sciter_app.close_archive(archive))
+}
+
+// Requests and delayed answers both live inside `on_load_data`, so they share one handler and one
+// document load. The two obligations are opposite in shape:
+//
+//   - `take_request` keeps a request alive past the callback and owes an `unuse_request`
+//   - `.DELAYED` owes a `data_ready_async` carrying the request id
+//
+// Both are counted by the ledger and neither is visible to the allocator, which is the whole reason
+// `tracking.odin` exists.
+Sweep_Loader :: struct {
+	handler:     sciter_app.Host_Handler,
+	window:      sciter_app.Window,
+	taken:       sciter_app.Owned_Request,
+	delayed_id:  sciter.Hrequest,
+	delayed_uri: string,
+}
+
+g_sweep_loader: Sweep_Loader
+
+SWEEP_DOC :: `<html><head>
+	<link rel="stylesheet" href="sweep://taken.css" />
+	<link rel="stylesheet" href="sweep://delayed.css" />
+</head><body><p id="t">sweep</p></body></html>`
+
+SWEEP_STYLE :: `#t { color: #00ff00; }`
+
+sweep_requests :: proc(view: ^sciter_app.Windowless_View) {
+	g_sweep_loader.window = view.window
+	g_sweep_loader.handler = sciter_app.Host_Handler {
+		on_load_data = sweep_load_data,
+		user_data    = &g_sweep_loader,
+	}
+	sciter_app.set_host_handler(view.window, &g_sweep_loader.handler)
+	defer sciter_app.set_host_handler(view.window, nil)
+
+	check("load_html(sweep)", sciter_app.load_html(view.window, SWEEP_DOC, "sweep://index.htm"))
+	sciter_app.windowless_heartbeat(view)
+
+	// The taken request: released here, after the callback that took it has long returned, which is the
+	// point of taking it.
+	if g_sweep_loader.taken != nil {
+		check("unuse_request", sciter_app.unuse_request(g_sweep_loader.taken))
+		g_sweep_loader.taken = nil
+	} else {
+		fmt.eprintln("  ! take_request: nothing was taken, so the request kind was not exercised")
+		failures += 1
+	}
+
+	// The delayed one: answered exactly once. A second answer on a discharged id segfaults - see
+	// `data_ready_async` - so this is the only call there is.
+	if g_sweep_loader.delayed_id != nil {
+		check(
+			"data_ready_async",
+			sciter_app.data_ready_async(
+				view.window,
+				g_sweep_loader.delayed_uri,
+				transmute([]u8)string(SWEEP_STYLE),
+				g_sweep_loader.delayed_id,
+			),
+		)
+		delete(g_sweep_loader.delayed_uri)
+		g_sweep_loader.delayed_uri = ""
+		g_sweep_loader.delayed_id = nil
+	} else {
+		fmt.eprintln("  ! .DELAYED: nothing was delayed, so that kind was not exercised")
+		failures += 1
+	}
+
+	sciter_app.windowless_heartbeat(view)
+}
+
+sweep_load_data :: proc(
+	handler: ^sciter_app.Host_Handler,
+	request: ^sciter_app.Load_Request,
+) -> sciter_app.Load_Result {
+	l := (^Sweep_Loader)(handler.user_data)
+
+	switch request.uri {
+	case "sweep://taken.css":
+		// Taken *and* served: the take is about the handle outliving the callback, not about refusing
+		// to answer.
+		rq, result := sciter_app.take_request(request)
+		l.taken = rq
+		if result != .OK {
+			return result
+		}
+		return sciter_app.serve(request, transmute([]u8)string(SWEEP_STYLE))
+
+	case "sweep://delayed.css":
+		l.delayed_id = request.raw.requestId
+		l.delayed_uri = strings.clone(request.uri)
+		return .DELAYED
+	}
+	return .OK
 }

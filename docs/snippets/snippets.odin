@@ -17,6 +17,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:math"
 import vmem "core:mem/virtual"
+import "core:sync"
 import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
@@ -809,6 +810,8 @@ dom_node_walk :: proc(node: sciter_app.Node) {
 
 dom_node_insert :: proc(summary: sciter_app.Element) {
 	created, _ := sciter_app.make_text_node(" appended")
+	// The insert does not take the reference over, so the release is owed either way.
+	defer sciter_app.node_release(created)
 	target, _ := sciter_app.node_from_element(summary)
 	sciter_app.node_insert(target, .APPEND, created)
 }
@@ -1071,4 +1074,37 @@ batch_arena_block :: proc(root: sciter_app.Element) -> sciter_app.Error {
 		_ = text // ... no individual delete anywhere ...
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------------------------------
+// threading.md, the doorbell and its shared structure
+
+Threading_App :: struct {
+	using host: sciter_app.Host_Handler,
+	window:     sciter_app.Window,
+	mutex:      sync.Mutex,
+	results:    [dynamic]string, // written by the worker, read on the engine's thread
+	cancel:     bool,
+}
+
+// threading.md, every path ends in exactly one terminal message
+
+threading_work :: proc(app: ^Threading_App) {
+	PROGRESS :: uintptr(1)
+	FINISHED :: uintptr(3)
+	FAILED :: uintptr(4)
+
+	failed := false
+	for step in 1 ..= 10 {
+		if sync.atomic_load(&app.cancel) {
+			sciter_app.post_callback(app.window, FINISHED, 1) // cancelled
+			return
+		}
+		if failed {
+			sciter_app.post_callback(app.window, FAILED, uintptr(step))
+			return
+		}
+		sciter_app.post_callback(app.window, PROGRESS, uintptr(step * 10))
+	}
+	sciter_app.post_callback(app.window, FINISHED, 0) // ran to the end
 }

@@ -40,6 +40,10 @@ Measured properties worth designing around, all recorded in `sciter_app/host.odi
 What breaks if you ignore this is not a clean error: it is intermittent corruption in engine state that
 surfaces somewhere else entirely.
 
+The patterns built on this rule — the doorbell, failure and cancellation, stale answers, guarding your
+own state, and what to do about the UI while the work runs — are in
+[`threading.md`](./threading.md).
+
 The two lazily-cached sub-API tables (`graphics_api()`, `request_api()`) are written on first use with
 no synchronisation, which is correct under this rule and only under this rule.
 
@@ -99,7 +103,21 @@ Two places where the direction is easy to get backwards, both in behavior method
 - **`GET_VALUE`** — what you write into `args.val` is handed to the caller and the **caller** owns it.
   Do not clear it. If you also keep it, `value_copy` first.
 - **`SET_VALUE`** — `args.val` is **borrowed for the call**. Keeping it means `value_copy`; clearing it
-  is a use-after-free in the caller.
+  frees the caller's payload underneath it.
+
+**What "borrowed" costs, per shape, measured rather than inferred.** A Value handed *to* your code is
+borrowed in all three cases below, and the same mistake — clearing it — does something different in
+each. None of them is an error the engine reports:
+
+| you are handed | clearing it does | test |
+|---|---|---|
+| `SET_VALUE`'s `args.val` | frees the caller's payload. The caller's Value **still reads correctly immediately afterwards** and stops once the engine reuses the memory, so the obvious check reports it safe | `examples/behavior.odin` |
+| a `Value_Visitor`'s key or value | empties that slot in the container the caller still owns: same length, every visited element left `.UNDEFINED`, nothing reported | `examples/eval.odin` |
+| a `Native_Function` argument | nothing observable — the script's own reference keeps the payload alive, through allocation churn and beyond | `examples/call_odin_from_js.odin` |
+
+The rule is the same for all three (`value_copy` what you keep, clear nothing you were handed); it is
+the failure that varies, and the first row is the one to remember, because it is the one that looks
+fine when you check it.
 
 `just test_sanitize eval` runs the refcounting under ASan, which is the check that catches breaking
 this.
@@ -136,8 +154,23 @@ el := sciter_app.borrow_element(item)       // then `el` everywhere below
 sciter_app.insert_element(el, list) or_return
 ```
 
-**Nodes** are the same, with one addition: a node you created belongs to you until `node_insert` puts it
-in a document. Insert it, or release it, or it leaks.
+**Nodes** are the same, with one difference that was measured the wrong way round here until it was
+tested: **inserting a node into a document does not hand your reference over.** `make_text_node` and
+`make_comment_node` return an `Owned_Node`, `node_add_ref` is the only other way to get one, and every
+one of them owes exactly one `node_release` whether or not it ends up in a document — 2000 inserted and
+released 100 kB nodes cost **+200 kB**, and the same loop without the release costs **+400 MB**, even
+with the node removed and finalized afterwards.
+
+```odin
+made := sciter_app.make_text_node(" appended") or_return
+defer sciter_app.node_release(made)                        // owed either way
+sciter_app.node_insert(target, .APPEND, made) or_return    // the document takes its own reference
+```
+
+Two asymmetries with elements, both measured: `node_remove(finalize = false)` does **not** mint an
+`Owned_Node` the way `remove_element(finalize = false)` mints an `Owned_Element` — releasing what it
+gives back is the under-flow. And one spurious `node_release` on a borrowed node is enough to segfault
+the process at document teardown, where an element takes two.
 
 **Requests** are valid for the duration of the load callback and no longer. `take_request` is what keeps
 one alive past that, and every `take_request` owes an `unuse_request`. A request that is never answered

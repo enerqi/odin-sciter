@@ -1,6 +1,6 @@
 # Documentation index
 
-Twenty-seven files, and the first decision a reader has to make is which one to open. This is that
+Twenty-nine files besides this index, and the first decision a reader has to make is which one to open. This is that
 decision, made for you.
 
 The files are **not** split into directories, deliberately: every guide cross-links the others by
@@ -28,6 +28,7 @@ Read the one you need, when you need it.
 | --- | --- |
 | [`dom.md`](./dom.md) | finding, reading, building and moving elements and nodes |
 | [`events.md`](./events.md) | handlers, phases, the event groups, timers and animation frames |
+| [`threading.md`](./threading.md) | workers, `post_callback`, failure and cancellation, and what to do about the UI while work runs |
 | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) | `eval`, `call`, native functors, SOM assets — both directions |
 | [`graphics.md`](./graphics.md) | the 2D renderer, custom-drawn elements, offscreen images |
 | [`resources.md`](./resources.md) | the load callback, custom URL schemes, the request API, archives |
@@ -58,6 +59,9 @@ Working documents. Read these if you are changing the bindings, not if you are u
   are not, and why. Backed by `just parity`, with the unwrapped set committed as
   [`parity-baseline.txt`](./parity-baseline.txt) and checked in CI
 - [`PLAN.md`](./PLAN.md) — what is done and what is not. Its counts come from `just stats`
+- [`typing.md`](./typing.md) — a working note on where `distinct` types, default arguments and enums
+  would pay for themselves. Most of it has since been done; kept because the reasoning is the record of
+  why the rest was not
 - [`PLAN-TESTING-AND-EXAMPLES.md`](./PLAN-TESTING-AND-EXAMPLES.md) — house rules for the suite, and why
   the test fixture is duplicated across ten files
 - [`RESEARCH-METHOD.md`](./RESEARCH-METHOD.md) — measure before documenting, and how
