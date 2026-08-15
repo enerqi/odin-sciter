@@ -59,21 +59,18 @@ Thumbs.db
 build
 target
 
-# The vendored Sciter engine. The build-artifact patterns above (*.so, *.dll, *.dylib) would otherwise
-# silently exclude it, and a clone without it cannot run a single example. These are not our build
-# output - they are upstream binaries pinned in external/sciter/VENDORED.md.
-!lib/**/*.so
-!lib/**/*.dll
-!lib/**/*.dylib
-
-# ...except the macOS engine, which is fetched rather than committed. It is a *universal* binary -
-# x86_64 and arm64 in one file - so it is 50 MB against Linux's 24 and Windows' 19, and roughly half of
-# that is dead weight on any given machine. That is the whole reason for the asymmetry: the other two
-# are worth the offline-clone property at their size and this one is not. `just fetch-engine` downloads
-# it and verifies it against `engine_sha256`, and `ensure-engine` runs before every recipe that builds
-# or runs anything, so a Mac checkout still needs no ceremony beyond the first build.
+# The Sciter engine is **fetched, not committed**, on every platform - so the build-artifact patterns
+# above (*.so, *.dll, *.dylib) already cover it and there is deliberately no negation here. The three
+# binaries are 90 MB between them and a binary does not delta-compress, so every engine bump would have
+# added ~40 MB to history permanently. `just fetch-engine` downloads the pinned file and verifies it
+# against the per-platform SHA-256 in external/sciter/VENDORED.md; `ensure-engine` runs before every
+# recipe that builds or runs anything, so a fresh clone needs no step anyone has to remember.
 #
-# docs/UPGRADING.md is the decision, and it applies to the other two from the next engine bump.
+# docs/UPGRADING.md is the decision and the arithmetic behind it. If a platform's engine ever goes back
+# into the tree, it needs a `!lib/...` negation here - the patterns above are what would silently
+# swallow it, which is the bug this comment used to exist to prevent.
+lib/linux/x64/libsciter.so
+lib/windows/x64/sciter.dll
 lib/macosx/libsciter.dylib
 
 # Bytecode from the justfile's `[script]` recipes, which import .github/scripts/justlib.py.

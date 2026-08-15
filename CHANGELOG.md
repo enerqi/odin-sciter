@@ -121,12 +121,26 @@ against.
 
 ### Changed
 
-- **The macOS CI job's "is the engine vendored?" gate could never fire.** It globbed
-  `lib/macosx/*/libsciter.dylib` — an architecture subdirectory that nothing else in the repository
-  uses, since `src/prelude.odin` searches `lib/macosx` and the macOS engine is one universal file. So
-  vendoring the dylib the way everything else expects would have left the job skipping every runtime
-  step while reporting success. The gate is gone; the steps are unconditional and `fetch-engine
-  --check` is what fails if the file is missing.
+- **No engine is committed to this repository any more, on any platform, and history was rewritten to
+  remove the three that were.** `.git` went from **41 MB to ~2 MB**. Each engine is gitignored, pinned
+  by SHA-256 in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) and installed by `just
+  fetch-engine`; every CI job fetches as its first real step. A binary does not delta-compress, so
+  committing all three meant ~40 MB of permanent history *per engine bump* — and all three landed within
+  a fortnight, the last of them the 50 MB macOS universal binary, in a repository whose source is under
+  2 MB. **Breaking for anyone with a clone**: every commit SHA changed, so re-clone rather than pull.
+  `git clone` alone no longer runs an example offline; `ensure-engine` fetches on the first build, which
+  is why nothing in the build needed changing. [`docs/UPGRADING.md`](docs/UPGRADING.md) carries the
+  arithmetic, the runbook that was used, and why not Git LFS.
+- **`fetch-engine.py` takes a second source.** With the binaries out of history, upstream withdrawing a
+  tag would leave every past commit unbuildable. `SCITER_ENGINE_URL` (a complete URL for one file) and
+  `SCITER_ENGINE_BASE` (an alternative base) are tried in that order, both verified against the same
+  hash — so a mirror can be untrusted without being unsafe, and uploading the three binaries as release
+  assets is now a step of cutting a release.
+- **Both "is the engine vendored?" CI gates are gone**, with the binaries they guarded: an answer that
+  is now always "no" would skip every runtime step and report the job green. The macOS one could never
+  fire in the first place — it globbed `lib/macosx/*/libsciter.dylib`, an architecture subdirectory that
+  nothing else in the repository uses, since `src/prelude.odin` searches `lib/macosx` and the macOS
+  engine is one universal file. The fetch is the gate now; it fails loudly and names the mismatch.
 - **`sqlite_extension` freed memory nothing had allocated**, and had done so on every platform since it
   was written. `filepath.dir` is `os.dir`, which *slices* its argument rather than allocating — the
   result points into `os.args[0]` — and the example paired it with a `delete`. Linux and Windows
@@ -215,16 +229,9 @@ against.
 
 ### Added
 
-- **The macOS engine is pinned and fetched, not committed** — `lib/macosx/libsciter.dylib`,
-  50 029 168 bytes, universal (x86_64 + arm64), hash-pinned in
-  [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) like the other two, but gitignored and
-  installed by `just fetch-engine`. It is the one platform that is, and the reason is size: a universal
-  binary is 50 MB where Linux is 24 and Windows 19, roughly half of it dead weight on any given machine,
-  and committing it took `.git` from 11 MB to 41 MB in a single blob — for the platform nobody here can
-  run. `ensure-engine` already gated every recipe that builds or runs anything, so the switch cost one
-  gitignore line and one CI step; the rest of it is documentation.
-  [`docs/UPGRADING.md`](docs/UPGRADING.md) is the decision, and Linux and Windows follow at the next
-  engine bump. Nobody working on this repository owns a Mac, so **CI is the Mac**: the `macos-14` job
+- **The macOS engine is pinned** — `lib/macosx/libsciter.dylib`, 50 029 168 bytes, universal
+  (x86_64 + arm64), recorded in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) like the
+  other two. Nobody working on this repository owns a Mac, so **CI is the Mac**: the `macos-14` job
   now verifies the engine, reports what the dylib is, runs `api-map-verify`, `check`, a window canary,
   the example suite and the leak sweep. `README.md`'s platform table grew a column to say what that
   does and does not prove — CI cannot see that a window renders blank.

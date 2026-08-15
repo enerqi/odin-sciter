@@ -1,6 +1,6 @@
 # Windows bring-up
 
-Status: **Windows x64 is vendored and has been run**, on a real desktop, on 2026-08-15. This file was a
+Status: **Windows x64 is pinned and has been run**, on a real desktop, on 2026-08-15. This file was a
 checklist of things that could not be established without a machine; it is now the record of what that
 machine said, and of the four things still open.
 
@@ -27,7 +27,7 @@ Engine: 6.0.4.9, `bin/windows/x64/sciter.dll`, 19 261 952 bytes,
 
 | | Step | Result |
 | --- | --- | --- |
-| 1 | vendor the DLL | done; `just fetch-engine --check` verifies it |
+| 1 | pin the DLL | done; `just fetch-engine` installs and verifies it - it is not committed, see `UPGRADING.md` |
 | 2 | `just api-map-verify` | **passes, and is now a gate** - 189 slots, ISciterAPI version 10 |
 | 3 | `just example hello_window` | window opens, HTML and CSS render. No XIM equivalent of the Linux segfault |
 | 4 | `just check` | 28 examples build |

@@ -27,12 +27,11 @@ counting rule is `\.name\b` and not `\.name(`: the examples store and forward wr
 they call them, and matching the open paren undercounts. `close` is now among the covered ones: there is exactly one order in which
 a secondary window can be closed without crashing the engine - hide, pump, close - and
 `examples/workbench.odin` pins it. What remains
-was Windows, and **Windows x64 has now been vendored and run on a real machine** - the whole example
+was Windows, and **Windows x64 has now been pinned and run on a real machine** - the whole example
 suite, the ISciterAPI table (gated in CI), the inspector, native extensions, ASan and the leak sweep.
 What that run found, what it fixed, and the two things still open are in
 [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md), which is a measurement record rather than a to-do list
-now. macOS was the remaining platform: the engine is pinned by hash and *fetched* rather than committed
-(it is universal, x86_64 + arm64, and 50 MB for it) and the
+now. macOS was the remaining platform, and the
 `macos-14` job in CI is what brings it up, because nobody here owns a Mac. That is a real ceiling rather
 than a formality - CI can prove the table matches and the suite passes, and cannot see that a window
 renders blank - so the platform table in `README.md` has a column for it and
@@ -651,17 +650,17 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
 
 ## 12. Open questions
 
-- ~~**Repo size.**~~ **decided: vendor Linux and Windows, fetch macOS.** Offline `git clone && just
-  example hello_window` is worth the bytes for the two engines that cost 8-11 MB of history each. It is
-  not worth it for macOS: that file is universal, carries two architectures, and cost **30 MB** - `.git`
-  went from 11 MB to 41 MB on the one commit that added it, for the one platform nobody here can run.
-  So it is gitignored and `just fetch-engine` installs it, verified against the same SHA-256 that would
-  have pinned it in the tree. Per-bump history is ~19 MB rather than ~38. The estimate that made this
-  call (20 MB compressed for macOS) was the only one of the three not measured beforehand, and it held. The
-  mitigations — upgrade deliberately, tell users to `--depth 1`, never keep two engine versions in the
-  tree, record SHA-256s so a fetch-based fallback stays possible, and squash history onto an orphan
-  branch if `.git` passes ~500 MB — are in [`UPGRADING.md`](./UPGRADING.md), along with why Git LFS and
-  a binaries submodule are the wrong trade for a library whose pitch is "clone it and run an example".
+- ~~**Repo size.**~~ **decided, and reversed once: no engine is committed, on any platform.** The first
+  answer was "vendor - offline `git clone && just example hello_window` is worth the bytes", and it held
+  while there was one engine at 11 MB compressed. Three landed inside a fortnight, the last of them the
+  50 MB macOS universal binary, and `.git` went from 11 MB to **41 MB** for a repository whose source is
+  under 2 MB. All three are now gitignored, pinned by SHA-256 in
+  [`VENDORED.md`](../external/sciter/VENDORED.md), installed by `just fetch-engine`, and the committed
+  copies were removed from history with `git filter-repo` - `.git` is ~2 MB. What was actually traded
+  away was narrower than the original argument assumed: `ensure-engine` had already made the download
+  invisible, so the property lost is "clone and run *with no network*", not "clone and run". The
+  arithmetic, the runbook for the rewrite, why not Git LFS, and the release-asset fallback that keeps the
+  pin from depending on one upstream URL are in [`UPGRADING.md`](./UPGRADING.md).
 - **Naming.** `sciter.SciterCreateWindow` maps 1-to-1 onto upstream documentation, which is worth a lot
   for a library whose users will be reading sciter.com. `sciter.create_window` reads better. The
   intended answer is both, in two packages: generated `package sciter` stays 1-to-1, ergonomic

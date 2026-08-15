@@ -34,38 +34,38 @@ The Odin ecosystem has no package manager to satisfy, so the tag is for humans a
 
 ## Cutting a release
 
-## The vendored engine: decided - fetch. macOS already, the other two at the next version
+## The engine: decided - fetch, on every platform, and history was rewritten to match
 
-**macOS is fetched now**, ahead of the schedule the rest of this section describes, and the reason is
-size rather than principle: the macOS build is a *universal* binary, x86_64 and arm64 in one file, so it
-is 50 MB where Linux is 24 and Windows 19 - and roughly half of it is dead weight on whichever machine
-is reading it. Committing it took `.git` from ~11 MB to 41 MB in a single blob. It is gitignored,
-`just fetch-engine` installs it, and CI's macOS job fetches rather than checks. Everything below applies
-unchanged to Linux and Windows.
+**Done, 2026-08-15.** No engine is committed to this repository. All three are gitignored, pinned by
+SHA-256 in [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md) and installed by
+`just fetch-engine`, and the three copies that had already been committed were removed from history with
+`git filter-repo`. `.git` went from **41 MB to ~2 MB**.
 
-`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. Measured when this was
-written: it is **one blob**, committed once at the initial spike and never changed, and it packs to
-~19 MB of the repository's 20 MB `.git`. So there is nothing to clean up yet - which is exactly why the
-decision was worth making then rather than after it costs a history rewrite.
+The reasoning, kept because it is the reasoning for the next binary anyone is tempted to commit:
 
-It does not stay fine:
+`lib/linux/x64/libsciter.so` was 24 MB, tracked in git, not under LFS. It was **one blob**, committed
+once at the initial spike and never changed. That was fine. It does not stay fine:
 
-- a binary does not delta against its predecessor, so **every upgrade adds another ~19 MB to history,
-  permanently**. This document treats upgrades as routine and `canary.yml` surfaces upstream tags
-  weekly, so the intended cadence is "regularly"
-- Windows and macOS were both meant to be vendored, at which point every clone carries three engines for
-  whichever platform the reader is on. Windows landed and macOS was reversed out for the size reason
-  above; the general point stands for whatever is still committed
+- a binary does not delta against its predecessor, so **every upgrade adds ~40 MB to history across the
+  three platforms, permanently**. This document treats upgrades as routine and `canary.yml` surfaces
+  upstream tags weekly, so the intended cadence is "regularly"
+- all three platforms landed within a fortnight, and the last of them - macOS, 50 MB because it is a
+  universal binary carrying two architectures - took `.git` from 11 MB to 41 MB in a single commit, for
+  the one platform nobody working here can even run
 - `docs/PLAN.md` already records that a full-history clone of the *upstream* SDK is ~4 GB because "800+
   commits, each carrying every platform's binaries" - the same failure mode, one scale down
 
-**The decision: do not vendor, from the next engine version onwards.** `just fetch-engine` downloads the
-pinned binary and verifies it against the SHA-256 in
-[`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md); `ensure-engine` runs it automatically
-and is a dependency of every recipe that builds or runs anything, so a checkout needs no ceremony beyond
-the first build. Both exist and work **now**: macOS has already made the switch and it cost exactly what
-was predicted here - one gitignore line, one CI step changed from `--check` to a fetch, and the doc
-edits. Nothing in the build needed touching.
+**The decision: do not vendor.** `just fetch-engine` downloads the pinned binary and verifies it against
+the recorded SHA-256; `ensure-engine` runs it automatically and is a dependency of every recipe that
+builds or runs anything, so a checkout needs no ceremony beyond the first build. The switch cost what it
+was predicted to cost: three gitignore lines, three CI steps changed from `--check` to a fetch, and the
+doc edits. **Nothing in the build needed touching**, because `ensure-engine` had been in place, doing
+nothing, since before there was anything to fetch.
+
+The rewrite was done while it was cheap - 67 commits, one author, no tags, one branch, and exactly one
+copy of each engine in history. Doing it after a second engine version would have meant six blobs and a
+worse trade; doing it before the repository has other clones is the only comfortable time. Commands are
+in [Rewriting history](#rewriting-history-if-a-binary-does-get-committed) below.
 
 git-lfs was the alternative and was rejected: it keeps the offline-clone property but trades a size
 problem you understand for a tooling one your contributors meet on their first `git clone` - a pointer
@@ -74,22 +74,24 @@ inherit. The fetch recipe reaches the same place with no new dependency.
 
 ### What changes at the switch, and what it costs
 
-The cost is real and worth stating: **`git clone` alone stops being enough**, and the "works offline
-from a clean clone with nothing installed" line in `README.md` becomes "works offline after one
-command". `examples/single_binary.odin` embeds the engine with `#load`, which is *compile-time*, so
-`just check` cannot build without the file - that is why `ensure-engine` is wired into the recipes
-rather than documented as a step.
+The cost is real and worth stating: **`git clone` alone is no longer enough**, and the "works offline
+from a clean clone with nothing installed" line in `README.md` became "works offline after one command".
+`examples/single_binary.odin` embeds the engine with `#load`, which is *compile-time*, so `just check`
+cannot build without the file - that is why `ensure-engine` is wired into the recipes rather than
+documented as a step.
 
-When the next engine version lands, in this order:
+The switch itself was: three lines in `.gitignore`, `git rm --cached` on three files, three CI steps
+from `just fetch-engine --check` to `just fetch-engine`, the two "is the engine vendored?" guards
+deleted (a guard whose answer is now always "no" would skip the runtime steps and report green), the
+offline claims in `README.md` and `docs/deployment.md`, and one `git filter-repo` run.
 
-1. `just fetch-engine --force` with the new `engine_tag` and `engine_sha256` in the `justfile`, and the
-   new hash recorded in `VENDORED.md`
-2. add `lib/` to `.gitignore` and `git rm --cached` the old binary
-3. change CI's "Verify the pinned engine" step from `just fetch-engine --check` to `just ensure-engine`
-   (the windows and macos jobs already gate on the file being present, and become fetches too)
-4. update the offline-clone claim in `README.md` and `docs/deployment.md`
-5. rewrite history once to drop the superseded blob - one blob, one rewrite, and everyone re-clones at a
-   moment when they were going to re-fetch anyway
+**When the next engine version lands**, the whole of it is now:
+
+1. new `engine_tag` and `engine_sha256` in the `justfile`, new hash and size in `VENDORED.md`
+2. `just fetch-engine --force`
+3. the upgrade procedure below, starting at `just api-map-verify`
+
+There is no blob to remove and no history to rewrite, which is the point.
 
 ### The trap the recipe exists to catch
 
@@ -120,8 +122,18 @@ consumers vendor or submodule the repository or import it by path.
    git push origin v6.0.4.9
    ```
 
-If the release attaches binaries as GitHub release assets rather than committing them, that is row 9
-or 10 of the options table below — a change of strategy, not a step to add quietly here.
+8. **attach the three engine binaries as release assets.** Not optional, and not the same thing as
+   vendoring them: nothing is in git history any more, so upstream withdrawing or moving a tag would
+   otherwise leave every commit of this repository unbuildable, past ones included. A GitHub release
+   allows 2 GB per asset and the three are 90 MB. `fetch-engine.py` reads `SCITER_ENGINE_URL` (a
+   complete URL for one file) and `SCITER_ENGINE_BASE` (an alternative base), and verifies whatever
+   arrives against the same SHA-256, so pointing a build at the assets is one environment variable and
+   an untrusted mirror cannot do worse than fail the check:
+
+   ```sh
+   gh release upload v6.0.4.9 \
+       lib/linux/x64/libsciter.so lib/windows/x64/sciter.dll lib/macosx/libsciter.dylib
+   ```
 
 ## Upgrade procedure
 
@@ -245,29 +257,33 @@ So the trajectory is roughly **40 MB of permanent history per engine bump** once
 are vendored. Ten bumps is 400 MB. That is survivable but not comfortable, and it is worth deciding
 how to handle it before the second and third binaries land rather than after.
 
-**And then two of them landed, which is how the table above stopped being a projection.** `.git` was
-11 MB with Linux alone; Windows took it to ~11 MB packed plus the DLL, and committing the macOS dylib
-took it to **41 MB** - the single largest jump, from the single largest file, for the platform nobody
-here can even run. That is what settled it: macOS is fetched (see the decision above), Linux and
-Windows stay committed until the next bump. The projection was right; it just arrived faster than the
-next engine version did.
+**And then all three landed inside a fortnight, which is how the table above stopped being a
+projection.** `.git` was 11 MB with Linux alone; Windows added its 8; committing the macOS dylib took it
+to **41 MB** - the single largest jump, from the single largest file, for the platform nobody here can
+even run. The projection was right, it just arrived before the next engine version did, and the answer
+was the one this section had been holding in reserve: none of them are committed now, the three blobs
+were removed from history, and `.git` is **~2 MB**. See the decision at the top of this file.
 
 ### What we do about it
 
-**1. Upgrade deliberately, not weekly.** The policy above is the primary mitigation and costs nothing.
-Two or three engine bumps a year is ~100 MB a year.
+**0. Do not commit the engine.** This is the one that made the rest of the list mostly historical, and
+it is listed last-first because it was reached last: the other mitigations all manage the cost of
+carrying binaries, and this one declines to carry them. Kept below is what still applies if a binary
+ever does land, deliberately or by accident.
 
-**2. Tell consumers to shallow-clone.** A user does not need the history:
+**1. Upgrade deliberately, not weekly.** The policy above is still the primary mitigation for the
+*download*, even now that it is not a history mitigation.
+
+**2. Tell consumers to shallow-clone.** Much less necessary now that a full clone is ~2 MB, and still
+the right advice for anyone who does not want 67 commits of history:
 
 ```sh
 git clone --depth 1 <repo>
 ```
 
-That fetches one copy of the current binaries and nothing else, so history size is a maintainer
-problem, not a user problem. This belongs in the README's quick start once the repository is
-published. Someone who wants the history but not the dead binaries can use a blobless partial clone
-instead — `git clone --filter=blob:none <repo>` — which keeps every commit and fetches file contents
-on demand.
+Someone who wants the history but not any large blob a future commit adds can use a blobless partial
+clone instead — `git clone --filter=blob:none <repo>` — which keeps every commit and fetches file
+contents on demand.
 
 **3. Never keep two engine versions in the tree.** Replace the file; do not add
 `lib/linux/x64/libsciter-6.0.5.so` beside the old one. The tag says which engine a checkout carries.
@@ -277,18 +293,54 @@ precondition for switching strategies later without a flag day: a `just fetch-sd
 verifies against those hashes can be added at any point, and the vendored copy simply becomes the
 default rather than the only option.
 
-**5. Set a threshold, and act on it rather than drifting.** When `.git` passes **~500 MB**, do a
-history reset rather than continuing:
+**5. Set a threshold, and act on it rather than drifting.** This was written as "when `.git` passes
+~500 MB, squash onto an orphan branch". It was acted on at 41 MB instead, and with a `filter-repo`
+rewrite rather than a squash, because at 67 commits and one author the rewrite keeps the history and
+the squash throws it away. Both remain available; the runbook below is the one that was used.
 
-- tag the current history `history-pre-squash-<date>` and keep that tag pushed, so nothing is lost
-- create an orphan branch from the current tree, commit it as a single "history reset" commit, and
-  make it the new default branch
-- the old objects remain reachable through the archive tag; anyone who needs archaeology fetches it
-  explicitly, and everyone else clones a repository whose history starts at ~40 MB
+### Rewriting history, if a binary does get committed
 
-This is disruptive exactly once and is a normal thing for a repository that vendors binaries. Doing it
-on a threshold, with the old history kept under a tag, is much better than doing it in a panic with
-`filter-repo` and a force-push.
+What was run on 2026-08-15 to remove the three engines, kept because the next accidental 20 MB commit
+wants the same five steps. **It rewrites every SHA from the first affected commit onwards**, so it needs
+a force-push and everyone with a clone re-clones. That is cheap here and gets less cheap with every
+contributor.
+
+```sh
+# 1. what is actually big, before deciding anything
+git rev-list --objects --all |
+  git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' |
+  awk '$1=="blob" && $3>400000 {printf "%7.2f MB  %s\n", $3/1048576, $4}' | sort -rn
+
+# 2. a backup that does not depend on the remote, and the binaries themselves
+git bundle create ../pre-rewrite.bundle --all
+cp lib/linux/x64/libsciter.so lib/windows/x64/sciter.dll lib/macosx/libsciter.dylib ~/engine-backup/
+
+# 3. the rewrite. --invert-paths turns the --path list into "everything except"
+uv tool run --from git-filter-repo git-filter-repo --force \
+    --path lib/linux/x64/libsciter.so \
+    --path lib/windows/x64/sciter.dll \
+    --path lib/macosx/libsciter.dylib \
+    --invert-paths
+
+# 4. filter-repo removes `origin` deliberately, so a force-push cannot be accidental
+git remote add origin <url>
+
+# 5. verify before pushing anything
+git count-objects -vH        # expect ~2 MB
+just fetch-engine            # the working tree gets its engine back
+just check
+```
+
+Two things that are easy to miss:
+
+- **`.git/filter-repo/commit-map`** maps every old SHA to its new one. Any document that quotes a commit
+  hash - `docs/review/HANDOFF.md` quotes thirteen - is fiction until it is rewritten from that file.
+- a force-push does not delete anything from GitHub. Old objects stay addressable by SHA until their
+  garbage collection runs. This is size hygiene for clones, not erasure.
+
+Do the un-vendoring commit *first*, so the rewrite lands on a tree that already describes the world
+correctly, and keep `--path` explicit rather than `--strip-blobs-bigger-than` for a one-off: the size
+filter is the right tool for an ongoing policy and too blunt for a known list.
 
 ### Options considered
 
@@ -298,17 +350,17 @@ everything else is a documented fallback, not a rejection on principle.
 
 | # | Strategy | History cost | Offline `clone && run` | Main cost |
 | --- | --- | --- | --- | --- |
-| **1** | **Vendor binaries in git** ← *current* | ~40 MB per bump, three platforms | yes | permanent growth |
-| **2** | **Upgrade deliberately, not on upstream's cadence** ← *current* | multiplies row 1 by 2–3/year instead of ~50 | yes | you sit on known upstream fixes longer |
-| **3** | Document `--depth 1` for consumers ← *offered* | unchanged server-side; user downloads tip only | yes | no `git log`, no old tags without `--unshallow` |
-| 4 | Document `--filter=blob:none` (blobless partial clone) | unchanged server-side; blobs on demand | yes, for the tip | history operations need network |
-| **5** | **Orphan-branch squash at a threshold** ← *current, at ~500 MB* | resets to ~40 MB | yes | disruptive once per reset; old history lives under an archive tag |
-| 6 | `git filter-repo` rewrite dropping old binaries | drops them retroactively | yes | rewrites every SHA, force-push, breaks forks and existing clones |
+| 1 | Vendor binaries in git ← *was current until 2026-08-15* | ~40 MB per bump, three platforms | yes | permanent growth |
+| **2** | **Upgrade deliberately, not on upstream's cadence** ← *current* | now a download cost rather than a history cost | — | you sit on known upstream fixes longer |
+| **3** | Document `--depth 1` for consumers ← *offered* | unchanged server-side; user downloads tip only | — | no `git log`, no old tags without `--unshallow` |
+| 4 | Document `--filter=blob:none` (blobless partial clone) | unchanged server-side; blobs on demand | — | history operations need network |
+| 5 | Orphan-branch squash at a threshold | resets to ~40 MB | yes | disruptive once per reset; old history lives under an archive tag |
+| **6** | **`git filter-repo` rewrite dropping the binaries** ← *done once, 2026-08-15* | dropped them retroactively: 41 MB → ~2 MB | no | rewrites every SHA, force-push, breaks forks and existing clones |
 | 7 | Vendor compressed (`libsciter.so.zst`, decompressed by `just`) | ~9 MB instead of ~11 MB per platform-bump | after a decompress step | extra build step; `#load` and `single_binary` want the raw file |
 | 8 | Binaries on an orphan `binaries` branch in this repo | unchanged server-side, excluded from `--single-branch` clones | only if the user fetches that branch | surprising, and two-step |
-| 9 | Our own GitHub Releases + `just fetch-sdk` + pinned SHA-256 | **zero** | no — first run downloads | network failure mode on first run; we host and version the assets |
+| **9** | **Our own GitHub Releases + pinned SHA-256** ← *current, as the second source* | **zero** | no — first run downloads | network failure mode on first run; we host and version the assets |
 | 10 | Hybrid: Linux committed, Windows/macOS on releases | ~11 MB per bump | Linux only | two mechanisms to maintain |
-| 11 | Fetch straight from upstream's GitLab release archive, pinned SHA | **zero** | no | upstream URLs can move; no hosting burden for us |
+| **11** | **Fetch straight from upstream's GitLab archive, pinned SHA** ← *current* | **zero** | no | upstream URLs can move - which is why row 9 is the standing fallback, via `SCITER_ENGINE_URL` |
 | 12 | Git LFS | pointers only | no — LFS fetch on clone | quota and bandwidth billing, server support required |
 | 13 | Submodule pointing at a binaries repo | zero here | no | submodule failure modes in everyone's first five minutes; the other repo grows identically |
 | 14 | Sibling repo, tags in lockstep, no submodule | zero here | no | manual pairing, version-skew risk |
@@ -333,8 +385,15 @@ Facts that cut across the table:
 - The EULA permits redistributing the engine binary in any of these forms. The About-box attribution is
   the only obligation and does not vary by mechanism.
 
-Why the current choice and not the cheaper ones: `git clone && just example hello_window` working with
-no network, no SDK and no download step is the single biggest thing that makes a bindings library
-approachable, and every zero-history-cost row buys its savings by breaking exactly that. Row 10 is the
-most likely first concession if the budget bites — it keeps the offline property on the platform most
-people land on while cutting the per-bump cost by three quarters.
+**Why the choice changed.** The original reasoning was that `git clone && just example hello_window`
+working with no network, no SDK and no download step is the single biggest thing that makes a bindings
+library approachable, and every zero-history-cost row buys its savings by breaking exactly that. That is
+still true, and it lost anyway: the offline property is worth something once, and ~40 MB of permanent
+history is a cost that recurs on every bump, for every clone, forever. What tipped it was the third
+binary landing — 41 MB of `.git` for a repository whose source is under 2 MB — and the fact that
+`ensure-engine` had already made the download invisible, so the property being traded away was narrower
+than it looked: not "clone and run", but "clone and run *with no network*".
+
+Row 11 with row 9 behind it is where that lands. The pin lives in `VENDORED.md`, upstream is the
+primary source, our own release assets are the fallback when upstream moves, and both are verified
+against the same hash.

@@ -16,12 +16,14 @@ Engine: 6.0.4.9, `bin/macosx/libsciter.dylib`, 50 029 168 bytes,
 `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c`, recorded in
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md).
 
-**It is fetched, not committed — the only platform that is.** 50 MB of universal binary, roughly half of
-it dead weight on any given machine, took `.git` from 11 MB to 41 MB in one commit, for the platform
-nobody here can run. `just fetch-engine` installs it against the hash above, `ensure-engine` runs before
-every recipe that builds or runs anything, and the CI job fetches as its first step. The reasoning is in
-[`UPGRADING.md`](./UPGRADING.md). Nothing else in this file changes: the file lands in `lib/macosx/`
-either way, and every measurement below was made against exactly that binary.
+**It is fetched, not committed** — as all three engines now are, and this file is where that decision
+came from. 50 MB of universal binary, roughly half of it dead weight on any given machine, took `.git`
+from 11 MB to 41 MB in one commit, for the platform nobody here can run; the answer was to stop
+committing engines at all and to rewrite the three that had been. `just fetch-engine` installs it
+against the hash above, `ensure-engine` runs before every recipe that builds or runs anything, and the
+CI job fetches as its first step. The reasoning is in [`UPGRADING.md`](./UPGRADING.md). Nothing else in
+this file changes: the file lands in `lib/macosx/` either way, and every measurement below was made
+against exactly that binary.
 
 ## There is no Mac
 
@@ -487,8 +489,9 @@ and the same one Windows has.
 
 ## Done as part of this bring-up
 
-- vendored `lib/macosx/libsciter.dylib` and recorded its size, hash, architectures, signature, install
-  name and dependencies — all read from the file, no Mac involved
+- pinned `lib/macosx/libsciter.dylib` and recorded its size, hash, architectures, signature, install
+  name and dependencies — all read from the file, no Mac involved. It was briefly committed, which is
+  what settled the repository-size question for every platform: see [`UPGRADING.md`](./UPGRADING.md)
 - fixed the macOS CI gate, which globbed an arch subdirectory that nothing else in the repository uses
   and therefore skipped the job unconditionally while reporting success
 - gave the `macos` job the shape of the Linux one: engine verification, a dylib report, `api-map-verify`,

@@ -182,10 +182,10 @@ lint *args: ensure-engine
 
 # The engine, fetched instead of vendored - see `docs/UPGRADING.md` on the repository-size decision.
 #
-# Today `lib/` is committed, so this is a no-op on a fresh clone and the recipe exists to make the
-# switch a one-line change rather than a project. From the next engine version the binary stops being
-# committed, and then this is what a checkout needs before it can build - which is why every entry point
-# below depends on `ensure-engine` rather than leaving it to a README step nobody reads.
+# **No engine is committed on any platform**, so this is what a fresh clone needs before it can build
+# anything - which is why every entry point below depends on `ensure-engine` rather than leaving it to a
+# README step nobody reads. It was a no-op for as long as `lib/` was committed, and the switch cost the
+# gitignore lines and the CI steps, exactly as predicted: nothing in the build changed.
 #
 # **`python3` rather than the `[script]` interpreter at the top of this file.** `[script]` runs through
 # `uv`, which a CI runner does not have: the first version of this recipe failed on the Linux job with

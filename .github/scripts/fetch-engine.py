@@ -16,6 +16,19 @@ reason; the uv interpreter is for the developer-machine recipes that can assume 
 **Why the hash and not the size.** The upstream tag `6.0.4.9` serves a `libsciter.so` of exactly the
 same 25 015 296 bytes as `6.0.4.9-bis`, with a different SHA-256 - measured, by fetching both. A check
 on the length would install the wrong engine and report success.
+
+**Two sources, because no engine is committed any more.** While the binaries were in git, upstream
+withdrawing a tag was survivable: the bytes were in history. They are not, so a single source is a
+single point of failure for every past commit as well as this one. Two environment variables answer
+that, in order of precedence:
+
+    SCITER_ENGINE_URL       a complete URL for this one file - a release asset, a corporate mirror, a
+                            file:// path on a machine with no route to gitlab.com
+    SCITER_ENGINE_BASE      replaces the base below; the `/<tag>/bin/<rel>` shape is kept
+
+Both are verified against the same SHA-256, so a mirror can be untrusted without being unsafe: the
+worst a bad one can do is fail the check. `docs/UPGRADING.md` makes uploading the three binaries as
+release assets a step of cutting a release, which is what makes SCITER_ENGINE_URL point at something.
 """
 
 import hashlib
@@ -25,6 +38,16 @@ import tempfile
 import urllib.request
 
 BASE = "https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw"
+
+
+def sources(tag, rel):
+    """Where to look, most specific first. See the module docstring for why there is more than one."""
+    urls = []
+    if os.environ.get("SCITER_ENGINE_URL"):
+        urls.append(os.environ["SCITER_ENGINE_URL"])
+    base = os.environ.get("SCITER_ENGINE_BASE", BASE).rstrip("/")
+    urls.append(f"{base}/{tag}/bin/{rel}")
+    return urls
 
 
 def digest(path):
@@ -44,11 +67,10 @@ def main(argv):
     check_only, force = "--check" in flags, "--force" in flags
 
     dest = os.path.join("lib", *rel.split("/"))
-    url = f"{BASE}/{tag}/bin/{rel}"
+    urls = sources(tag, rel)
 
-    # Only Linux is vendored and verified today. Refusing outright would block the Windows and macOS
-    # bring-up, which is the first thing that will use this, so an unrecorded platform installs and says
-    # loudly what to write down.
+    # A platform whose hash is not recorded yet installs anyway and says loudly what to write down.
+    # Refusing outright would block a bring-up, which is the first thing that uses this script.
     unverified = not want or want.startswith("TODO")
 
     if os.path.exists(dest) and not force:
@@ -69,12 +91,23 @@ def main(argv):
     if check_only:
         sys.exit(f"{dest}: missing - run `just fetch-engine`")
 
-    print(f"fetching {url}")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")
     os.close(fd)
     try:
-        urllib.request.urlretrieve(url, tmp)
+        # Each source is tried in turn and only a *transport* failure moves on to the next: a file that
+        # arrives and hashes wrong is a bad pin, not a bad mirror, and falling through on it would turn
+        # "the tag moved" into "some other source happened to have something".
+        for i, url in enumerate(urls):
+            print(f"fetching {url}")
+            try:
+                urllib.request.urlretrieve(url, tmp)
+                break
+            except OSError as e:  # URLError and HTTPError are both OSError subclasses
+                if i == len(urls) - 1:
+                    sys.exit(f"  {e}\n  no source served {rel} - see SCITER_ENGINE_URL in this script")
+                print(f"  {e} - trying the next source")
+
         got = digest(tmp)
         if unverified:
             print(f"  no recorded SHA-256 for this platform. {os.path.getsize(tmp)} bytes,")

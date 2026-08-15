@@ -4,12 +4,14 @@
 # run it. Steps 2 (read the SDK changelog), 8 (look at a window) and 9 (docs) stay human - CI cannot
 # see that a window renders blank.
 #
-# All three platform jobs run their runtime steps, but they do not all get their engine the same way:
-# Linux and Windows are committed to the tree, macOS is **fetched** by the job, because the macOS build
-# is a universal binary and 50 MB of it is more than the offline-clone property is worth. The Windows
-# job keeps its `is the engine vendored?` guard because that is how it was brought up and the guard
-# costs nothing; the macOS job's equivalent had been globbing a path (`lib/macosx/*/libsciter.dylib`)
-# that nothing else in the repository uses and could therefore never fire, and is now the fetch step.
+# **No engine is committed to this repository.** All three platform jobs fetch theirs as their first
+# real step - `just fetch-engine`, which downloads the pinned binary and verifies it against the
+# per-platform SHA-256 in external/sciter/VENDORED.md. That is the decision in docs/UPGRADING.md, taken
+# for all three at once so that history carried one copy of each engine rather than one per bump.
+#
+# Both "is the engine vendored?" guards are gone with the binaries they guarded. A guard whose answer is
+# now always "no" would skip the runtime steps and report the job green, which is exactly the dead-glob
+# failure the macOS job had. The fetch is the gate: it fails loudly and it names the mismatch.
 # docs/WINDOWS-CHECKLIST.md and docs/MACOS-CHECKLIST.md are the measurement records for those two.
 name: CI
 
@@ -32,7 +34,7 @@ env:
 
 jobs:
   linux:
-    name: linux x64 (engine vendored)
+    name: linux x64 (engine fetched)
     runs-on: ubuntu-24.04
     # The engine picks its windowing backend from XDG_SESSION_TYPE, and gets it wrong when the variable
     # is not set - which is the normal state of a CI runner, a container, or an ssh session. Only the
@@ -62,16 +64,16 @@ jobs:
       # Both library packages *and* every example. The examples used to be excluded - which meant the
       # vet flags covered the third of the code least likely to be read closely - and the cleanup that
       # let them in was 25 findings, all unused imports, unused locals and shadowed `err`s.
-      # The engine's identity, checked rather than assumed. Today `lib/` is committed, so this verifies
-      # the committed blob against the SHA-256 in `external/sciter/VENDORED.md`; when the engine stops
-      # being committed (see docs/UPGRADING.md on the repository-size decision) this same step becomes
-      # the fetch, because `ensure-engine` runs from every build recipe anyway.
+      # The engine's identity, established rather than assumed. No engine is committed any more, so this
+      # downloads it and verifies the download against the SHA-256 in `external/sciter/VENDORED.md` -
+      # the switch docs/UPGRADING.md predicted, and it cost this line. `ensure-engine` would do it from
+      # the first build recipe anyway; it is a step of its own so a bad pin fails here, named.
       #
-      # Worth a step of its own because the failure it catches is otherwise baffling: the upstream tag
-      # `6.0.4.9` serves a libsciter.so of *exactly* the same size as `6.0.4.9-bis` and a different
-      # hash, so "the right size, the wrong engine" is a state that exists.
-      - name: Verify the pinned engine
-        run: just fetch-engine --check
+      # Worth naming because the failure it catches is otherwise baffling: the upstream tag `6.0.4.9`
+      # serves a libsciter.so of *exactly* the same size as `6.0.4.9-bis` and a different hash, so "the
+      # right size, the wrong engine" is a state that exists.
+      - name: Fetch and verify the pinned engine
+        run: just fetch-engine
 
       - name: Lint
         run: just lint
@@ -197,7 +199,7 @@ jobs:
       - run: just cross-check
 
   windows:
-    name: windows x64 (engine vendored)
+    name: windows x64 (engine fetched)
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -206,24 +208,16 @@ jobs:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
 
-      - name: Is the engine vendored?
-        id: engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f lib/windows/x64/sciter.dll ]; then
-            echo "have=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::lib/windows/x64/sciter.dll is not vendored - skipping the runtime steps. Step 1 of docs/WINDOWS-CHECKLIST.md is what turns this job on."
-          fi
-
-      # The same check the Linux job runs, and it means something here now that `engine_sha256` is
+      # The `is the engine vendored?` gate that used to be here is gone with the engine it guarded: no
+      # platform's binary is committed now, so the answer would be "no" on every run and the job would
+      # skip itself in perpetuity while reporting green - the exact failure mode the macOS job's dead
+      # glob had. The fetch below is the gate; it fails loudly, which is what a gate is for.
+      #
+      # The same step the Linux job runs, and it means something here now that `engine_sha256` is
       # per-platform: it used to be one value, so fetching on Windows compared sciter.dll against the
       # Linux .so's digest and refused to install.
-      - name: Verify the pinned engine
-        if: steps.engine.outputs.have == 'true'
-        run: just fetch-engine --check
+      - name: Fetch and verify the pinned engine
+        run: just fetch-engine
 
       # Checklist step 2, now a real gate rather than a report: the null list and the symbol names were
       # measured on a Windows machine on 2026-08-15 and are pinned in check-api-map.py. The prediction
@@ -232,13 +226,11 @@ jobs:
       # as Linux's, and the Windows null list is the Linux one minus SciterProcND rather than the
       # D2D-filled list that was expected.
       - name: Verify the ISciterAPI table
-        if: steps.engine.outputs.have == 'true'
         run: just api-map-verify
 
       # Checklist step 4. `single_binary.odin`'s `when` now covers windows_amd64, and `just check` skips
       # the two raw-Xlib examples off Linux - without that skip this step could never have passed.
       - name: Type check and build everything
-        if: steps.engine.outputs.have == 'true'
         run: just check
 
       # Checklist step 5. The display gate is right for this platform: `have_display` in the examples
@@ -271,7 +263,6 @@ jobs:
         run: just extension sqlite_extension odin-sqlite
 
       - name: Run the example tests
-        if: steps.engine.outputs.have == 'true'
         timeout-minutes: 45
         env:
           EXAMPLE_TEST_TIMEOUT: '420'

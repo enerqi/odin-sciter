@@ -9,9 +9,9 @@ Node.js, and no separate process. A "hello world" application is one Odin file a
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
 > engine, there is an Odin-shaped layer on top of them, and 30 examples, 397 tests and twelve
-> guides cover it (`just stats` prints those; they are measured, not maintained by hand). Linux x64 and
-> Windows x64 are vendored and have been run on real machines; macOS is fetched by `just fetch-engine`
-> rather than committed, and is exercised in CI
+> guides cover it (`just stats` prints those; they are measured, not maintained by hand). The engine
+> itself is fetched by `just fetch-engine` on every platform rather than committed here. Linux x64 and
+> Windows x64 have been run on real machines; macOS is exercised in CI
 > only — nobody here owns a Mac, and the table below says exactly what that does and does not prove.
 > See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
@@ -62,17 +62,17 @@ cd odin-sciter
 just example hello_window
 ```
 
-A window opens with HTML and CSS rendered by Sciter. On Linux and Windows the engine is vendored in
-`lib/`, so this works offline with nothing else installed — which is also why the clone is ~24 MB:
-`lib/linux/x64/libsciter.so` is the engine itself, tracked in git. The `--depth 1` above is what keeps
-you from fetching every past copy of it. **On macOS the first command downloads the engine** (50 MB, a
-universal binary), because that one is fetched rather than committed — see the platform table below.
+A window opens with HTML and CSS rendered by Sciter. **The first command downloads the engine** — 24 MB
+on Linux, 19 on Windows, 50 on macOS — because no engine is committed to this repository. There is
+nothing to install and nothing to remember: `just fetch-engine` verifies the download against a recorded
+SHA-256, and every recipe that builds or runs anything depends on `just ensure-engine`, so the first
+build fetches once and later ones do not. The clone itself is ~2 MB.
 
-**That changes at the next engine version**, and the mechanism is already here: `just fetch-engine`
-downloads the pinned binary and verifies it against a recorded SHA-256, and every recipe that builds or
-runs anything depends on `just ensure-engine`, so a fresh checkout fetches once on its first build
-rather than needing a step you have to know about. The reasoning — and why not git-lfs — is in
-[`docs/UPGRADING.md`](docs/UPGRADING.md).
+That is a deliberate trade against "works offline from a clean clone": a binary does not
+delta-compress, so committing three engines meant ~40 MB of permanent history per engine bump, forever.
+The arithmetic, and why not git-lfs, is in [`docs/UPGRADING.md`](docs/UPGRADING.md). If you need an
+offline or air-gapped checkout, fetch once and copy `lib/` across, or point `SCITER_ENGINE_URL` at your
+own mirror — the hash check is what makes an untrusted mirror safe.
 
 **On X11, run that with `XMODIFIERS=@im=none`** if it segfaults — the engine, not your build. Details
 two paragraphs down.
@@ -269,19 +269,17 @@ SCITER_SDK=/path/to/sciter-js-sdk just extension-run   # runs it under scapp
 On failure it returns the full candidate list, so print it — that is the fastest way to see what went
 wrong.
 
-| Platform | File | In the tree | Green in CI | Looked at by a human |
+| Platform | File | Fetched into | Green in CI | Looked at by a human |
 | --- | --- | --- | --- | --- |
-| Linux x64 | `libsciter.so` | yes, `lib/linux/x64/` | yes | yes |
-| Windows x64 | `sciter.dll` | yes, `lib/windows/x64/` | yes | yes, with caveats — see below |
-| macOS (universal) | `libsciter.dylib` | no — `just fetch-engine` puts it in `lib/macosx/` | see below | **no** |
+| Linux x64 | `libsciter.so` | `lib/linux/x64/` | yes | yes |
+| Windows x64 | `sciter.dll` | `lib/windows/x64/` | yes | yes, with caveats — see below |
+| macOS (universal) | `libsciter.dylib` | `lib/macosx/` | see below | **no** |
 
-**Why macOS is fetched and the other two are committed.** The macOS build is a single universal file,
-x86_64 and arm64, so it is 50 MB where Linux is 24 and Windows 19 — and half of it is dead weight on
-whichever machine you are on. `just fetch-engine` downloads it and verifies it against the SHA-256 in
-[`external/sciter/VENDORED.md`](external/sciter/VENDORED.md), and `ensure-engine` runs before every
-recipe that builds or runs anything, so on a Mac the first `just example hello_window` fetches it for
-you. The other two follow at the next engine bump — [`docs/UPGRADING.md`](docs/UPGRADING.md) is the
-decision and the reasoning.
+**No engine is in the tree**, on any platform. Each is pinned by SHA-256 in
+[`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) and installed by `just fetch-engine`, which
+`ensure-engine` runs for you before the first build. macOS has no architecture subdirectory because that
+build is one universal file carrying both x86_64 and arm64 — 50 MB, and `lipo -thin arm64` halves it in
+an application's own bundle.
 
 **The last column is not padding.** CI can prove the engine loads, that the ISciterAPI table is the one
 these bindings were generated against, that the suite passes and that nothing leaks. It cannot tell you

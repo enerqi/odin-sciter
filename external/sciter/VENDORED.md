@@ -5,20 +5,19 @@
 | Path | Contents |
 | --- | --- |
 | `external/sciter/include/` | The SDK's C/C++ headers, unmodified |
-| `lib/linux/x64/libsciter.so` | The Linux x64 engine |
-| `lib/windows/x64/sciter.dll` | The Windows x64 engine |
-| `lib/macosx/libsciter.dylib` | The macOS engine - **fetched, not committed**; see below |
+| `lib/linux/x64/libsciter.so` | The Linux x64 engine - **fetched, not committed** |
+| `lib/windows/x64/sciter.dll` | The Windows x64 engine - **fetched, not committed** |
+| `lib/macosx/libsciter.dylib` | The macOS engine - **fetched, not committed**; one universal file |
 
-**macOS is the exception and the exception has a reason.** The macOS build is one *universal* file,
-x86_64 and arm64, so it is 50 MB against Linux's 24 and Windows' 19 - and roughly half of it is dead
-weight on whichever machine is reading it. That is more than the "clone it and run an example" property
-is worth for one platform, so `lib/macosx/libsciter.dylib` is gitignored and `just fetch-engine`
-downloads it, verified against the hash below. `ensure-engine` runs before every recipe that builds or
-runs anything, so a Mac checkout still needs no step a reader has to remember. The hash table below is
-unchanged by this: the pin is on the *file*, and it is what the fetch verifies against.
+**Only the headers are actually in this repository.** All three engines are gitignored and installed by
+`just fetch-engine`, verified against the hashes below; `ensure-engine` runs before every recipe that
+builds or runs anything, so a checkout needs no step a reader has to remember. The three are 90 MB
+between them, a binary does not delta-compress, and every engine bump would therefore have added ~40 MB
+to history permanently - see [`docs/UPGRADING.md`](../../docs/UPGRADING.md) for the arithmetic, the
+history rewrite that removed the copies already committed, and why not git-lfs.
 
-The other two stay committed until the next engine bump, at which point they follow - see
-[`docs/UPGRADING.md`](../../docs/UPGRADING.md).
+Nothing about the pin changes: it was always on the *file* rather than on the tag, and the hash table
+below is what the fetch verifies against.
 
 ## Version
 
@@ -35,11 +34,14 @@ Verified against the shipped library rather than assumed - `just example api_map
 
 ### Binaries
 
-| File | In git | Size | SHA-256 |
-| --- | --- | --- | --- |
-| `lib/linux/x64/libsciter.so` | yes | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
-| `lib/windows/x64/sciter.dll` | yes | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
-| `lib/macosx/libsciter.dylib` | **no - fetched** | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
+All three are fetched rather than committed, so this table *is* the engine as far as this repository is
+concerned - it is the only record of which bytes these bindings were verified against.
+
+| File | Size | SHA-256 |
+| --- | --- | --- |
+| `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
+| `lib/windows/x64/sciter.dll` | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
+| `lib/macosx/libsciter.dylib` | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
 
 The Windows entry is the plain `bin/windows/x64/` build, **not** `bin/windows.d2d/` (a Direct2D variant)
 or `bin/windows.xp/`.
@@ -75,11 +77,17 @@ Three of those have consequences:
   have meant a hash per architecture and a Mac to produce them, for a file this repository would then
   be shipping rather than pinning.
 
-Recorded so a binary obtained out of band can be checked against the one these bindings were verified
-against, and because the download-instead-of-vendor step now exists and verifies against exactly this:
-`just fetch-engine` fetches it, `just fetch-engine --check` verifies what is on disk (and runs in CI),
-and `just ensure-engine` is a dependency of every build recipe. Regenerate with
-`sha256sum lib/linux/x64/libsciter.so`.
+`just fetch-engine` installs against these hashes, `just fetch-engine --check` verifies what is already
+on disk, `just ensure-engine` is a dependency of every build recipe, and every CI job fetches as its
+first real step. A binary obtained out of band - a mirror, a colleague, an SDK checkout - can be checked
+against them too. Regenerate with `sha256sum lib/linux/x64/libsciter.so`.
+
+**These hashes are now load-bearing in a way they were not while the binaries were committed.** Upstream
+withdrawing or moving a tag used to be survivable, because the bytes were in git history; they are not
+any more. `fetch-engine.py` therefore takes `SCITER_ENGINE_URL` (a complete URL for one file) and
+`SCITER_ENGINE_BASE` (an alternative base), both verified against the same hash, so a mirror can be
+untrusted without being unsafe - the worst a bad one can do is fail the check. Uploading the three
+binaries as release assets is a step of cutting a release for exactly this reason.
 
 The justfile's `engine_sha256` is per-platform for the same reason this table has a row per file: the
 pin is on the binary, not on the tag. One shared hash made `just fetch-engine` on Windows compare
