@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Download the pinned Sciter engine into lib/, verified against its SHA-256.
+
+    fetch-engine.py <tag> <sha256> <relative-path> [--check] [--force]
+
+`just fetch-engine` passes the first three from the `engine_*` variables in the justfile, which are the
+single place the pin lives. The relative path is the same under both roots - `bin/<rel>` upstream,
+`lib/<rel>` here.
+
+**Plain `python3` rather than the justfile's `uv run` interpreter, deliberately.** This runs in CI and on
+a contributor's first build, where the fewest dependencies wins: a `[script]` recipe fails on a runner
+with no uv installed with `No such file or directory (os error 2)`, which is what happened the first
+time this was wired up. `.github/scripts/check-ownership.py` is invoked the same way for the same
+reason; the uv interpreter is for the developer-machine recipes that can assume it.
+
+**Why the hash and not the size.** The upstream tag `6.0.4.9` serves a `libsciter.so` of exactly the
+same 25 015 296 bytes as `6.0.4.9-bis`, with a different SHA-256 - measured, by fetching both. A check
+on the length would install the wrong engine and report success.
+"""
+
+import hashlib
+import os
+import sys
+import tempfile
+import urllib.request
+
+BASE = "https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw"
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def main(argv):
+    if len(argv) < 3:
+        sys.exit(__doc__)
+
+    tag, want, rel = argv[0], argv[1], argv[2]
+    flags = argv[3:]
+    check_only, force = "--check" in flags, "--force" in flags
+
+    dest = os.path.join("lib", *rel.split("/"))
+    url = f"{BASE}/{tag}/bin/{rel}"
+
+    # Only Linux is vendored and verified today. Refusing outright would block the Windows and macOS
+    # bring-up, which is the first thing that will use this, so an unrecorded platform installs and says
+    # loudly what to write down.
+    unverified = not want or want.startswith("TODO")
+
+    if os.path.exists(dest) and not force:
+        got = digest(dest)
+        if unverified:
+            print(f"{dest}: present, sha256 {got}")
+            print("  no recorded hash for this platform - add it to external/sciter/VENDORED.md")
+        elif got == want:
+            print(f"{dest}: present and verified")
+        else:
+            sys.exit(
+                f"{dest}: sha256 {got}\n"
+                f"  expected {want}\n"
+                "  this is not the pinned engine - `just fetch-engine --force` replaces it"
+            )
+        return
+
+    if check_only:
+        sys.exit(f"{dest}: missing - run `just fetch-engine`")
+
+    print(f"fetching {url}")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")
+    os.close(fd)
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        got = digest(tmp)
+        if unverified:
+            print(f"  no recorded SHA-256 for this platform. {os.path.getsize(tmp)} bytes,")
+            print(f"  sha256 {got} - record it in external/sciter/VENDORED.md before trusting it.")
+        elif got != want:
+            sys.exit(
+                f"  sha256 {got}\n"
+                f"  expected {want}\n"
+                "  refusing to install: this tag serves same-sized binaries that are not the same file"
+            )
+        os.replace(tmp, dest)
+        # No chmod +x. `dlopen` does not need it, the committed copy is 0644, and setting the bit makes
+        # `git status` report a modification on a file whose bytes are identical - which is exactly the
+        # "the engine changed?!" scare this script exists to prevent.
+        os.chmod(dest, 0o644)
+        print(f"  installed {dest}")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

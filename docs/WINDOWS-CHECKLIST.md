@@ -136,6 +136,12 @@ Budget for that rather than expecting a quick green.
 `examples/windowless_gl.odin` is the one deliberate exception: it gates on `ODIN_OS != .Linux` and skips
 everywhere else, because it creates its GL context with EGL.
 
+**`just fetch-engine` on Windows runs `python`, not `python3`.** The Windows recipe variant uses the
+launcher name that actually exists there; GitHub's `windows-2022` image ships Python on PATH, and a
+developer box may not. If it fails with "python is not recognized", that is the reason, and the engine
+is still committed today so nothing is blocked by it - `just ensure-engine` only fetches when the file
+is missing.
+
 **Recipes with a bash shebang.** `pack`, `extension-run`, `check` and a few others are `#!/usr/bin/env
 bash` scripts. `just` runs those through the shebang rather than `windows-shell`, so they need bash in
 `PATH` — Git for Windows provides it. If they fail with something like "The system cannot find the file

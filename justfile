@@ -163,69 +163,28 @@ lint *args: ensure-engine
 #
 # Today `lib/` is committed, so this is a no-op on a fresh clone and the recipe exists to make the
 # switch a one-line change rather than a project. From the next engine version the binary stops being
-# committed, and then this is the one command a checkout needs before it can build - which is why every
-# entry point below depends on `ensure-engine` rather than leaving it to a README step nobody reads.
+# committed, and then this is what a checkout needs before it can build - which is why every entry point
+# below depends on `ensure-engine` rather than leaving it to a README step nobody reads.
+#
+# **`python3` rather than the `[script]` interpreter at the top of this file.** `[script]` runs through
+# `uv`, which a CI runner does not have: the first version of this recipe failed on the Linux job with
+# `No such file or directory (os error 2)` before it downloaded anything. `check-ownership` uses plain
+# `python3` for the same reason - the uv interpreter is for recipes that can assume a developer machine,
+# and anything CI or a first build depends on cannot.
 #
 # `--check` verifies what is already on disk, which is the useful mode in CI and after an upgrade.
 # `--force` re-fetches over a file that is already there.
 # ---
 # download the pinned engine into lib/, verified against its SHA-256
-[script]
+[unix]
 fetch-engine *args:
-	import hashlib, os, sys, tempfile, urllib.request
+	python3 .github/scripts/fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
 
-	tag, want, rel = "{{engine_tag}}", "{{engine_sha256}}", "{{engine_rel}}"
-	dest = os.path.join("lib", *rel.split("/"))
-	url = f"https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw/{tag}/bin/{rel}"
-	argv = "{{args}}".split()
-	check_only, force = "--check" in argv, "--force" in argv
-
-	def digest(path):
-		h = hashlib.sha256()
-		with open(path, "rb") as f:
-			for chunk in iter(lambda: f.read(1 << 20), b""):
-				h.update(chunk)
-		return h.hexdigest()
-
-	# No recorded hash for this platform yet - only Linux is vendored and verified. Refusing here would
-	# block the Windows bring-up, which is the first thing that will use this, so it installs and says
-	# loudly what to record.
-	unverified = want == "" or want.startswith("TODO")
-
-	if os.path.exists(dest) and not force:
-		got = digest(dest)
-		if unverified:
-			print(f"{dest}: present, sha256 {got} (no recorded hash for this platform - add it to external/sciter/VENDORED.md)")
-		elif got == want:
-			print(f"{dest}: present and verified")
-		else:
-			sys.exit(f"{dest}: sha256 {got}\n  expected {want}\n  this is not the pinned engine - `just fetch-engine --force` replaces it")
-		sys.exit(0)
-
-	if check_only:
-		sys.exit(f"{dest}: missing - run `just fetch-engine`")
-
-	print(f"fetching {url}")
-	os.makedirs(os.path.dirname(dest), exist_ok=True)
-	fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")
-	os.close(fd)
-	try:
-		urllib.request.urlretrieve(url, tmp)
-		got = digest(tmp)
-		if unverified:
-			print(f"  no recorded SHA-256 for this platform. Downloaded {os.path.getsize(tmp)} bytes,")
-			print(f"  sha256 {got} - record it in external/sciter/VENDORED.md before trusting it.")
-		elif got != want:
-			sys.exit(f"  sha256 {got}\n  expected {want}\n  refusing to install: the tag serves same-sized binaries that are not the same file")
-		os.replace(tmp, dest)
-		# Deliberately no chmod +x. `dlopen` does not need it, the committed copy is 0644, and setting
-		# the bit makes `git status` report a mode change on a file whose bytes are identical - which is
-		# exactly the sort of "the engine changed?!" scare this recipe exists to avoid.
-		os.chmod(dest, 0o644)
-		print(f"  installed {dest}")
-	finally:
-		if os.path.exists(tmp):
-			os.remove(tmp)
+# `python` rather than `python3`: the launcher on Windows is `python.exe` (or the `py` launcher), and
+# `python3` exists only if someone made it. GitHub's windows-2022 image ships Python on PATH.
+[windows]
+fetch-engine *args:
+	python .github\scripts\fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
 
 # Fetch only if it is not there. A stat, not a hash - this runs before every build, and `just
 # fetch-engine --check` is the one that verifies.

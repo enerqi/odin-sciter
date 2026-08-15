@@ -202,6 +202,12 @@ against.
   It also caught something worth knowing: the upstream `6.0.4.9` tag serves a `libsciter.so` of
   **exactly** the same 25 015 296 bytes as `6.0.4.9-bis` with a different SHA-256. A fetch that checked
   the size - or a human comparing `ls -l` - would install the wrong engine and report success.
+
+  The logic lives in `.github/scripts/fetch-engine.py` and runs under plain `python3`, **not** the
+  justfile's `uv` interpreter: a `[script]` recipe fails on a runner with no uv (`No such file or
+  directory (os error 2)`), which is how the first version of it failed in CI. Anything CI or a first
+  build depends on cannot assume a developer machine - `check-ownership` already worked this way, and
+  the three remaining uv recipes are all editor setup.
 - **`sciter_app/affinity.odin` - rule 1 is checked now, not just written down.** Every other rule in
   `docs/rules.md` had a gate; thread affinity had a paragraph, and it is the rule whose breach is
   hardest to diagnose - engine-state corruption that surfaces later, somewhere else, with nothing
