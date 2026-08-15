@@ -1,0 +1,110 @@
+Odin: don't stop a test for an exception nobody meant as fatal (Windows)
+
+`core/testing/signal_handler_windows.odin` registers a vectored exception handler:
+
+    win32.AddVectoredExceptionHandler(0, stop_test_callback)
+
+A vectored handler sees *every* first-chance exception in the process, and
+`stop_test_callback` acts on all of them without looking at the code. That is
+wrong for any exception that is about to be handled by whoever raised it, and
+it is wrong twice over: the test did not fail, and execution continues past the
+exception - so the runner then waits for a test that never stops and the whole
+binary hangs. In CI that is the job timeout rather than a failed test.
+
+Two sources of benign exceptions, both hit while writing Odin bindings for a
+C++ library (Sciter):
+
+  0x4001000A  DBG_PRINTEXCEPTION_WIDE_C - how Windows implements
+              OutputDebugStringW. Any library that logs a diagnostic raises it.
+              Measured: one CSS warning from the engine killed the test that
+              provoked it and hung the binary.
+  0xE06D7363  MSVC's C++ exception marker. A C++ library that throws and
+              catches internally - ordinary control flow - raises one per throw.
+
+Reproduction with no third-party library at all:
+
+    foreign import k32 "system:Kernel32.lib"
+    @(default_calling_convention="system")
+    foreign k32 { OutputDebugStringW :: proc(s: [^]u16) --- }
+
+    MSG := [?]u16{'z','z',0}
+
+    @(test)
+    on_the_test_thread :: proc(t: ^testing.T) {
+        OutputDebugStringW(&MSG[0])          // runner hangs after this
+    }
+
+    @(test)
+    on_a_spawned_thread :: proc(t: ^testing.T) {
+        th := thread.create_and_start(proc() { OutputDebugStringW(&MSG[0]) })
+        thread.join(th); thread.destroy(th)  // fine - local_test_index_set is
+    }                                        // thread_local and false there
+
+The fix is one early return. The allowlist below is the set of codes that
+genuinely mean "this thread cannot continue"; it is deliberately a superset of
+the codes `_should_stop_test` classifies, so a fatal-but-unclassified code still
+stops the test and is still reported as `.Unknown`.
+
+Verified on Windows 11, Odin dev-2026-08-nightly:
+
+  - both tests above pass, and the runner exits 0
+  - a deliberate null dereference is still caught and still reported as
+    `Segmentation_Fault`
+  - in the binding this came from: one example went from hanging to 11/11
+    green, another from a hang to 38/38 green with a `when ODIN_OS != .Windows`
+    guard removed
+
+--- a/core/testing/signal_handler_windows.odin
++++ b/core/testing/signal_handler_windows.odin
+@@ -65,8 +65,51 @@ stop_runner_callback :: proc "system" (ctrl_type: win32.DWORD) -> win32.BOOL  {
+ 	return false
+ }
+
++// Is this an exception the test runner should stop a test for?
++//
++// A vectored exception handler sees *every* first-chance exception in the process, including ones that
++// are entirely normal and are about to be handled by whoever raised them. Stopping a test for those is
++// wrong twice over: the test did not fail, and execution continues past the exception - so the runner
++// then waits for a test that never stops, and the whole binary hangs.
++//
++// Two common sources, both measured against a Sciter binding:
++//
++//	0x4001000A  DBG_PRINTEXCEPTION_WIDE_C - how Windows implements OutputDebugStringW. Any library
++//	            that logs a diagnostic raises this.
++//	0xE06D7363  MSVC's C++ exception marker. A C++ library that throws and catches internally - which
++//	            is ordinary control flow - raises one of these per throw.
++//
++// So this allowlist is the set of codes that genuinely mean "this thread cannot continue". It is a
++// superset of the codes `_should_stop_test` classifies below, because a code that is fatal but
++// unclassified should still stop the test and be reported as `.Unknown`.
++@(private = "file")
++is_fatal_exception :: proc "contextless" (code: win32.DWORD) -> bool {
++	switch code {
++	case win32.EXCEPTION_ACCESS_VIOLATION,
++	     win32.EXCEPTION_ARRAY_BOUNDS_EXCEEDED,
++	     win32.EXCEPTION_DATATYPE_MISALIGNMENT,
++	     win32.EXCEPTION_ILLEGAL_INSTRUCTION,
++	     win32.EXCEPTION_IN_PAGE_ERROR,
++	     win32.EXCEPTION_INVALID_DISPOSITION,
++	     win32.EXCEPTION_NONCONTINUABLE_EXCEPTION,
++	     win32.EXCEPTION_PRIV_INSTRUCTION,
++	     win32.EXCEPTION_STACK_OVERFLOW,
++	     win32.EXCEPTION_BREAKPOINT,
++	     win32.EXCEPTION_SINGLE_STEP:
++		return true
++	case win32.EXCEPTION_FLT_DENORMAL_OPERAND ..= win32.EXCEPTION_INT_OVERFLOW:
++		return true
++	}
++	return false
++}
++
+ @(private)
+ stop_test_callback :: proc "system" (info: ^win32.EXCEPTION_POINTERS) -> win32.LONG {
++	if !is_fatal_exception(info.ExceptionRecord.ExceptionCode) {
++		// Somebody else's exception, and they are about to handle it. Not ours to act on.
++		return win32.EXCEPTION_CONTINUE_SEARCH
++	}
++
+ 	if !local_test_index_set {
+ 		// We're a thread created by a test thread.
+ 		//
