@@ -126,15 +126,31 @@ runs:
           done
         fi
 
+    # **Every path written to GITHUB_PATH has to be native, and this step runs in bash.** On a Windows
+    # runner `$HOME` in Git bash is the MSYS spelling - `/c/Users/runneradmin` - so a bare
+    # `echo "$TOOLS/just" >> "$GITHUB_PATH"` publishes a path that bash can use and *nothing else can*.
+    # Every later step then has to be `shell: bash` or it fails with
+    #
+    #     The term 'just' is not recognized as a name of a cmdlet, function, script file, ...
+    #
+    # which reads as a failed install rather than a mistranslated path. `cygpath -w` is the conversion,
+    # and Git for Windows ships it; `add_path` falls through to the plain path everywhere else.
     - name: Add to PATH
       shell: bash
       env:
         TOOLS: ${{ steps.plat.outputs.tools }}
       run: |
         set -euo pipefail
-        echo "$TOOLS/odin" >> "$GITHUB_PATH"
-        echo "$TOOLS/just" >> "$GITHUB_PATH"
-        if [ '${{ inputs.odinfmt }}' = 'true' ]; then echo "$TOOLS/ols" >> "$GITHUB_PATH"; fi
+        add_path() {
+          if [ "$RUNNER_OS" = "Windows" ] && command -v cygpath >/dev/null 2>&1; then
+            cygpath -w "$1" >> "$GITHUB_PATH"
+          else
+            echo "$1" >> "$GITHUB_PATH"
+          fi
+        }
+        add_path "$TOOLS/odin"
+        add_path "$TOOLS/just"
+        if [ '${{ inputs.odinfmt }}' = 'true' ]; then add_path "$TOOLS/ols"; fi
 
     # uv is what `set script-interpreter` in the justfile runs, so every `[script]` recipe - `check`,
     # `lint`, `cross-check`, `example-tests` and the rest - needs it. It used to be opt-in for `bindgen`
@@ -159,7 +175,13 @@ runs:
     - name: Add uv to PATH
       if: inputs.uv == 'true'
       shell: bash
-      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" = "Windows" ] && command -v cygpath >/dev/null 2>&1; then
+          cygpath -w "$HOME/.local/bin" >> "$GITHUB_PATH"
+        else
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        fi
 
     - name: Report versions
       shell: bash
@@ -169,3 +191,16 @@ runs:
         just --version
         if [ '${{ inputs.odinfmt }}' = 'true' ]; then command -v odinfmt; fi
         if [ '${{ inputs.uv }}' = 'true' ]; then uv --version; fi
+
+    # **The step above proves nothing about the Windows jobs, and that is why this one exists.** It runs
+    # in bash, where an MSYS-spelled PATH entry resolves - so it stayed green through exactly the bug
+    # this pair now guards against, while every `just` step in the Windows job failed. The jobs run their
+    # recipes in the default shell (pwsh on Windows), so that is the shell the toolchain has to be
+    # reachable from.
+    - name: Report versions (default shell)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        odin version
+        just --version
+        if ('${{ inputs.uv }}' -eq 'true') { uv --version }

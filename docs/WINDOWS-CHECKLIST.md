@@ -124,54 +124,71 @@ That one change took the suite from 11 failing examples to 7, and it is recorded
 
 ### The state of the suite, as of the last full run
 
-On a **stock** Odin toolchain, which is what CI uses:
+**Green**, on a stock Odin toolchain, which is what CI uses. Every example, every test.
 
-```
-FAILED: call_odin_from_js(exit 1) request_loader(exit 1) sqlite_extension(exit 1)
-```
+That is down from eleven failing examples and four distinct causes at the start of the bring-up, all
+four now closed:
 
-Three examples, **one cause**, and all three **pass every test they contain** - they fail only on the
-exit code, from the teardown fault in section 1. Everything else in the suite is green.
+| cause | outcome |
+| --- | --- |
+| no debug-output handler installed (section 0) | fixed - every test harness installs one |
+| a text-free document faults the engine at exit (section 1) | root-caused, worked around in three documents |
+| Odin's runner stops a test for any exception (section 1b) | patch written and verified; four tests guarded meanwhile |
+| behavioural differences (section 3) | characterization gaps, not faults - measured and recorded |
 
-That is down from eleven failing examples and four distinct causes at the start of the bring-up. The
-other three causes are closed: the missing debug-output handler (section 0), the runner's exception
-filtering (section 1b, patched and guarded), and a set of behavioural differences that turned out to be
-characterization gaps rather than faults (section 3).
+Two of those are still live bugs in other people's code - the engine's teardown fault and Odin's
+exception filtering - and both have reproductions written down here.
 
-### 1. An access violation inside the engine at process teardown
+### 1. A text-free document faults the engine at process teardown — FOUND, worked around
 
-`call_odin_from_js`, `request_loader` and `sqlite_extension` pass **every** test and then fault, so the
-tests are green and the exit code is not. Located precisely:
+**A window whose document never renders any text faults inside sciter.dll when the process exits.** An
+unhandled null dereference at `this+0x38`, deep in unexported engine code:
 
 ```
 AV on thread <main> at sciter.dll+0x3db6b, reading 0x38
 ```
 
-A null-pointer dereference at `this+0x38`, inside the engine, in unexported code (0x175c7 past the
-nearest export, so there is no name to give). What is established about it:
+The reproduction is fifteen lines and needs nothing but a window and a document:
 
-- it needs at least one test to have run - a binary whose test filter matches nothing exits cleanly
-- calling `sciter_app.shutdown()` first does **not** prevent it
-- `@(fini)` never runs; the fault is earlier, in the test runner's deferred cleanup
-- **the faulting thread is the main thread, and the engine was initialised on a worker thread.** The
-  test runner runs tests on a pool thread, so `init` and `create_window` happen there, and the main
-  thread then tears the process down. Sciter is thread-affine - every ISciterAPI call must come from the
-  thread that ran `SCITER_APP_INIT` - and process teardown is a call it never agreed to.
-
-That last point is the likely root cause and it is a rule applications need, not only a test artifact.
-Linux does not show it because Odin's test runner leaves through `os.exit`, which is a direct
-`exit_group` syscall: no DLL detach, no destructors, nothing runs. Windows `ExitProcess` runs the
-engine's detach path from a thread that never initialised it.
-
-Reproduce with the vectored-exception-handler probe described in the history of this file, or simply:
-
-```
-just example-test call_odin_from_js
+```odin
+@(test)
+zz_min :: proc(t: ^testing.T) {
+	sciter_app.load_engine()
+	w, _ := sciter_app.create_window({width = 400, height = 300})
+	sciter_app.load_html(w, `<html><body><p></p></body></html>`)   // faults at exit
+}                                                                  // `<body>hello</body>` does not
 ```
 
-This one survived the debug-output fix in section 0, so it is not the same thing - though the null
-dereference at `this+0x38` is the shape a diagnostic path with no handler would have, and it is worth
-re-testing once the engine is next upgraded.
+Bisected down to exactly that. What does and does not matter:
+
+| | |
+| --- | --- |
+| `create_window` + `load_html` | **required** - either alone is clean |
+| `sciter_app.init()` | irrelevant - faults with and without |
+| assets, asset classes, `set_global_asset`, native functors | irrelevant - all ruled out individually |
+| `show`, `hide`, `close`, pumping | irrelevant |
+| `sciter_app.shutdown()` first | does not prevent it |
+| **any text in the document** | **the whole difference** |
+
+`<html><body>hello</body></html>` is clean; `<html><body><p></p></body></html>`, `<html></html>` and a
+document containing only a `<script>` all fault. Deterministic, 3 runs out of 3. The guess is a
+font/text-layout resource created lazily on first layout and released unconditionally at teardown, but
+that is inference - the engine is closed source and the faulting code is 0x175c7 past the nearest
+export.
+
+**This is why exactly three examples failed the Windows suite**, and why it looked mysterious: they were
+the three whose *test* documents render nothing. `call_odin_from_js` used `<p id="out"></p>`,
+`request_loader` an `<img>` on its own, `sqlite_extension` a bare `<script>`. Every other example's
+document has visible text, which is why realistic documents never showed it.
+
+The workaround is one character: each of those three documents now ends `<p>.</p>`, with a comment
+saying why. **Do not tidy those away.** The engine bug is real and unfixed - anything here that loads a
+text-free document into a window will hit it again.
+
+Earlier notes on this file blamed thread affinity, because the engine is initialised on the test
+runner's pool thread and the fault surfaces on the main thread. That was wrong: the thread arrangement
+is incidental. Linux does not show it because Odin's test runner leaves through `os.exit`, a direct
+`exit_group` syscall - no DLL detach, no destructors, nothing runs.
 
 ### 1b. Odin's test runner cannot host a library that throws C++ exceptions
 

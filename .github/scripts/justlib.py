@@ -78,15 +78,17 @@ def run_with_timeout(cmd: list[str], limit: int) -> int:
 	test executable. Killing `just` leaves that executable running, still holding the inherited stdout
 	pipe, so the caller blocks on a read that never ends - the ceiling fires and the run hangs anyway.
 	`taskkill /T` walks the tree; on POSIX the same job is done by a process group.
+
 	"""
+	print(" ".join(cmd), flush=True)
+
 	if limit <= 0:
-		print(" ".join(cmd), flush=True)
 		return subprocess.run(cmd).returncode
 
-	print(" ".join(cmd), flush=True)
 	kwargs = {}
 	if not is_windows():
 		kwargs["start_new_session"] = True
+
 	proc = subprocess.Popen(cmd, **kwargs)
 	try:
 		return proc.wait(timeout=limit)

@@ -202,6 +202,13 @@ jobs:
             echo "::notice::lib/windows/x64/sciter.dll is not vendored - skipping the runtime steps. Step 1 of docs/WINDOWS-CHECKLIST.md is what turns this job on."
           fi
 
+      # The same check the Linux job runs, and it means something here now that `engine_sha256` is
+      # per-platform: it used to be one value, so fetching on Windows compared sciter.dll against the
+      # Linux .so's digest and refused to install.
+      - name: Verify the pinned engine
+        if: steps.engine.outputs.have == 'true'
+        run: just fetch-engine --check
+
       # Checklist step 2, now a real gate rather than a report: the null list and the symbol names were
       # measured on a Windows machine on 2026-08-15 and are pinned in check-api-map.py. The prediction
       # that lived here - "sciter.dll exports one symbol, so containment is all that can be asserted" -
@@ -224,9 +231,16 @@ jobs:
       # Confirmed on a real machine: the windowed tests run. The remaining open items for this job are in
       # docs/WINDOWS-CHECKLIST.md rather than in this comment.
       #
-      # EXAMPLE_TEST_TIMEOUT for the same reason as the Linux job, and with a Windows-specific caveat
-      # worth knowing: `timeout` kills `just`, not the test executable `odin test` spawned underneath it,
-      # so a genuinely wedged example can outlive its ceiling. The job timeout is the real backstop.
+      # EXAMPLE_TEST_TIMEOUT for the same reason as the Linux job, and it matters more here: a test that
+      # provokes a C++ throw from the engine can leave the runner waiting forever, which is why several
+      # tests carry a `when ODIN_OS != .Windows` guard - see docs/odin-test-runner-windows.patch. The
+      # ceiling kills the whole process tree (`run_with_timeout` in justlib.py), not just `just`, which
+      # the GNU `timeout` this replaced did not.
+      #
+      # This step is green. It was not, for three examples, until the cause was found: a window whose
+      # document never renders any text faults inside sciter.dll at process exit, and those three had
+      # text-free test documents. Section 1 of docs/WINDOWS-CHECKLIST.md has the reproduction and the
+      # one-character workaround, which lives in the documents themselves.
       - name: Run the example tests
         if: steps.engine.outputs.have == 'true'
         timeout-minutes: 45

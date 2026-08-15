@@ -425,7 +425,16 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 }
 
 // A document with no script of its own: everything reachable in these tests was put there from Odin.
-TEST_DOC :: `<html><body><p id="out"></p></body></html>`
+//
+// **The `.` is load-bearing on Windows, and it is not about this example.** A window whose document
+// never renders any text faults inside sciter.dll at process teardown - an unhandled null dereference,
+// measured down to a fifteen-line reproduction, and the reason this example, `request_loader` and
+// `sqlite_extension` were the only three failing the Windows suite. All three had text-free documents:
+// an empty `<p>`, an `<img>` on its own, a bare `<script>`. Give the document one character to lay out
+// and the fault goes away.
+//
+// See section 1 of docs/WINDOWS-CHECKLIST.md. Do not "tidy" this away.
+TEST_DOC :: `<html><body><p id="out"></p><p>.</p></body></html>`
 
 // Publishes the example's two functors into the document that is loaded now. Globals belong to the
 // document, so this has to happen after every load - which is the rule the last test here pins.

@@ -271,13 +271,14 @@ wrong.
 | Windows x64 | `sciter.dll` | yes, `lib/windows/x64/` | yes, with caveats — see below |
 | macOS | `libsciter.dylib` | not yet | no |
 
-Windows x64 was brought up on a real desktop on 2026-08-15: the whole example suite runs, the ISciterAPI
-table is verified and gated in CI, and the leak sweep is clean. Two things are open and both are
-recorded in [`docs/WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md), which is now the measurement
-record rather than a to-do list:
+Windows x64 was brought up on a real desktop on 2026-08-15: the whole example suite passes, the
+ISciterAPI table is verified and gated in CI, and the leak sweep is clean.
+[`docs/WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) is the measurement record. Two bugs found along
+the way are in other people's code, and both have reproductions written down there:
 
-- three examples pass every test they contain and then fault inside the engine at process teardown, so
-  their exit code is non-zero while their tests are green
+- **the engine faults at process exit if a window's document never renders any text** — an unhandled
+  null dereference, reproduced in fifteen lines. Worked around by giving three test documents one
+  character to lay out
 - Odin's Windows test runner stops a test for *any* first-chance exception, and Sciter throws C++
   exceptions in ordinary operation. A patch is written, verified and ready to submit upstream:
   [`docs/odin-test-runner-windows.patch`](docs/odin-test-runner-windows.patch)

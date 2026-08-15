@@ -981,6 +981,10 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	if err != nil {return}
 
+	// **The trailing `<p>.</p>` is load-bearing on Windows**, and has nothing to do with SQLite: a
+	// document that never renders any text faults inside sciter.dll at process teardown. This one was a
+	// bare `<script>`. See the note on `TEST_DOC` in call_odin_from_js.odin, and section 1 of
+	// docs/WINDOWS-CHECKLIST.md for the reproduction.
 	LOADER :: `<html><body><script type="module">
 	  import * as sciter from "@sciter";
 	  try {
@@ -996,7 +1000,7 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 	  } catch (e) {
 	    globalThis.answer = "FAILED " + e;
 	  }
-	</script></body></html>`
+	</script><p>.</p></body></html>`
 
 	testing.expect_value(t, sciter_app.load_html(view.window, LOADER, "about:blank"), nil)
 	for _ in 0 ..< 20 {
