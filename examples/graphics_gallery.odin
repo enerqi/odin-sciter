@@ -2291,3 +2291,79 @@ test_snapshotting_nothing_is_a_bad_parameter :: proc(t: ^testing.T) {
 testing_ignore :: proc(err: Error) {
 	_ = err
 }
+
+// The graphics half of the scoped constructors. Wrapping an image, a path, a text object or a
+// `Graphics` for script adds a reference to the Value - the object keeps its own, which is why the
+// `release_*` calls below are still needed and are not what the scope gives back.
+@(test)
+test_the_scoped_graphics_wraps_give_back_the_values_reference_only :: proc(t: ^testing.T) {
+	el, ok := styled_element(t)
+	if !ok {return}
+
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(true)
+	before := sciter_app.outstanding_resources()
+
+	image, ierr := sciter_app.create_image(8, 8)
+	testing.expect_value(t, ierr, nil)
+	path, perr := sciter_app.create_path()
+	testing.expect_value(t, perr, nil)
+	text, terr := sciter_app.create_text(el, "wrapped")
+	testing.expect_value(t, terr, nil)
+
+	{
+		as_image, e1 := sciter_app.scoped_value_from_image(image)
+		testing.expect_value(t, e1, nil)
+		kind, _ := sciter_app.value_type(&as_image)
+		testing.expect(t, kind != .UNDEFINED)
+
+		_, e2 := sciter_app.scoped_value_from_path(path)
+		testing.expect_value(t, e2, nil)
+		_, e3 := sciter_app.scoped_value_from_text(text)
+		testing.expect_value(t, e3, nil)
+	}
+
+	// The Values are gone and all three objects are still usable, which is the claim the wrap makes.
+	w, h, _, serr := sciter_app.image_size(image)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, w, 8)
+	testing.expect_value(t, h, 8)
+	testing.expect_value(t, sciter_app.path_move_to(path, 1, 1), nil)
+	_, merr := sciter_app.text_metrics(text)
+	testing.expect_value(t, merr, nil)
+
+	testing.expect_value(t, sciter_app.release_text(text), nil)
+	testing.expect_value(t, sciter_app.release_path(path), nil)
+	testing.expect_value(t, sciter_app.release_image(image), nil)
+
+	after := sciter_app.outstanding_resources()
+	testing.expect_value(t, after[.Value], before[.Value])
+}
+
+// `Graphics` only exists inside a painter, so its wrap is tested where one is: the Value is made and
+// released inside the callback, and the painter goes on drawing afterwards.
+@(test)
+test_a_graphics_can_be_wrapped_and_released_inside_the_painter :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	raw := render(16, nil, proc(gfx: Gfx, w, h: u32, user: rawptr) {
+		{
+			wrapped, err := sciter_app.scoped_value_from_graphics(gfx)
+			if err != nil {
+				return
+			}
+			kind, _ := sciter_app.value_type(&wrapped)
+			if kind == .UNDEFINED {
+				return
+			}
+		}
+		// The wrap took a reference and the scope gave it back; the Graphics is the engine's either way.
+		sciter_app.set_fill_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
+		sciter_app.draw_rect(gfx, 2, 2, 14, 14)
+		sciter_app.flush(gfx)
+	})
+	defer delete(raw)
+
+	testing.expect(t, lit(raw, 16, 8, 8), "the painter still worked after wrapping its Graphics")
+}

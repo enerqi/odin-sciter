@@ -703,6 +703,13 @@ if event.group == {} && event.params != nil {
 
 Miss it and a long-running application leaks one handler per behavior per document load.
 
+### The thread affinity guard
+
+`assert_engine_thread(loc = #caller_location)` runs the check the wrapper runs, for your own code.
+`check_thread_affinity(on = true, strict = true)` turns it off, or turns it down to counting;
+`engine_thread_id()` is the thread it armed on and `thread_affinity_violations()` the count. All four
+compile to nothing without `-debug`. See `sciter_app/affinity.odin` and [`rules.md`](./rules.md) rule 1.
+
 ### Posting work to the engine's thread
 
 `post_callback(window, wparam, lparam := 0)` is **the only call in this package that is safe from

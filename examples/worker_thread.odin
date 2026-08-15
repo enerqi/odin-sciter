@@ -697,3 +697,80 @@ test_two_workers_keep_their_own_order_and_nothing_orders_them_against_each_other
 	testing.expect_value(t, seen_one, PER_WORKER)
 	testing.expect_value(t, seen_two, PER_WORKER)
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The affinity guard
+
+@(private = "file")
+Off_Thread :: struct {
+	done: bool,
+}
+
+@(private = "file")
+call_from_the_wrong_thread :: proc(state: ^Off_Thread) {
+	// `assert_engine_thread` runs the same check the wrapper runs, and touches nothing - which is the
+	// point of testing it this way. Calling a real DOM procedure here would prove the same thing by
+	// doing the exact damage rule 1 exists to prevent, in a process that has 380 tests left to run.
+	sciter_app.assert_engine_thread()
+	sync.atomic_store(&state.done, true)
+}
+
+// **Rule 1 is the only one of the five with a check, now.** `docs/rules.md` §1 says every call belongs
+// on the thread that first used the engine, and until this existed nothing said so at runtime: the
+// failure is engine-state corruption that surfaces later, somewhere unrelated, with nothing on the
+// stack that did anything wrong.
+//
+// The guard is on and strict by default in a debug build. A test cannot let it trap, so this switches
+// it to counting for the duration - which is what `strict = false` is for - and puts it back.
+@(test)
+test_a_call_from_another_thread_is_caught :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	when !ODIN_DEBUG {
+		// Compiled out entirely: no state, no branch, nothing to check.
+		testing.expect_value(t, sciter_app.engine_thread_id(), 0)
+		return
+	}
+
+	sciter_app.check_thread_affinity(on = true, strict = false)
+	defer sciter_app.check_thread_affinity(on = true, strict = true)
+
+	// **The wrapper arms it, not `init`** - a windowless program never calls `init`, so arming on first
+	// use is what makes the guard work there too. An ordinary DOM call is all it takes.
+	testing.expect_value(t, sciter_app.engine_thread_id(), 0) // forgotten by the call above
+	_, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	testing.expect_value(t, sciter_app.engine_thread_id(), sync.current_thread_id())
+	testing.expect_value(t, sciter_app.thread_affinity_violations(), 0)
+
+	state := new(Off_Thread)
+	defer free(state)
+	worker := thread.create_and_start_with_poly_data(state, call_from_the_wrong_thread)
+	thread.join(worker)
+	thread.destroy(worker)
+
+	testing.expect(t, sync.atomic_load(&state.done), "the worker ran")
+	testing.expect_value(t, sciter_app.thread_affinity_violations(), 1)
+
+	// And calls from the right thread still cost nothing and count nothing.
+	sciter_app.assert_engine_thread()
+	testing.expect_value(t, sciter_app.thread_affinity_violations(), 1)
+}
+
+// Turning it off is a real off switch - for a test runner told to use several threads, which is the
+// one situation where the violations are the runner's and not the application's.
+@(test)
+test_the_affinity_guard_can_be_turned_off :: proc(t: ^testing.T) {
+	when !ODIN_DEBUG {
+		return
+	}
+
+	sciter_app.check_thread_affinity(on = false)
+	defer sciter_app.check_thread_affinity(on = true, strict = true)
+
+	testing.expect_value(t, sciter_app.engine_thread_id(), 0) // forgotten, and not re-armed
+	sciter_app.assert_engine_thread() // would arm it if the check were on
+	testing.expect_value(t, sciter_app.engine_thread_id(), 0)
+	testing.expect_value(t, sciter_app.thread_affinity_violations(), 0)
+}

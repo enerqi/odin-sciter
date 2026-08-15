@@ -1070,3 +1070,41 @@ test_clearing_a_functor_argument_does_not_reach_the_script_that_passed_it :: pro
 		"1000:xxxx",
 	)
 }
+
+// The SOM half of the scoped constructors. Reading a property or calling a method on an asset hands
+// back a Value that owns a reference exactly as `value_get` does, and the `defer value_clear` on every
+// one of the tests above is the discipline these twins remove.
+@(test)
+test_the_scoped_asset_readers_release_at_the_end_of_the_scope :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+	_ = window
+
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(true)
+	before := sciter_app.outstanding_resources()
+
+	{
+		g_app.calls = 7
+		calls, gerr := sciter_app.scoped_asset_get(g_asset, "calls")
+		testing.expect_value(t, gerr, nil)
+		n, _ := sciter_app.value_to_int(&calls)
+		testing.expect_value(t, n, i32(7))
+
+		args := []sciter_app.Value{sciter_app.value_from(i32(1)), sciter_app.value_from(i32(2))}
+		defer for &v in args {sciter_app.value_clear(&v)}
+
+		sum, cerr := sciter_app.scoped_asset_call(g_asset, "sum", args)
+		testing.expect_value(t, cerr, nil)
+		total, _ := sciter_app.value_to_int(&sum)
+		testing.expect_value(t, total, i32(3))
+
+		// The failing paths hand back a zeroed Value, which the scope accepts without complaint - that
+		// is why the cleanups are written to be no-ops on failure.
+		_, missing := sciter_app.scoped_asset_get(g_asset, "nosuch")
+		testing.expect_value(t, missing, sciter_app.Error(sciter_app.Api_Error.Not_Found))
+	}
+
+	after := sciter_app.outstanding_resources()
+	testing.expect_value(t, after[.Value], before[.Value])
+}

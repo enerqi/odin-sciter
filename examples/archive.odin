@@ -265,3 +265,47 @@ test_serve_archive_ignores_other_urls :: proc(t: ^testing.T) {
 		testing.expect(t, raw.outData == nil)
 	}
 }
+
+// **An item's bytes are engine memory, not a view into the blob you passed in** - which is the first
+// thing to know about their lifetime, because "it lives as long as my blob does" is the natural guess
+// and it is wrong. Measured on 6.0.4.9: the pointer lands nowhere near `RESOURCES`, and its length is
+// the file's real length (975 bytes for `index.htm`), so the engine is handing back its own decoded
+// copy rather than a slice of what it was given.
+//
+// Two more things measured with a probe rather than asserted here, because a test that reads the memory
+// after its owner is gone is a use-after-free whether or not it happens to work, and `just
+// test_sanitize` exists to catch exactly that:
+//
+//   - after `close_archive` the bytes still read correctly, through 12 MB of heap churn and 200 further
+//     open/read/close cycles. Closing does not appear to free them on this build.
+//   - and it does not leak either: those 200 cycles cost 8 kB of RSS.
+//
+// Neither is a promise. The rule stays what the doc comment says - copy anything that has to outlive the
+// archive - because both of those are observations of one engine build, and the second one is the sort
+// of thing an upstream release note would never mention.
+@(test)
+test_an_archive_item_is_engine_memory_rather_than_a_view_of_your_blob :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	blob := RESOURCES
+	archive, err := sciter_app.open_archive(blob)
+	testing.expect_value(t, err, nil)
+	defer sciter_app.close_archive(archive)
+
+	index, found := sciter_app.archive_item(archive, "index.htm")
+	testing.expect(t, found)
+	testing.expect(t, len(index) > 0)
+
+	start := uintptr(raw_data(blob))
+	end := start + uintptr(len(blob))
+	at := uintptr(raw_data(index))
+	testing.expect(
+		t,
+		at < start || at >= end,
+		"the item points into engine memory, so the blob's lifetime is not the item's",
+	)
+
+	// And the length is the file's own, not the blob's - a slice that ran to the end of the archive
+	// would read past every other entry and still pass a `contains` test.
+	testing.expect(t, len(index) < len(blob), "an item is smaller than the archive that holds it")
+}

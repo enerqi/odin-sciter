@@ -165,3 +165,129 @@ release_scoped_element :: proc(element: Owned_Element, err: Error) {
 		unuse_element(element)
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Constructors
+//
+// The twins above wrap procedures that *read* a Value out of the engine. These wrap the ones that
+// **make** one, which leak in exactly the same way and in a shape that reads even more innocently:
+//
+//	v := sciter_app.value_from_string("hello")
+//	sciter_app.set_global(window, "greeting", &v)     // the engine copies it
+//	// ... and the reference `v` still holds is never given back
+//
+// Every call that hands a Value to the engine - `set_global`, `set_element_value`, an argument to
+// `call`, a member of an array being built - copies what it is given, so the caller's Value is still
+// the caller's afterwards. `scoped_` is the shape that says so:
+//
+//	v := sciter_app.scoped_value_from_string("hello")
+//	sciter_app.set_global(window, "greeting", &v)     // released at the end of this scope
+//
+// Only the constructors that own a reference are here. `value_from_bool` and `value_from_int` carry
+// their value inline and own nothing, and `value_from_asset` is deliberately absent: the engine does
+// not add a reference there - see its doc comment - so there is nothing for a scope to give back.
+
+// `value_from_string`, released at the end of the calling scope.
+@(deferred_out = release_scoped_bare_value)
+scoped_value_from_string :: proc(s: string, loc := #caller_location) -> (v: Value) {
+	return value_from_string(s, loc)
+}
+
+// `value_from_bytes`, released at the end of the calling scope. The engine copies the bytes in, so the
+// caller's buffer is free to go at once; what the scope gives back is the engine's copy.
+@(deferred_out = release_scoped_bare_value)
+scoped_value_from_bytes :: proc(b: []u8, loc := #caller_location) -> (v: Value) {
+	return value_from_bytes(b, loc)
+}
+
+// `value_make_array`, released at the end of the calling scope - and with it every element written into
+// it, because clearing a container clears what it holds.
+@(deferred_out = release_scoped_bare_value)
+scoped_value_make_array :: proc(length: int) -> (v: Value) {
+	return value_make_array(length)
+}
+
+// `value_from_function`, released at the end of the calling scope.
+//
+// **Read this one before reaching for it.** The functor's record is freed by the *engine*, once, when
+// it drops the Value - so a functor published with `set_global` must outlive the scope that made it,
+// and this twin is wrong for that. It is right for the functor handed straight to a call that copies
+// it, and for the one built and then abandoned on an error path.
+@(deferred_out = release_scoped_bare_value)
+scoped_value_from_function :: proc(
+	fn: Native_Function,
+	user_data: rawptr = nil,
+	allocator := context.allocator,
+) -> (
+	v: Value,
+) {
+	return value_from_function(fn, user_data, allocator)
+}
+
+// `element_to_value`, released at the end of the calling scope. The Value holds its own reference to
+// the element, so giving it back is not the same as giving the element back.
+@(deferred_out = release_scoped_value)
+scoped_element_to_value :: proc(element: Element) -> (v: Value, err: Error) {
+	return element_to_value(element)
+}
+
+// `node_to_value`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_node_to_value :: proc(node: Node) -> (v: Value, err: Error) {
+	return node_to_value(node)
+}
+
+// `asset_get`, released at the end of the calling scope. A property read off an engine asset owns a
+// reference exactly as `value_get` does.
+@(deferred_out = release_scoped_value)
+scoped_asset_get :: proc(asset: ^sciter.Som_Asset_T, property: string) -> (result: Value, err: Error) {
+	return asset_get(asset, property)
+}
+
+// `asset_call`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_asset_call :: proc(
+	asset: ^sciter.Som_Asset_T,
+	method: string,
+	args: []Value = nil,
+	check_arity := true,
+) -> (
+	result: Value,
+	err: Error,
+) {
+	return asset_call(asset, method, args, check_arity)
+}
+
+// The graphics wraps. Each adds a reference to the object it wraps, so clearing the Value leaves the
+// `Image` / `Path` / `Text` / `Graphics` usable - these give back the Value's reference and nothing
+// else, and the object still needs its own `release_*`.
+
+// `value_from_image`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_value_from_image :: proc(image: Image) -> (v: Value, err: Error) {
+	return value_from_image(image)
+}
+
+// `value_from_path`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_value_from_path :: proc(path: Path) -> (v: Value, err: Error) {
+	return value_from_path(path)
+}
+
+// `value_from_text`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_value_from_text :: proc(text: Text) -> (v: Value, err: Error) {
+	return value_from_text(text)
+}
+
+// `value_from_graphics`, released at the end of the calling scope.
+@(deferred_out = release_scoped_value)
+scoped_value_from_graphics :: proc(gfx: Graphics) -> (v: Value, err: Error) {
+	return value_from_graphics(gfx)
+}
+
+@(private = "file")
+release_scoped_bare_value :: proc(v: Value) {
+	v := v
+	value_clear(&v)
+}

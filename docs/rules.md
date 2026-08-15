@@ -40,6 +40,14 @@ Measured properties worth designing around, all recorded in `sciter_app/host.odi
 What breaks if you ignore this is not a clean error: it is intermittent corruption in engine state that
 surfaces somewhere else entirely.
 
+**A debug build checks this rule.** The first call into the wrapper records the thread it happens on,
+and any later call from another thread traps there, naming the procedure and pointing here — the one
+moment when the offending call is still on the stack. It costs nothing in a release build, where it
+compiles out entirely, and `assert_engine_thread()` is the same check to put at the top of your own
+code. `check_thread_affinity(strict = false)` counts violations instead of trapping, and
+`check_thread_affinity(on = false)` is the off switch a multi-threaded test runner needs — this
+package's own suite runs single-threaded instead, because the rule is the engine's, not this package's.
+
 The patterns built on this rule — the doorbell, failure and cancellation, stale answers, guarding your
 own state, and what to do about the UI while the work runs — are in
 [`threading.md`](./threading.md).
@@ -68,6 +76,14 @@ an array, a map, a script object. The rules are the C API's and this package doe
 ```odin
 v, err := sciter_app.scoped_eval(window, "getRows()")   // released at the end of this scope
 _, _ = sciter_app.scoped_eval(window, "refresh()")      // released too, discarded or not
+```
+
+**The constructors have twins too**, and they are the ones that read as harmless — `value_from_string`
+looks like a conversion, and the Value it makes owns a reference all the same:
+
+```odin
+v := sciter_app.scoped_value_from_string("hello")
+sciter_app.set_global(window, "greeting", &v)           // the engine copies; this is still yours
 ```
 
 Reach for the plain one when the Value has to outlive the scope — stored in a struct, returned upwards,
@@ -218,6 +234,15 @@ Uniform across all 50 procedures that allocate:
 - **anything returned to you** comes from the `allocator` parameter, which defaults to
   `context.allocator` and is always the **last** parameter
 - a string or slice returned that way is **yours to `delete`**
+
+**What "borrowed" means for the three slices that carry no allocator**, measured rather than assumed:
+`tag` points into an interned table of names and outlives both its element and the document;
+`archive_item` is engine memory rather than a view of your blob, and survived `close_archive` on this
+build; `value_to_bytes` is a real window into the Value and goes bad the moment the Value is cleared or
+overwritten — quietly, reading correctly until the allocator reuses the block. The rule is the same for
+all three (copy anything that has to outlive the owner); the measurements are on the procedures, and
+`examples/eval.odin`, `examples/archive.odin` and `examples/dom_walk.odin` hold the safe halves as
+tests.
 
 Where a proc borrows instead of allocating, its doc comment says "borrowed" and names the lifetime —
 `tag`, the `name` in an attribute-change event, and the keyboard/cursor strings in the host callbacks

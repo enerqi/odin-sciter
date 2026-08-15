@@ -272,6 +272,12 @@ value_from_asset :: proc(asset: ^sciter.Som_Asset_T) -> (v: Value) {
 
 // The bytes the Value holds. Borrowed from the engine and only valid until the Value changes or is
 // cleared, so copy them if they have to outlive it.
+//
+// **Both halves of that were measured, and both fail quietly.** After `value_clear` the slice reads
+// correctly at first and becomes whatever the allocator handed out next after about 1.6 MB of churn -
+// so "read it straight after and it looked fine" proves nothing. After a `value_copy` over the same
+// Value the buffer is corrupt immediately. Nothing allocates per call: asking twice returns the same
+// pointer, which is the other way of saying there is nothing here to free.
 value_to_bytes :: proc(v: ^Value) -> (b: []u8, err: Error) {
 	p: [^]u8
 	n: u32

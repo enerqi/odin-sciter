@@ -56,7 +56,8 @@ Api_Error :: enum {
 
 // `sciter.Scdom_Result.OK_NOT_HANDLED` is -1 and is a success, so `!= .OK` is not the test.
 @(private)
-dom_err :: proc(r: sciter.Scdom_Result) -> Error {
+dom_err :: proc(r: sciter.Scdom_Result, loc := #caller_location) -> Error {
+	guard_engine_thread(loc)
 	if r == .OK || r == .OK_NOT_HANDLED {
 		return nil
 	}
@@ -65,7 +66,8 @@ dom_err :: proc(r: sciter.Scdom_Result) -> Error {
 
 // Likewise `sciter.Value_Result.OK_TRUE` is -1 and is a success.
 @(private)
-value_err :: proc(r: sciter.Value_Result) -> Error {
+value_err :: proc(r: sciter.Value_Result, loc := #caller_location) -> Error {
+	guard_engine_thread(loc)
 	if r == .OK || r == .OK_TRUE {
 		return nil
 	}

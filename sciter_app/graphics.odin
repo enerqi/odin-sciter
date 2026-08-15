@@ -68,6 +68,7 @@ g_graphics_api: ^sciter.Sciter_Graphics_Api
 // calls straight through the returned table, so handing back nil only moves the fault to a
 // function-pointer offset with nothing to say about the cause.
 graphics_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Graphics_Api {
+	guard_engine_thread(loc)
 	if g_graphics_api == nil && sciter.loaded() {
 		g_graphics_api = sciter.api().GetSciterGraphicsAPI()
 	}
@@ -78,7 +79,8 @@ graphics_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Graphics_Api {
 // `GRAPHIN_OK` is 0 and `GRAPHIN_PANIC` is -1, so - unlike the DOM's - anything other than `.OK` here is
 // a failure.
 @(private)
-gfx_err :: proc(r: sciter.Graphin_Result) -> Error {
+gfx_err :: proc(r: sciter.Graphin_Result, loc := #caller_location) -> Error {
+	guard_engine_thread(loc)
 	return nil if r == .OK else r
 }
 

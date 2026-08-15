@@ -222,7 +222,14 @@ element_index :: proc(element: Element) -> (index: Child_Index, err: Error) {
 	return Child_Index(n), nil
 }
 
-// The element's tag name - "div", "button". Borrowed from the engine, valid for the element's lifetime.
+// The element's tag name - "div", "button". Borrowed from the engine - do not free it.
+//
+// **It is interned, and it outlives the element.** Measured: two calls on one element answer the same
+// pointer, two elements with the same tag share it, and the string still reads correctly after the
+// element has been removed and finalized and after the whole document has been replaced. So this is a
+// pointer into a table of names the engine keeps, not into the element - which is why nothing is
+// allocated per call and why the lifetime is not the element's. Copy it anyway if it has to outlive
+// the engine.
 tag :: proc(element: Element) -> (tag: string, err: Error) {
 	p: cstring
 	dom_err(sciter.api().SciterGetElementType(sciter.Helement(element), &p)) or_return

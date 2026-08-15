@@ -104,6 +104,17 @@ against.
   so the obvious check reports it safe; clearing a `Value_Visitor`'s value silently leaves that slot
   `.UNDEFINED` in a container the caller still owns; clearing a `Native_Function` argument does nothing
   observable at all, because the script's own reference outlives it. Three tests, one per shape.
+- **The three borrowed slices that carry no allocator, measured rather than assumed.** `tag` is a
+  pointer into an **interned table**: two calls answer the same pointer, two elements with the same tag
+  share it, and the string outlives both the element (removed and finalized) and the document — so its
+  doc comment's "valid for the element's lifetime" was true but understated, and nothing is allocated
+  per call. `archive_item` is **engine memory, not a view of the blob you passed in**, and on this build
+  it survived `close_archive` through 12 MB of churn and 200 further open/read/close cycles without
+  leaking (8 kB of RSS across all of them) — recorded as one build's behaviour, not as a promise.
+  `value_to_bytes` is a real window into the Value and fails quietly in both directions: after
+  `value_clear` it reads correctly until the allocator reuses the block, and after a `value_copy` over
+  the same Value it is corrupt immediately. Those two unsafe halves are recorded from a probe rather
+  than a test on purpose — `just test_sanitize eval` exists to catch a read of freed memory.
 - **A compound literal cannot be passed through an overload group.** `set_state(el, {.CHECKED})` is a
   compile error where `set_element_state(el, {.CHECKED})` is fine, because overload resolution runs
   before the literal's type is inferred. Recorded on the group; it is why both members stay exported.
@@ -179,6 +190,25 @@ against.
   reject — measured, and that is the exact shape that leaked in the examples.
 - **`just check-ownership`**, in CI — asserts the rule that if a procedure takes an allocator its result
   is yours and otherwise it is borrowed. It holds across all 30 procedures that return memory.
+- **`sciter_app/affinity.odin` - rule 1 is checked now, not just written down.** Every other rule in
+  `docs/rules.md` had a gate; thread affinity had a paragraph, and it is the rule whose breach is
+  hardest to diagnose - engine-state corruption that surfaces later, somewhere else, with nothing
+  incriminating on the stack. A debug build now arms itself on the first call into the wrapper and
+  traps on any later call from another thread, naming the procedure and the rule. Arming happens on
+  first use rather than in `init`, because a windowless program never calls `init`. The chokepoints are
+  the four error-wrapping helpers plus the two sub-API accessors - about 210 call sites - so the DOM,
+  Value and window calls are checked on the way out and the graphics and request calls on the way in;
+  `post_callback` is deliberately never checked. `assert_engine_thread()` is the same check for your own
+  code, `check_thread_affinity(strict = false)` counts instead of trapping, and all of it compiles out
+  without `-debug`. **The whole 30-example suite passes with it armed and strict**, which is the first
+  evidence anyone has had that the rule actually holds across this repository.
+- **Twelve `scoped_` constructors** — `scoped_value_from_string`, `_bytes`, `_make_array`,
+  `_from_function`, `scoped_element_to_value`, `scoped_node_to_value`, `scoped_asset_get`,
+  `scoped_asset_call` and the four graphics wraps. The family covered the procedures that *read* a Value
+  out of the engine and none of the ones that *make* one, which is the more innocent shape:
+  `value_from_string` reads like a conversion, and every call that hands a Value to the engine copies
+  it, so the caller's reference is still the caller's afterwards. `value_from_bool` / `value_from_int`
+  own nothing and `value_from_asset` deliberately takes no reference, so those three have no twin.
 - **[`docs/threading.md`](docs/threading.md)** - the guide that `rules.md` 1 needed: the doorbell
   pattern and why two words is not a transport, naming the allocator on both sides of a thread
   boundary, the terminal-message discipline (a worker that returns without posting leaves the UI
@@ -219,6 +249,16 @@ against.
 - **[`docs/rules.md`](docs/rules.md)** — the four cross-cutting contracts (thread affinity, `Value`
   ownership, handle lifetime, allocator conventions) in one place.
 - **`app_event(n)`** — an application event code that asserts the `FIRST_APPLICATION_EVENT_CODE` floor.
+
+### Fixed - tests
+
+- **The timer tests raced a fixed 150 ms window** and lost it on a loaded CI runner - "a sub-millisecond
+  interval must run, not stop" failed there while passing 10 times out of 10 locally. The claim each of
+  them makes is "the timer runs", not "the timer runs within 150 ms", so they now pump until the ticks
+  arrive with a 3-second budget; the negative halves ("and then nothing more arrives") keep their fixed
+  window, because there the passage of time is the assertion. Verified under 12 competing busy loops,
+  three runs, clean - and the file got *faster*, 1.29 s to 0.69 s, because a wait that ends when the
+  answer arrives beats one that always sleeps.
 
 ### Known issues
 

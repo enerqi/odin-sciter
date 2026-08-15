@@ -3173,3 +3173,90 @@ test_the_state_overload_group_reaches_both_an_element_and_a_window :: proc(t: ^t
 	// The document is untouched by any of it.
 	testing.expect_value(t, styled_color(window), "#00FF00")
 }
+
+// **`tag` is a borrowed pointer into an interned table, not into the element**, which is a stronger
+// guarantee than its doc comment used to claim ("valid for the element's lifetime") and worth pinning
+// because the weaker claim would send a caller copying strings it does not need to copy.
+//
+// Measured on 6.0.4.9: two calls for the same element answer the *same pointer*, two elements with the
+// same tag share it, and the string still reads correctly after the element it came from has been
+// removed and finalized - and after the whole document has been replaced. That is a table keyed by tag
+// name, filled as names are seen, and it is what "borrowed from the engine" means here.
+//
+// The rule for callers does not change: it is borrowed, so copy it if it has to outlive the engine.
+@(test)
+test_a_tag_is_interned_and_outlives_the_element_it_came_from :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	first, ferr := sciter_app.select_first(root, "li")
+	testing.expect_value(t, ferr, nil)
+
+	name, terr := sciter_app.tag(first)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, name, "li")
+
+	// Asked twice, the same pointer comes back: nothing is allocated per call, so nothing is owed.
+	again, aerr := sciter_app.tag(first)
+	testing.expect_value(t, aerr, nil)
+	testing.expect(t, raw_data(name) == raw_data(again), "a tag is interned, not built per call")
+
+	// And two different elements with the same tag share it.
+	items, ierr := sciter_app.select_all(root, "li", context.temp_allocator)
+	testing.expect_value(t, ierr, nil)
+	if len(items) >= 2 {
+		second, _ := sciter_app.tag(items[1])
+		testing.expect(t, raw_data(name) == raw_data(second), "the table is keyed by name, not element")
+	}
+
+	// Remove the element the string came from, finalizing it, and the string is still there.
+	_, rerr := sciter_app.remove_element(first, true)
+	testing.expect_value(t, rerr, nil)
+	sciter_app.heartbeat()
+	testing.expect_value(t, name, "li")
+
+	// Put the document back: this file's tests share one window.
+	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
+	testing.expect_value(t, name, "li")
+}
+
+// The DOM half of the scoped constructors: wrapping an element or a node for script hands back a Value
+// that owns a reference, and the wrap is exactly the shape that gets dropped - it is written to be
+// passed somewhere, not to be kept.
+@(test)
+test_the_scoped_dom_wraps_release_the_value_and_not_the_element :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	root, _ := sciter_app.root(window)
+	target, terr := sciter_app.select_first(root, "#summary")
+	testing.expect_value(t, terr, nil)
+
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(true)
+	before := sciter_app.outstanding_resources()
+
+	{
+		wrapped, werr := sciter_app.scoped_element_to_value(target)
+		testing.expect_value(t, werr, nil)
+		back, berr := sciter_app.element_from_value(&wrapped)
+		testing.expect_value(t, berr, nil)
+		testing.expect_value(t, back, target)
+
+		node, nerr := sciter_app.node_from_element(target)
+		testing.expect_value(t, nerr, nil)
+		as_value, verr := sciter_app.scoped_node_to_value(node)
+		testing.expect_value(t, verr, nil)
+		kind, _ := sciter_app.value_type(&as_value)
+		testing.expect(t, kind != .UNDEFINED, "a wrapped node is a real Value")
+	}
+
+	after := sciter_app.outstanding_resources()
+	testing.expect_value(t, after[.Value], before[.Value])
+
+	// The element is untouched by any of it: the Value held its own reference, not the caller's.
+	tag_name, gerr := sciter_app.tag(target)
+	testing.expect_value(t, gerr, nil)
+	testing.expect(t, tag_name != "", "the element outlives the Value that wrapped it")
+}

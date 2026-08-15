@@ -17,6 +17,7 @@ import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -1670,4 +1671,119 @@ test_clearing_a_visited_value_empties_the_container_the_caller_still_owns :: pro
 		_, terr := sciter_app.value_to_string(&element, context.temp_allocator)
 		testing.expect_value(t, terr, sciter_app.Error(sciter.Value_Result.INCOMPATIBLE_TYPE))
 	}
+}
+
+// **`value_to_bytes` borrows the engine's buffer**, so what it hands back is a window into the Value
+// rather than a copy - which is worth a test because the difference is invisible until the Value goes
+// away, and then it is invisible for a while longer.
+//
+// What is asserted here is the safe half: the slice is the engine's memory rather than the caller's,
+// the length is exact, and a copy taken while the Value is alive is a copy. The unsafe half was
+// measured with a throwaway probe instead of a test, deliberately - `just test_sanitize eval` runs this
+// file under ASan, and a test that reads the buffer after the Value is cleared is a use-after-free that
+// the sanitizer is there to catch. What the probe found:
+//
+//   - after `value_clear`, the slice reads correctly at first and turns into whatever the allocator
+//     handed out next after ~1.6 MB of churn. The obvious check ("read it right after") says it is fine.
+//   - after `value_copy` writes a different value over the same Value, the buffer is corrupted
+//     immediately - the first bytes were already overwritten with allocator bookkeeping.
+//
+// So the doc comment's "only valid until the Value changes or is cleared" is exactly right, and both
+// halves of it fail quietly.
+@(test)
+test_value_to_bytes_borrows_the_engines_buffer_rather_than_copying :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	payload := make([]u8, 4096, context.temp_allocator)
+	for &b, i in payload {b = u8('A' + i % 26)}
+
+	v := sciter_app.value_from_bytes(payload)
+	defer sciter_app.value_clear(&v)
+
+	borrowed, err := sciter_app.value_to_bytes(&v)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, len(borrowed), len(payload))
+
+	// Not the caller's buffer: the engine copied it in, and this is a view of *its* copy.
+	testing.expect(
+		t,
+		raw_data(borrowed) != raw_data(payload),
+		"the engine holds its own copy; this slice is a view of that",
+	)
+	testing.expect_value(t, borrowed[0], u8('A'))
+	testing.expect_value(t, borrowed[25], u8('Z'))
+
+	// Asked twice, the same buffer comes back - nothing is allocated per call, which is the other way
+	// of saying there is nothing here to free.
+	second, serr := sciter_app.value_to_bytes(&v)
+	testing.expect_value(t, serr, nil)
+	testing.expect(t, raw_data(second) == raw_data(borrowed), "no allocation per call, so nothing owed")
+
+	// The way to keep them: copy while the Value is alive.
+	kept := make([]u8, len(borrowed), context.temp_allocator)
+	copy(kept, borrowed)
+	testing.expect(t, slice.equal(kept, payload), "a copy taken in time is a real copy")
+}
+
+// **The `scoped_` family covers the constructors too, and they leak in the more innocent shape.**
+// `value_from_string` reads like a conversion, not like an acquisition - but the Value it hands back
+// owns a reference to an engine allocation, and every call that passes one to the engine (`set_global`,
+// `set_element_value`, an argument to `call`) *copies* it, so the caller's reference is still the
+// caller's afterwards.
+//
+// The tracker is the assertion here: four constructors inside a scope, nothing cleared by hand, and the
+// outstanding count back where it started at the end.
+@(test)
+test_the_scoped_constructors_give_back_what_they_took :: proc(t: ^testing.T) {
+	if !engine_loaded(t) {return}
+
+	// The ledger is shared, so it is restarted rather than turned off - see the note on the tracking
+	// test above.
+	sciter_app.track_resources(true)
+	defer sciter_app.track_resources(true)
+
+	before := sciter_app.outstanding_resources()
+
+	{
+		text := sciter_app.scoped_value_from_string("hello")
+		s, serr := sciter_app.value_to_string(&text, context.temp_allocator)
+		testing.expect_value(t, serr, nil)
+		testing.expect_value(t, s, "hello")
+
+		payload := []u8{1, 2, 3, 4}
+		bytes := sciter_app.scoped_value_from_bytes(payload)
+		back, berr := sciter_app.value_to_bytes(&bytes)
+		testing.expect_value(t, berr, nil)
+		testing.expect_value(t, len(back), 4)
+
+		array := sciter_app.scoped_value_make_array(2)
+		n, lerr := sciter_app.value_len(&array)
+		testing.expect_value(t, lerr, nil)
+		testing.expect_value(t, n, 2)
+
+		// Writing into the array copies, so the element's own reference is given back by *its* scope and
+		// the array still holds a live element afterwards.
+		testing.expect_value(t, sciter_app.value_set_at(&array, 0, &text), nil)
+
+		fn := sciter_app.scoped_value_from_function(
+			proc(args: []sciter_app.Value, user: rawptr) -> sciter_app.Value {
+				return sciter_app.value_from_int(1)
+			},
+			nil,
+			runtime.default_allocator(),
+		)
+		// A native functor reports `.RESOURCE`, not `.FUNCTION` - measured; `.FUNCTION` is a script
+		// function. Either way it owns a reference, which is what this test is about.
+		kind, _ := sciter_app.value_type(&fn)
+		testing.expect_value(t, kind, sciter.Value_Type.RESOURCE)
+
+		when ODIN_DEBUG {
+			during := sciter_app.outstanding_resources()
+			testing.expect(t, during[.Value] > before[.Value], "four references are held inside the scope")
+		}
+	}
+
+	// Every one of them released at the closing brace, with nothing written to do it.
+	after := sciter_app.outstanding_resources()
+	testing.expect_value(t, after[.Value], before[.Value])
 }

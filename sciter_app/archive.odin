@@ -53,6 +53,17 @@ close_archive :: proc(archive: Archive) -> Error {
 // "script/app.js". No leading slash.
 //
 // The returned bytes are borrowed from the archive and stay valid until it is closed.
+//
+// **They are the engine's memory, not a view of the blob you passed in** - measured: the pointer lands
+// nowhere near the blob, and the length is the file's own. So a caller who reasons "my blob is static,
+// therefore the item is" has the right conclusion by the wrong route, and the route stops working the
+// moment the blob is not static.
+//
+// Two observations that are *not* promises, both from a probe on 6.0.4.9: after `close_archive` the
+// bytes still read correctly through 12 MB of heap churn and 200 further open/read/close cycles, and
+// those cycles cost 8 kB of RSS, so closing appears neither to free the item nor to leak it. Copy
+// anything that has to outlive the archive regardless - that is the contract, and the above is one
+// build's behaviour.
 archive_item :: proc(archive: Archive, path: string) -> (data: []u8, found: bool) {
 	if archive == nil {
 		return nil, false

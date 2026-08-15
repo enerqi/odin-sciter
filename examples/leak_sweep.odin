@@ -325,6 +325,19 @@ sweep_scoped :: proc(window: sciter_app.Window) {
 		item, ierr := sciter_app.scoped_make_element("li", "scoped")
 		check("scoped_make_element", ierr)
 		_ = item
+
+		// The constructors, which own a reference the same way a reader's result does.
+		text := sciter_app.scoped_value_from_string("scoped")
+		bytes := sciter_app.scoped_value_from_bytes({1, 2, 3})
+		array := sciter_app.scoped_value_make_array(2)
+		check("scoped value_set_at", sciter_app.value_set_at(&array, 0, &text))
+		_ = bytes
+
+		root, rerr := sciter_app.root(window)
+		check("root", rerr)
+		wrapped, werr := sciter_app.scoped_element_to_value(root)
+		check("scoped_element_to_value", werr)
+		_ = wrapped
 	}
 }
 

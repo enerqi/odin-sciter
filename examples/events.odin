@@ -1068,6 +1068,28 @@ INTERVAL :: 10 * time.Millisecond
 @(private = "file")
 PUMP :: 150 * time.Millisecond
 
+// **A tick count is not a deadline.** Pumping for a fixed 150 ms and then asserting how many ticks
+// arrived is a race against whatever else the machine is doing: it passes on an idle desktop and fails
+// on a loaded CI runner, which is exactly what `test_a_sub_millisecond_interval_still_runs` did. The
+// claim each test makes is "the timer runs", not "the timer runs within 150 ms", so the wait is until
+// the ticks arrive, with a budget so a genuinely stopped timer still fails rather than hanging.
+//
+// The negative half - "and then nothing more arrives" - keeps its fixed window, because for that one
+// the passage of time *is* the assertion.
+@(private = "file")
+TICK_BUDGET :: 3 * time.Second
+
+@(private = "file")
+pump_until :: proc(done: proc(_: rawptr) -> bool, data: rawptr, budget := TICK_BUDGET) {
+	start := time.now()
+	for time.since(start) < budget {
+		if done(data) {
+			return
+		}
+		sciter_app.heartbeat()
+	}
+}
+
 @(test)
 test_a_timer_ticks_until_it_is_stopped :: proc(t: ^testing.T) {
 	root, _, _, ok := test_elements(t)
@@ -1078,9 +1100,9 @@ test_a_timer_ticks_until_it_is_stopped :: proc(t: ^testing.T) {
 	defer sciter_app.detach_handler(root, &tk.handler)
 
 	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 7), nil)
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {return (^Ticks)(data).count >= 3}, &tk)
 
-	testing.expectf(t, tk.count >= 3, "expected several ticks in %v, got %d", PUMP, tk.count)
+	testing.expectf(t, tk.count >= 3, "expected several ticks within the budget, got %d", tk.count)
 	for id in tk.ids[:min(tk.count, len(tk.ids))] {
 		testing.expect_value(t, id, sciter_app.Timer_Id(7))
 	}
@@ -1109,8 +1131,10 @@ test_returning_false_from_a_timer_stops_it :: proc(t: ^testing.T) {
 	defer sciter_app.stop_timer(root, 7)
 
 	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 7), nil)
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {return (^Ticks)(data).count >= 1}, &tk)
 
+	// And then it stays at one, which is the actual claim - so this half waits out a fixed window.
+	pump(PUMP)
 	testing.expect_value(t, tk.count, 1)
 }
 
@@ -1129,7 +1153,10 @@ test_several_timers_on_one_element :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 1), nil)
 	testing.expect_value(t, sciter_app.set_timer(root, INTERVAL, 2), nil)
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {
+			tk := (^Ticks)(data)
+			return count_id(tk, 1) >= 2 && count_id(tk, 2) >= 2
+		}, &tk)
 
 	first, second := count_id(&tk, 1), count_id(&tk, 2)
 	testing.expect(t, first >= 2, "the first timer must tick")
@@ -1137,7 +1164,7 @@ test_several_timers_on_one_element :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.stop_timer(root, 1), nil)
 	tk.count = 0
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {return count_id((^Ticks)(data), 2) >= 2}, &tk)
 
 	testing.expect_value(t, count_id(&tk, 1), 0)
 	testing.expect(t, count_id(&tk, 2) >= 2, "stopping one timer must not stop the other")
@@ -1172,7 +1199,7 @@ test_a_timer_does_not_bubble :: proc(t: ^testing.T) {
 	defer sciter_app.stop_timer(tick, 9)
 
 	testing.expect_value(t, sciter_app.set_timer(tick, INTERVAL, 9), nil)
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {return (^Ticks)(data).count >= 3}, &on_button)
 
 	testing.expect(t, on_button.count >= 3, "the element the timer was set on hears it")
 	testing.expect_value(t, on_root.count, 0)
@@ -1191,7 +1218,7 @@ test_a_sub_millisecond_interval_still_runs :: proc(t: ^testing.T) {
 	defer sciter_app.stop_timer(root, 3)
 
 	testing.expect_value(t, sciter_app.set_timer(root, 100 * time.Microsecond, 3), nil)
-	pump(PUMP)
+	pump_until(proc(data: rawptr) -> bool {return (^Ticks)(data).count > 0}, &tk)
 
 	// One tick is the whole claim: rounding the interval down to zero would have stopped the timer
 	// before it ever ran. How many arrive after that is the engine's business, and under a sanitizer

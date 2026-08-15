@@ -84,6 +84,7 @@ g_request_api: ^sciter.Sciter_Request_Api
 // calls straight through the returned table, so handing back nil only moves the fault to a
 // function-pointer offset with nothing to say about the cause.
 request_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Request_Api {
+	guard_engine_thread(loc)
 	if g_request_api == nil && sciter.loaded() {
 		g_request_api = sciter.api().GetSciterRequestAPI()
 	}
@@ -94,7 +95,8 @@ request_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Request_Api {
 // Unlike `Scdom_Result` and `Value_Result`, nothing here is a negative success: `REQUEST_OK` is 0 and
 // `REQUEST_PANIC` is -1, so anything other than `.OK` is a failure.
 @(private)
-request_err :: proc(r: sciter.Request_Result) -> Error {
+request_err :: proc(r: sciter.Request_Result, loc := #caller_location) -> Error {
+	guard_engine_thread(loc)
 	return nil if r == .OK else r
 }
 
@@ -336,7 +338,12 @@ request_content_url :: proc(request: Request, allocator := context.allocator) ->
 	return utf8_string_of(request, request_api().RequestContentUrl, allocator)
 }
 
-// The method - "GET", "POST". Borrowed from the engine and valid for the request's lifetime.
+// The method - "GET", "POST". Borrowed from the engine and valid for the request's lifetime; nothing
+// is allocated, so there is nothing to free.
+//
+// Unlike `tag` and `value_to_bytes`, this one's lifetime has **not** been probed - a request that
+// outlives its callback needs `take_request` first, and everything reachable inside the callback is
+// alive for it. Copy it if it crosses that boundary.
 request_method :: proc(request: Request) -> (method: string, err: Error) {
 	if request == nil {
 		return "", sciter.Request_Result.BAD_PARAM

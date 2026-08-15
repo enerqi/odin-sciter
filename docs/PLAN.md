@@ -9,8 +9,8 @@ background threads, drag-and-drop, graphics (both a custom-painted element and a
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 387 `@(test)` procs, and the twelve guides in `docs/` are written. Coverage of
-the wrapper is 385 of its 385 exported procedures called from a test. The five that closed that gap -
+`just example-tests` runs 397 `@(test)` procs, and the twelve guides in `docs/` are written. Coverage of
+the wrapper is 401 of its 401 exported procedures called from a test. The five that closed that gap -
 `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members - each
 turned up something the headers do not say, which is the argument for closing coverage gaps rather than
 annotating them; the same pass measured what the three kinds of borrowed `Value` really cost and what a
