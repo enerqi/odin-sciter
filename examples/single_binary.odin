@@ -195,9 +195,12 @@ engine_loaded :: proc(t: ^testing.T) -> bool {
 // so these tests do not have their own copy of the platform rules.
 @(private = "file")
 cache_dir :: proc() -> string {
-	// `filepath.dir` allocates with the context allocator and takes no allocator argument, and during
-	// a test that allocator is the runner's leak tracker.
-	context.allocator = context.temp_allocator
+	// `filepath.dir` is `os.dir`, which **slices rather than allocates** - the result points into
+	// `g_engine_path`, which outlives every test here. So there is nothing to free, nothing for the
+	// runner's leak tracker to see, and no allocator to pin. The comment that used to sit here said the
+	// opposite and switched `context.allocator` to guard against a leak that could not happen;
+	// `sqlite_extension.odin` acted on the same wrong belief and paired it with a `delete`, which
+	// aborted the process on macOS.
 	return filepath.dir(filepath.dir(g_engine_path))
 }
 

@@ -143,6 +143,19 @@ jobs:
       # run is a complete picture. If the timing-sensitive element-timer tests in events.odin turn out
       # to flake here the way they do on a loaded desktop, that is a reason to fix the tests, not to
       # run the suite twice.
+      # `sqlite_extension`'s end-to-end test loads `odin-sqlite` through `sciter.loadLibrary` from
+      # script, so it needs the extension built and sitting in target/debug. Nothing built it, so that
+      # test has skipped itself in CI **on every platform since it was written** - and it is the only
+      # coverage `SciterLibraryInit`, the native-extension entry point, has anywhere. One `odin build
+      # -build-mode:shared`, seconds, no SDK required (that is `just extension-run`, which needs scapp).
+      #
+      # It still skips where there is no libsqlite3 to open - Windows, unless the machine happens to
+      # have one of `winsqlite3.dll` / `sqlite3.dll`. Linux and macOS both have it: note that
+      # /usr/lib/libsqlite3.dylib does not exist as a *file* on macOS 11+, and `dlopen` by name gets it
+      # from the dyld shared cache anyway, which is how SQLITE_LIBRARY_NAMES asks for it.
+      - name: Build the SQLite native extension
+        run: just extension sqlite_extension odin-sqlite
+
       - name: Run the example tests
         timeout-minutes: 45
         env:
@@ -242,6 +255,19 @@ jobs:
       # document never renders any text faults inside sciter.dll at process exit, and those three had
       # text-free test documents. Section 1 of docs/WINDOWS-CHECKLIST.md has the reproduction and the
       # one-character workaround, which lives in the documents themselves.
+      # `sqlite_extension`'s end-to-end test loads `odin-sqlite` through `sciter.loadLibrary` from
+      # script, so it needs the extension built and sitting in target/debug. Nothing built it, so that
+      # test has skipped itself in CI **on every platform since it was written** - and it is the only
+      # coverage `SciterLibraryInit`, the native-extension entry point, has anywhere. One `odin build
+      # -build-mode:shared`, seconds, no SDK required (that is `just extension-run`, which needs scapp).
+      #
+      # It still skips where there is no libsqlite3 to open - Windows, unless the machine happens to
+      # have one of `winsqlite3.dll` / `sqlite3.dll`. Linux and macOS both have it: note that
+      # /usr/lib/libsqlite3.dylib does not exist as a *file* on macOS 11+, and `dlopen` by name gets it
+      # from the dyld shared cache anyway, which is how SQLITE_LIBRARY_NAMES asks for it.
+      - name: Build the SQLite native extension
+        run: just extension sqlite_extension odin-sqlite
+
       - name: Run the example tests
         if: steps.engine.outputs.have == 'true'
         timeout-minutes: 45
@@ -315,6 +341,19 @@ jobs:
       # where the canary above passed. That would be the macOS analogue of the Windows test-runner
       # finding (docs/odin-test-runner-windows.patch), and docs/MACOS-CHECKLIST.md carries the
       # prediction and the fallback.
+      # `sqlite_extension`'s end-to-end test loads `odin-sqlite` through `sciter.loadLibrary` from
+      # script, so it needs the extension built and sitting in target/debug. Nothing built it, so that
+      # test has skipped itself in CI **on every platform since it was written** - and it is the only
+      # coverage `SciterLibraryInit`, the native-extension entry point, has anywhere. One `odin build
+      # -build-mode:shared`, seconds, no SDK required (that is `just extension-run`, which needs scapp).
+      #
+      # It still skips where there is no libsqlite3 to open - Windows, unless the machine happens to
+      # have one of `winsqlite3.dll` / `sqlite3.dll`. Linux and macOS both have it: note that
+      # /usr/lib/libsqlite3.dylib does not exist as a *file* on macOS 11+, and `dlopen` by name gets it
+      # from the dyld shared cache anyway, which is how SQLITE_LIBRARY_NAMES asks for it.
+      - name: Build the SQLite native extension
+        run: just extension sqlite_extension odin-sqlite
+
       - name: Run the example tests
         timeout-minutes: 45
         env:

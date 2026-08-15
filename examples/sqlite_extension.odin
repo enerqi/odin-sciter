@@ -973,12 +973,18 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 			return
 		}
 	}
-	// Pinned before anything allocates: the view and the assets the library makes outlive this test,
-	// and the runner's per-test tracking allocator would reclaim them underneath the engine.
-	context.allocator = runtime.default_allocator()
-
+	// **No `delete` here, and the missing one was a real bug.** `filepath.dir` is `os.dir`, which
+	// *slices* its argument rather than allocating - the result points into `os.args[0]`. Freeing it
+	// asks the allocator to release memory it never handed out.
+	//
+	// Linux and Windows swallowed that for as long as this example has existed. macOS does not: its
+	// malloc checks, and the process aborts with
+	//
+	//	malloc: *** error for object 0x65: pointer being freed was not allocated
+	//
+	// on the way out of a test that had otherwise done nothing but print a skip message. Undefined
+	// behaviour on all three platforms; caught on one. See docs/MACOS-CHECKLIST.md section 2a.
 	directory := filepath.dir(os.args[0])
-	defer delete(directory)
 	// `.so` was hardcoded here, so on Windows this looked for `odin-sqlite.so`, never found it, and
 	// skipped itself with a message that reads like the build step was forgotten. `loadLibrary` in the
 	// document below takes the name *without* a suffix and appends the platform's own - which is the
@@ -995,6 +1001,18 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 		fmt.printfln("no %s - run `just extension sqlite_extension odin-sqlite` first; skipping", library)
 		return
 	}
+
+	// Pinned before anything the *engine* will hold: the view and the assets the library makes outlive
+	// this test, and the runner's per-test tracking allocator would reclaim them underneath it.
+	//
+	// **This line used to sit thirty lines higher, and that is how the bad `delete` above went
+	// unnoticed.** Odin's test runner wraps each test in a `mem.Tracking_Allocator` and counts bad
+	// frees as well as leaks (`runner.odin`: `bad_frees := len(...bad_free_array)`, reported as "Memory
+	// failure in `pkg.test` with N leaks and M bad frees") - so it would have named this one, at its
+	// line, on Linux, years before macOS aborted over it. Swapping `context.allocator` out early turned
+	// that net off for the whole test, including code that had nothing to do with the engine. Opt out
+	// as late as possible, and only for the allocations that genuinely have to escape.
+	context.allocator = runtime.default_allocator()
 
 	view, err := sciter_app.create_windowless({width = 200, height = 100})
 	testing.expect_value(t, err, nil)

@@ -134,6 +134,16 @@ load :: proc(path := "", allocator := context.allocator) -> (err: Load_Error, tr
 
 	// Alongside the executable. os.args[0] is what the process was invoked as, so this is best-effort:
 	// it resolves to "." for a bare-name invocation, which is a harmless extra candidate.
+	//
+	// `filepath.dir` is `os.dir`, which slices rather than allocates: the result points into
+	// `os.args[0]` and must not be freed. `add` clones what it is given into the candidates allocator,
+	// so nothing here outlives the call.
+	//
+	// **This block had drifted from the generated file.** It read `filepath.dir(os.args[0],
+	// context.temp_allocator)` - an allocator argument that procedure does not take - with a comment
+	// claiming it allocated. `sciter.odin` carried the correct one-argument call, so nothing ever
+	// compiled this version and the error sat here unnoticed. `just bindgen` pastes this file verbatim,
+	// so regenerating would have turned it into a build failure.
 	if len(os.args) > 0 {
 		add(&candidates, filepath.dir(os.args[0]))
 	}

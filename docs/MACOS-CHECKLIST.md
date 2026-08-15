@@ -273,9 +273,61 @@ So `example-tests` now **bisects its casualties**: any example that exits non-ze
 per process, each with a single `ODIN_TEST_NAMES`, and the summary names the test that died. It costs a
 compile per test and only happens on a run that has already failed.
 
-**It named it on the first try: `test_script_can_load_the_library_and_query`.** The other six pass in
-isolation, including the two that do strictly more engine work. What that test does before dying is
-almost nothing:
+**It named it on the first try, and the debugger pass named the cause on the next run:**
+
+```
+    EXIT 134  test_script_can_load_the_library_and_query
+    --- where test_script_can_load_the_library_and_query died
+    malloc: *** error for object 0x65: pointer being freed was not allocated
+    thread #4, stop reason = signal SIGABRT
+```
+
+**It is our bug, not macOS's, and it exists on all three platforms.**
+
+```odin
+directory := filepath.dir(os.args[0])
+defer delete(directory)                 // <- frees memory nothing allocated
+```
+
+`filepath.dir` is `os.dir`, which **slices its argument rather than allocating** — the result points
+into `os.args[0]`. Verified directly rather than assumed: `raw_data(filepath.dir(p)) == raw_data(p)`.
+So the `delete` hands the allocator a pointer it never issued. Linux and Windows swallowed it for as
+long as the example has existed; macOS's malloc checks, and aborts.
+
+That is the useful shape of this whole finding: **the bug was never macOS-specific, only the diagnosis
+was.** A third platform earns its keep by being stricter than the other two.
+
+**Odin's test runner would have caught this, and was switched off two lines earlier.** The runner wraps
+every test in a `mem.Tracking_Allocator` and counts bad frees alongside leaks — `runner.odin` reads
+`bad_frees := len(data.tracking_allocator.bad_free_array)` and reports "Memory failure in `pkg.test`
+with N leaks and M bad frees", failing the test. A bad free is exactly what this was, so it would have
+been named, at its line, on Linux, long before macOS aborted over it.
+
+It stayed silent because the test did this first:
+
+```odin
+context.allocator = runtime.default_allocator()
+```
+
+for a good reason — the view and assets the library creates outlive the test, and the runner's
+per-test allocator would reclaim them underneath the engine — but *thirty lines too early*, which
+turned the net off for the whole test including code that never touches the engine. That line has moved
+down to just before the allocations that genuinely have to escape. **Opt out as late as possible, and
+only for what has to escape**; every line above the opt-out keeps a bad-free detector that works.
+
+Two more things fell out of chasing it:
+
+- `single_binary.odin` carried the same wrong belief in a comment — "`filepath.dir` allocates with the
+  context allocator" — and switched `context.allocator` to protect against a leak that cannot happen.
+  Harmless, because it never paired it with a `delete`; corrected, because the next person to copy it
+  might
+- **`src/prelude.odin` had drifted from the generated `sciter.odin`.** It read `filepath.dir(os.args[0],
+  context.temp_allocator)` — an argument that procedure does not take — under a comment claiming it
+  allocated. `sciter.odin` carried the correct one-argument call, so *nothing ever compiled the prelude
+  version* and the error sat there unseen. `just bindgen` pastes that file verbatim, so the next
+  regeneration would have turned it into a build failure. Both now say the same thing
+
+The test's own path, for the record — it dies on the way out of doing almost nothing:
 
 ```
 load_sqlite()               -> true
@@ -287,27 +339,25 @@ os.exists(".../odin-sqlite.dylib")      -> false
 println("no ... - skipping")            ; return       <- prints, then SIGABRT
 ```
 
-Three facts constrain it:
+All three constraints noticed while chasing it held up, and the last one is what pointed at the
+allocator rather than at AppKit:
 
-- **it dies on the skip path**, after its own message, on the way out of a test that created nothing
-- **it prints nothing while dying.** Every other abort in this bring-up announced itself — the
-  NSExceptions printed `libc++abi: terminating`, and macOS malloc errors print too. A silent SIGABRT is
-  none of those
-- **`test_the_three_classes_publish_the_expected_members` and `test_a_query_runs_through_the_som_layer`
-  both load sqlite *and* the engine and pass**, so it is not the two libraries coexisting
+- it dies on the skip path, after its own message, on the way out of a test that created nothing
+- it printed nothing without a debugger attached — macOS's malloc *does* write its error to stderr, but
+  the abort discarded the buffered stream before it reached the log. Under lldb the message survives
+- `test_the_three_classes_publish_the_expected_members` and `test_a_query_runs_through_the_som_layer`
+  both load sqlite *and* the engine and pass, so it was never the two libraries coexisting
 
-What is left that is unique to it is the pair `context.allocator = runtime.default_allocator()` and the
-deferred `delete(directory)` — an allocation made and freed across a context the test runner also owns.
-That is a hypothesis, not a finding.
-
-Rather than guess at it, the bisect now **re-runs the dead test under a debugger** and prints the stack:
+The bisect **re-runs the dead test under a debugger** and prints the stack, which is what closed this:
 `ODIN_TEST_NAMES` is a compile-time define, so the binary from the failing run is already filtered to
-that one test and needs no rebuild. lldb on macOS, gdb on Linux, neither on Windows — where testing this
+that one test and needs no rebuild. lldb on macOS, gdb on Linux, neither on Windows — where testing it
 found a stray MSYS gdb that took the multi-word `-ex` arguments as filenames.
 
-**Deliberately not changed yet: the missing `odin-sqlite.dylib`.** Building the extension in CI would
-send this test down its real path instead of the skip, which might make the abort disappear without
-anyone learning what it was. One variable at a time: get the stack first.
+Holding the missing `odin-sqlite.dylib` back was the right call: building the extension in CI would
+have sent this test down its real path instead of the skip, and the bad `delete` — which is on the skip
+path — would have vanished unfixed and unexplained. **That step is now the next thing to land**, and
+with the abort gone it should merely turn a skip into a real run of `SciterLibraryInit`, on all three
+platforms, for the first time.
 
 ### 3. Quarantine — **MEASURED: not an issue**
 

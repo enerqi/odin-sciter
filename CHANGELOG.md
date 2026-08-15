@@ -127,6 +127,23 @@ against.
   vendoring the dylib the way everything else expects would have left the job skipping every runtime
   step while reporting success. The gate is gone; the steps are unconditional and `fetch-engine
   --check` is what fails if the file is missing.
+- **`sqlite_extension` freed memory nothing had allocated**, and had done so on every platform since it
+  was written. `filepath.dir` is `os.dir`, which *slices* its argument rather than allocating — the
+  result points into `os.args[0]` — and the example paired it with a `delete`. Linux and Windows
+  swallowed it; macOS's malloc aborts the process (`error for object 0x65: pointer being freed was not
+  allocated`). Undefined behaviour on all three, caught on one. The same wrong belief was written into
+  `single_binary.odin` as a comment, and into `src/prelude.odin` as a call with an allocator argument
+  that procedure does not take — which nothing ever compiled, because the generated `sciter.odin`
+  carried the correct one-argument version and `just bindgen` had not been re-run since the drift. All
+  three corrected. Odin's test runner would have named it years earlier — it wraps each test in a
+  `mem.Tracking_Allocator` and reports bad frees as well as leaks — except the test had swapped
+  `context.allocator` for the raw heap thirty lines above, disabling that net for everything after it.
+  The swap is legitimate (the engine holds allocations past the test) and now happens as late as
+  possible, immediately before the allocations that have to escape.
+- **CI builds the SQLite native extension before running the suite**, on all three platforms.
+  `sqlite_extension`'s end-to-end test loads `odin-sqlite` through `sciter.loadLibrary` and had skipped
+  itself in CI since it was written, because nothing built the library — so `SciterLibraryInit`, the
+  native-extension entry point, had no coverage anywhere. It runs now.
 - **macOS: the clipboard accepts a `json` flavour and does not hold it** — engine defect 12, measured
   on macos-14/arm64. The write answers true and the next read reports no json, with no error anywhere;
   Linux and Windows both carry the object through. It is that flavour rather than clipboard access:
