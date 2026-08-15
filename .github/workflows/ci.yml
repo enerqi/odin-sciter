@@ -4,10 +4,11 @@
 # run it. Steps 2 (read the SDK changelog), 8 (look at a window) and 9 (docs) stay human - CI cannot
 # see that a window renders blank.
 #
-# Platform jobs are gated on the binary actually being vendored rather than being deleted or left to
-# fail: `lib/windows/x64/sciter.dll` and `lib/macosx/**` do not exist today, so those jobs report what
-# they skipped and why. Vendoring the binary is the whole of turning them on - see
-# docs/WINDOWS-CHECKLIST.md, whose steps 2, 4, 5, 7 and 8 are what the Windows job below runs.
+# All three engines are vendored now, so all three platform jobs run their runtime steps. The Windows
+# job keeps its `is the engine vendored?` guard because that is how it was brought up and the guard
+# costs nothing; the macOS job dropped its equivalent, which had been globbing a path
+# (`lib/macosx/*/libsciter.dylib`) that nothing else in the repository uses and could therefore never
+# fire. docs/WINDOWS-CHECKLIST.md and docs/MACOS-CHECKLIST.md are the measurement records for those two.
 name: CI
 
 on:
@@ -248,8 +249,16 @@ jobs:
           EXAMPLE_TEST_TIMEOUT: '420'
         run: just example-tests
 
+  # **This job is the Mac.** Nobody working on this repository owns one, so `macos-14` is where the
+  # macOS port is brought up: arm64, free on a public repository, and able to run every step the
+  # Windows desktop ran except the one that matters most - no human here can see whether a window
+  # renders blank rather than correctly. README.md's platform table says exactly that, and this job is
+  # what backs the half of the claim it can back.
+  #
+  # Ordered like the Linux job, and for the same reasons: verify the engine, then ask whether a window
+  # can exist at all, then spend the forty-five minutes.
   macos:
-    name: macos (needs the engine vendored)
+    name: macos arm64 (engine vendored)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -258,31 +267,62 @@ jobs:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
 
-      # macOS ships untested and says so (README.md's platform table). The arm64 runner also means the
-      # binary to vendor is the arm64 one, or a universal build.
-      - name: Is the engine vendored?
-        id: engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          # `macosx`, not `macos`: this is the directory `load` searches (src/prelude.odin) and the one
-          # the justfile's packfolder/scapp paths use. A dylib under `lib/macos/` turns this job green
-          # and is then invisible to the loader at runtime.
-          if ls lib/macosx/*/libsciter.dylib >/dev/null 2>&1; then
-            echo "have=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no libsciter.dylib under lib/macosx/ - skipping the runtime steps. macOS is unvendored and untested; see external/sciter/VENDORED.md."
-          fi
+      # The gate that used to be here globbed `lib/macosx/*/libsciter.dylib` - an arch subdirectory
+      # that nothing else in the repository uses. `src/prelude.odin` searches `lib/macosx`, the
+      # justfile's `engine_rel` is `macosx/libsciter.dylib`, and the SDK's own layout is `bin/macosx/`,
+      # because the macOS build is a *universal* binary and there is nothing to split by arch. So a
+      # dylib vendored the way everything else expects left this job permanently skipped - a gate that
+      # can never fire, reporting success. It is vendored now and the steps below are unconditional;
+      # if the file is missing, `fetch-engine --check` fails and says so.
+      - name: Verify the pinned engine
+        run: just fetch-engine --check
 
+      # Both slices, and the signature. One line of output that answers three questions the runtime
+      # steps would otherwise answer with a SIGKILL: is the arm64 slice there, is it signed at all
+      # (arm64 macOS will not map unsigned code), and did the checkout attach a quarantine attribute.
+      - name: What the dylib is
+        run: |
+          set -uo pipefail
+          lipo -archs lib/macosx/libsciter.dylib
+          codesign -dv --verbose=2 lib/macosx/libsciter.dylib 2>&1 | head -8
+          xattr -l lib/macosx/libsciter.dylib || echo "(no extended attributes)"
+
+      # The step the upgrade procedure exists for. No window needed - it loads the library and walks the
+      # table. The macOS null list is not pinned yet, so this *reports* the list it finds rather than
+      # enforcing it; the value it prints is what goes into MACOS_NULLS in check-api-map.py, and only
+      # then does it become a gate. See docs/MACOS-CHECKLIST.md for the prediction it is measured
+      # against.
       - name: Verify the ISciterAPI table
-        if: steps.engine.outputs.have == 'true'
         run: just api-map-verify
 
       - name: Type check and build everything
-        if: steps.engine.outputs.have == 'true'
         run: just check
 
+      # The precondition for everything below. On Linux this catches a missing renderer; here the
+      # question is whether a process in this runner's launchd session can talk to WindowServer at all.
+      # If it cannot, every windowed test faults identically and the job below is forty-five minutes of
+      # noise. `.github/scripts/macos-canary.sh` prints the session type, the signature, the arch and an
+      # lldb backtrace when the answer is no.
+      - name: Can the engine create a window here?
+        run: just window-canary
+
+      # EXAMPLE_TEST_TIMEOUT bounds each example rather than the job, for the same reason as the other
+      # two platforms: a windowed test that blocks on the message pump would otherwise be reported only
+      # as "something hung".
+      #
+      # The open question this step answers is the main-thread one. AppKit requires window work on the
+      # main thread and Odin's test runner does not run tests there, so the windowed tests may fault
+      # where the canary above passed. That would be the macOS analogue of the Windows test-runner
+      # finding (docs/odin-test-runner-windows.patch), and docs/MACOS-CHECKLIST.md carries the
+      # prediction and the fallback.
       - name: Run the example tests
-        if: steps.engine.outputs.have == 'true'
+        timeout-minutes: 45
+        env:
+          EXAMPLE_TEST_TIMEOUT: '420'
         run: just example-tests
+
+      # Engine-side resources are invisible to Odin's allocator tracking, so nothing above would notice
+      # the wrapper leaking one. Cheap, and it ran clean on both other platforms - a macOS-only leak
+      # would be a real finding.
+      - name: Leak sweep
+        run: just leak-check

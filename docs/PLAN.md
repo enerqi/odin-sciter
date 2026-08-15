@@ -31,7 +31,12 @@ was Windows, and **Windows x64 has now been vendored and run on a real machine**
 suite, the ISciterAPI table (gated in CI), the inspector, native extensions, ASan and the leak sweep.
 What that run found, what it fixed, and the two things still open are in
 [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md), which is a measurement record rather than a to-do list
-now. macOS is the remaining platform, and it is a vendoring gap rather than a code one.
+now. macOS was the remaining platform: the engine is vendored (universal, x86_64 + arm64) and the
+`macos-14` job in CI is what brings it up, because nobody here owns a Mac. That is a real ceiling rather
+than a formality - CI can prove the table matches and the suite passes, and cannot see that a window
+renders blank - so the platform table in `README.md` has a column for it and
+[`MACOS-CHECKLIST.md`](./MACOS-CHECKLIST.md) is the record, written as predictions *before* the first
+run for the same reason the Windows one was worth having.
 
 **Running a windowed example on X11**: this machine's engine build segfaults in `XSetICFocus`, inside
 libsciter's X input-method handling, shortly after a window takes focus — 3 runs out of 3. Running with
@@ -489,14 +494,16 @@ types that are already right, or the same conversions get written twice.
 9. ~~**Examples and guides** — §9~~ **done**: all twenty-three examples run, and the eleven guides are
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
-10. **Cross-platform** — vendor the Windows binary and verify there (the only other machine available);
-    macOS ships untested and should say so. Prepared without the machine: everything type checks for
-    `windows_amd64` and `darwin_amd64` (`odin check -target:`), `examples/api_map.odin` was rewritten
+10. **Cross-platform** — ~~vendor the Windows binary and verify there~~ **done**, on a real desktop;
+    macOS is vendored and brought up in CI, because there is no Mac here and `macos-14` is the closest
+    thing to one. Prepared without either machine: everything type checks for `windows_amd64`,
+    `darwin_amd64` and `darwin_arm64` (`odin check -target:`), `examples/api_map.odin` was rewritten
     to build on all three (it used `dladdr`, which does not exist on Windows, so the one tool the
     upgrade procedure leads with would not have linked), the `dom_walk` tests no longer gate
     themselves on `DISPLAY`/`WAYLAND_DISPLAY` on platforms that have neither, and `just pack` /
-    `just extension-run` look for `packfolder.exe` / `scapp.exe`. The rest is in
-    [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
+    `just extension-run` look for `packfolder.exe` / `scapp.exe`. The records are
+    [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) and [`MACOS-CHECKLIST.md`](./MACOS-CHECKLIST.md);
+    what macOS still lacks is a human who has looked at a window.
 11. ~~Native extensions (`SciterLibraryInit`)~~ **done** — not in the original plan. See §11 below.
 12. **Housekeeping** — ~~reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes,
     `run_*` / `rerun_*` / `sanitize` / `test` recipes~~ **done**: they now take an example name and
@@ -635,8 +642,10 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
 ## 12. Open questions
 
 - ~~**Repo size.**~~ **decided: vendor.** Offline `git clone && just example hello_window` is worth the
-  bytes. Measured cost is ~40 MB of permanent history per engine bump once all three platforms are
-  vendored (11 MB Linux, 8 MB Windows, 20 MB macOS, compressed), against 11 MB of `.git` today. The
+  bytes. Measured cost is ~38 MB of permanent history per engine bump now that all three platforms are
+  vendored: 11 MB Linux, 8 MB Windows and 18.9 MB macOS compressed, against 11 MB of `.git` before any
+  of them. The macOS figure is the one that was estimated rather than measured, and the estimate (20 MB)
+  held - it is the biggest of the three because that file is universal and carries two architectures. The
   mitigations — upgrade deliberately, tell users to `--depth 1`, never keep two engine versions in the
   tree, record SHA-256s so a fetch-based fallback stays possible, and squash history onto an orphan
   branch if `.git` passes ~500 MB — are in [`UPGRADING.md`](./UPGRADING.md), along with why Git LFS and

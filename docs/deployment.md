@@ -3,8 +3,11 @@
 What to ship, where the engine has to be, what you owe Terra Informatica, and what to expect on each
 platform.
 
-> **Status.** Linux x64 and Windows x64 are both vendored and run. macOS is untested and unvendored —
-> treat its rows below as instructions, not as verified results.
+> **Status.** Linux x64 and Windows x64 are both vendored and run on real machines. macOS is vendored
+> and exercised in CI only — nobody here owns a Mac. Its packaging rows below are instructions rather
+> than verified results, with one exception: everything said about the *dylib itself* (universal,
+> ad-hoc signed, absolute install name, system frameworks only) was read out of the file's Mach-O
+> headers and is measurement. See [`MACOS-CHECKLIST.md`](MACOS-CHECKLIST.md).
 >
 > Two Windows results here are measured rather than assumed, and both were open questions in this file
 > until 2026-08-15. The single-binary cache resolves to `%LOCALAPPDATA%\odin-sciter\<hash>\sciter.dll`,
@@ -37,11 +40,15 @@ Nothing else. No runtime to install, no Chromium, no Node, no separate process.
 | --- | --- | --- | --- |
 | Linux x64 | `libsciter.so` | beside the executable | `bin/linux/x64/` in the SDK |
 | Windows x64 | `sciter.dll` | beside the `.exe` | `bin/windows/x64/` |
-| macOS | `libsciter.dylib` | `Contents/Frameworks/` in the bundle | `bin/macosx/` |
+| macOS (universal) | `libsciter.dylib` | `Contents/Frameworks/` in the bundle | `bin/macosx/` |
 
 The SDK also ships `bin/windows.d2d/` (a Direct2D build) and `bin/windows.xp/`, plus arm64 builds for
-Linux, Windows and macOS. Pick one build and pin it — and re-run `just example api_map` against it,
-which is the check that catches a header/binary mismatch.
+Linux and Windows. Pick one build and pin it — and re-run `just example api_map` against it, which is
+the check that catches a header/binary mismatch.
+
+macOS needs no such pick: `bin/macosx/libsciter.dylib` is a single universal file with an x86_64 and an
+arm64 slice, 50 MB because of it. `lipo -thin arm64` halves that in your own build; the copy vendored
+here is deliberately whole, so that what is pinned is what upstream shipped.
 
 ### Runtime dependencies
 
@@ -97,7 +104,8 @@ For a single artifact, `load_embedded` puts the engine in the executable as data
 the user's cache directory, and loads it from there. [`resources.md`](./resources.md#the-engine-itself)
 covers the mechanics. Before adopting it, weigh:
 
-- the executable grows by ~25 MB
+- the executable grows by ~25 MB (~19 MB on Windows, ~50 MB on macOS, where the vendored dylib is
+  universal and carries both architectures)
 - the first run writes to a cache directory, which must be writable and **must not be mounted
   `noexec`** — which is why this uses the user's cache directory rather than `/tmp`, since `/tmp` is
   `noexec` on a fair number of hardened systems
@@ -120,8 +128,23 @@ package for Sciter to exist.
 
 **macOS.** `libsciter.dylib` in `Contents/Frameworks/`, and the executable's rpath set accordingly —
 or, since the loader here is `dlopen`-based rather than link-time, simply pass the resolved bundle path
-to `load_engine`. Untested: expect to spend time on notarization and hardened-runtime entitlements
-before it launches cleanly.
+to `load_engine`. Note that the dylib's own install name is the absolute `/usr/local/lib/libsciter.dylib`
+rather than `@rpath/libsciter.dylib`, which matters to a link-time consumer and not to this one.
+
+Four things about signing, three of them measured from the vendored file:
+
+- **it is ad-hoc signed** (`CodeDirectory` flags `0x2`, empty CMS blob). That is what lets arm64 macOS
+  map it at all — unsigned code is refused outright — and it is *not* a Developer ID and not notarized
+- **so you must re-sign it with your own identity** and notarize the bundle. `codesign` rewrites the
+  file, which invalidates the SHA-256 recorded in `external/sciter/VENDORED.md`; sign a copy in your
+  build output, never the vendored one
+- **an engine extracted at runtime by `load_embedded` is not covered by your bundle's signature.** It
+  is byte-identical to the embedded copy, so it keeps the ad-hoc signature and should load, but a
+  hardened-runtime application with library validation enabled will refuse it. Ship the two files for a
+  notarized `.app`
+- no JIT entitlement is needed: the script engine is QuickJS, an interpreter
+
+Untested end to end — no Mac. Expect to spend time on notarization and entitlements regardless.
 
 ## Licensing
 

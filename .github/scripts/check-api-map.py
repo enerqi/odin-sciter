@@ -98,9 +98,19 @@ LINUX_NULLS = """
 # repository does, and the null list is why.
 WINDOWS_NULLS = [n for n in LINUX_NULLS if n != "SciterProcND"]
 
-# Not yet measured - the first real run on macOS is what fills this in, and until then the null list is
-# reported rather than enforced. Expected shape, from the header layout: fills SciterCreateNSView, nulls
-# SciterCreateWidget and the Windows entries.
+# Not yet measured - the first run on `macos-14` is what fills this in, and until then the macOS null
+# list is *reported* rather than enforced (see `expected` in main()).
+#
+# **The prediction, written down before the run so it can be wrong in public.** 15 nulls: the Linux list
+# minus `SciterCreateNSView`, which is the one slot macOS should be the platform to fill. `SciterProcND`
+# stays null (it is a Windows-only entry point), `SciterCreateWidget` stays null (Linux/GTK, gone in
+# Sciter 6 anyway), and the D2D/DirectX entries stay null (Windows). That would make the macOS list
+# identical in *shape* to the Windows one - one slot different from Linux, a different slot.
+#
+# Treat that prediction as weak. The equivalent one for Windows was recorded here and was wrong twice
+# over: it predicted the D2D slots would be filled (they are not - this build renders through Skia) and
+# that sciter.dll would export one symbol (it exports 276). The vendored dylib links AppKit, Cocoa,
+# Carbon *and* Metal, so what the engine actually publishes on macOS is a question for the runner.
 MACOS_NULLS: list[str] = []
 
 # The two Windows slots whose implementation is not in sciter.dll's export table - see the header. They

@@ -121,6 +121,15 @@ against.
 
 ### Changed
 
+- **The macOS CI job's "is the engine vendored?" gate could never fire.** It globbed
+  `lib/macosx/*/libsciter.dylib` — an architecture subdirectory that nothing else in the repository
+  uses, since `src/prelude.odin` searches `lib/macosx` and the macOS engine is one universal file. So
+  vendoring the dylib the way everything else expects would have left the job skipping every runtime
+  step while reporting success. The gate is gone; the steps are unconditional and `fetch-engine
+  --check` is what fails if the file is missing.
+- **`just cross-check` now checks `darwin_arm64`** as well as `darwin_amd64` and `windows_amd64` — the
+  architecture CI's macOS runner actually builds on, previously unchecked. `single_binary` is no longer
+  excluded from it: its `#load` covers Darwin now that the dylib is vendored.
 - **`make_element`, `clone_element`, `use_element` and `remove_element(finalize = false)` hand back an
   `Owned_Element`.** The borrowed handle every lookup returns and the one that owes an `unuse_element`
   are now separate types, and `unuse_element` accepts only the second — so releasing a handle you never
@@ -169,6 +178,17 @@ against.
 
 ### Added
 
+- **The macOS engine is vendored** — `lib/macosx/libsciter.dylib`, 50 029 168 bytes, universal
+  (x86_64 + arm64), hash-pinned in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) like
+  the other two. Nobody working on this repository owns a Mac, so **CI is the Mac**: the `macos-14` job
+  now verifies the engine, reports what the dylib is, runs `api-map-verify`, `check`, a window canary,
+  the example suite and the leak sweep. `README.md`'s platform table grew a column to say what that
+  does and does not prove — CI cannot see that a window renders blank.
+  [`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md) is the record, and is written as *predictions*
+  ahead of the first run, the way the Windows one earned its keep.
+- **`.github/scripts/macos-canary.sh`** — the Darwin half of `window-canary.sh`. Same contract (exit
+  124 means the window lived), entirely different evidence when it fails: `launchctl managername` for
+  the session type, `lldb` for the trace, `codesign`/`lipo`/`xattr`/`otool` for the dylib.
 - **`sciter_app/value_scope.odin`** — a `Value_Scope` holds a batch of engine references with one
   lifetime and releases them together, which is what `scoped_` cannot do for a pile produced in a loop
   (`@(deferred_out)` fires at the end of the calling scope, which there is one iteration). The same

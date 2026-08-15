@@ -36,7 +36,14 @@
 //            must not reach for them. The D2D/DirectWrite and DirectX slots are null because this is
 //            the plain `bin/windows/` build, which renders through Skia - they belong to
 //            `bin/windows.d2d/`, which is deliberately not the one vendored.
-//   macOS     expected to fill SciterCreateNSView. Still unverified.
+//   macOS    15 null predicted, unverified: the Linux list minus SciterCreateNSView, which is the one
+//            slot macOS should be the platform to fill. That would make it the same shape as the
+//            Windows list - one slot different from Linux, a different slot. Treat the prediction as
+//            weak: the equivalent one for Windows was wrong in both directions, and the vendored dylib
+//            links AppKit, Cocoa, Carbon *and* Metal, so what it publishes is a question for the
+//            runner. The engine is vendored and CI's macos-14 job runs this tool; what it prints
+//            replaces this paragraph and fills MACOS_NULLS in .github/scripts/check-api-map.py, which
+//            reports rather than enforces until then. See docs/MACOS-CHECKLIST.md.
 //
 // `SciterGetViewExpando` and the four `reserved` slots are null on every platform: leftovers from the
 // removed script-VM API. The first of those is why `sciter_app.set_global` evaluates an assignment

@@ -7,6 +7,7 @@
 | `external/sciter/include/` | The SDK's C/C++ headers, unmodified |
 | `lib/linux/x64/libsciter.so` | The Linux x64 engine |
 | `lib/windows/x64/sciter.dll` | The Windows x64 engine |
+| `lib/macosx/libsciter.dylib` | The macOS engine - one universal file, x86_64 and arm64 |
 
 ## Version
 
@@ -27,9 +28,38 @@ Verified against the shipped library rather than assumed - `just example api_map
 | --- | --- | --- |
 | `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
 | `lib/windows/x64/sciter.dll` | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
+| `lib/macosx/libsciter.dylib` | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
 
 The Windows entry is the plain `bin/windows/x64/` build, **not** `bin/windows.d2d/` (a Direct2D variant)
 or `bin/windows.xp/`.
+
+### What the macOS file is
+
+It is the largest of the three and the only one that is two engines, so it is worth being precise about
+what was pinned. Everything here was read out of the Mach-O headers, not assumed:
+
+| | |
+| --- | --- |
+| Format | universal (`FAT_MAGIC`), 2 slices: x86_64 at +16 384 (25 462 016 bytes), arm64 at +25 493 504 (24 535 664 bytes) |
+| Minimum OS | macOS 11.5, built against the 26.5 SDK - both slices |
+| Install name | `/usr/local/lib/libsciter.dylib` - an absolute path, **not** `@rpath/...` |
+| Code signature | present on both slices, **ad-hoc**: `CodeDirectory` flags `0x2`, empty CMS blob, identifier `libsciter-55554944b7c9594f88483d738faed48ff1997311` |
+| Dependencies | system frameworks only - AppKit, Cocoa, Carbon, Foundation, CoreGraphics, QuartzCore, Metal, OpenGL, AVFoundation, CoreText, IOSurface, `libc++`, `libobjc`, `libSystem`. Nothing third-party |
+
+Three of those have consequences:
+
+- **Ad-hoc signed is enough to load, and not enough to ship.** arm64 macOS refuses to map unsigned code,
+  so the ad-hoc signature is why `dlopen` works at all; but it carries no Developer ID and is not
+  notarized, so an application redistributing this file has to re-sign it with its own identity and
+  notarize the bundle. Re-signing rewrites the file and therefore breaks the hash above - sign a copy in
+  your build output, never `lib/`.
+- **The install name is absolute.** Irrelevant here, because the loader in `src/prelude.odin` is
+  `dlopen`-by-path rather than link-time, and worth knowing before anyone tries to link against it:
+  that path is where a link-time consumer would look at runtime unless `install_name_tool` says
+  otherwise.
+- **One file, two architectures.** ~24 MB of it is dead weight on any given machine, which is what makes
+  the macOS engine 50 MB against Windows' 19 MB. `lipo -thin arm64` is the fix in an application's own
+  build; it is deliberately not done here, so that what is pinned is what upstream shipped.
 
 Recorded so a binary obtained out of band can be checked against the one these bindings were verified
 against, and because the download-instead-of-vendor step now exists and verifies against exactly this:
@@ -63,8 +93,8 @@ budget.
 
 Only what the bindings need is vendored. Everything else stays upstream:
 
-- `bin/` for platforms other than Linux x64 and Windows x64 - the `windows.d2d/` and `windows.xp/`
-  variants, macOS, Android, and the 32-bit and ARM Linux builds
+- `bin/` for platforms other than Linux x64, Windows x64 and macOS - the `windows.d2d/` and
+  `windows.xp/` variants, Android, and the 32-bit and ARM Linux builds
 - the SDK tools: `packfolder`, `inspector`, `scapp`, `usciter`, `tsciter`, `lite-sciter-sdl`,
   `sciter-sqlite.so`
 - `demos/`, `samples*/`, `widgets/`, `quark/`, `sciter+/`, `sciter-webview/`, `docs/`

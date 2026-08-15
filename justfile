@@ -58,9 +58,11 @@ engine_tag := "6.0.4.9-bis"
 # One hash per platform, because the pin is per *file*, not per tag. A single hash here would have made
 # `just fetch-engine` on Windows fetch sciter.dll and compare it against the Linux .so's digest - which
 # fails with "refusing to install", i.e. the recipe that exists to install the engine cannot install it.
-# macOS is not vendored yet: `TODO` makes fetch-engine install it and print the digest to record here,
-# rather than refusing (see the `unverified` branch in .github/scripts/fetch-engine.py).
-engine_sha256 := if os() == "windows" { "b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083" } else if os() == "macos" { "TODO" } else { "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b" }
+#
+# The macOS entry covers both architectures: `bin/macosx/libsciter.dylib` is a universal binary with an
+# x86_64 and an arm64 slice, so there is one file and one hash rather than a directory per arch. That is
+# why `engine_rel` below has no `x64` component on macOS and the other two do.
+engine_sha256 := if os() == "windows" { "b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083" } else if os() == "macos" { "a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c" } else { "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b" }
 
 # The same relative path under two roots: `bin/` upstream, `lib/` here.
 engine_rel := if os() == "windows" { "windows/x64/sciter.dll" } else if os() == "macos" { "macosx/libsciter.dylib" } else { "linux/x64/libsciter.so" }
@@ -849,37 +851,53 @@ stats *args:
 # renderer diagnosis when the answer is no. Read the script's header before running it: an `SW_MAIN`
 # window mode-sets the X display to its own size, so this belongs under Xvfb or Xephyr, not on your
 # desktop session.
+#
+# `[linux]` and `[macos]` rather than one `[unix]` recipe, because the two scripts share only their
+# contract - build `hello_window`, run it under a short timeout, exit 124 means the window lived. The
+# evidence they print when the answer is no has nothing in common: gdb/ldd/EGL ICDs/xdpyinfo on Linux,
+# lldb/otool/codesign/lipo on macOS. One script with a platform switch would be two scripts in a
+# trench coat.
 # ---
 # [under Xvfb only] can the engine create a window on this machine?
-[unix]
+[linux]
 window-canary: mktarget_dirs
 	.github/scripts/window-canary.sh
+
+# ---
+# can the engine create a window on this machine?
+[macos]
+window-canary: mktarget_dirs
+	.github/scripts/macos-canary.sh
 
 # The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS
 # day to day, so an example that stops type checking there is invisible until someone has the machine.
 #
-# Three examples are excluded, each for a stated reason rather than because they failed:
+# **`darwin_arm64` is in the list because that is what CI's macOS runner is.** `macos-14` and later are
+# Apple silicon, so checking only `darwin_amd64` would leave the architecture the mac job actually
+# builds on unchecked - and the vendored dylib is universal, so both slices are real targets rather
+# than one being theoretical. Three targets is still seconds; the engine is never loaded here.
+#
+# Two examples are excluded, for a stated reason rather than because they failed:
 #
 #   integration, native_child  raw Xlib. They are the two halves of "a Sciter view and a native window
 #                              in each other's frame", and on Linux that means X11 - `vendor:x11/xlib`
 #                              declares nothing off Linux. The Windows equivalents would be different
 #                              programs, not the same program compiled elsewhere.
-#   single_binary              embeds the engine with #load, and macOS is the one platform whose binary
-#                              is not vendored. Its `when` has a deliberate #panic saying so, which is
-#                              a *build*-time error, so this is skipped for darwin_amd64 only - it is
-#                              checked for windows_amd64 since lib/windows/x64/sciter.dll landed.
-#                              Extend the `when` and drop it from `extra_skip` when macOS is vendored.
+#
+# `single_binary` used to be a third, because it `#load`s the engine and macOS was the platform whose
+# binary was not vendored. It is vendored now, its `when` covers both Darwin architectures, and so it
+# is checked here like everything else.
 # ---
-# type check both packages, the snippets and every portable example for windows_amd64 and darwin_amd64
+# type check both packages, the snippets and every portable example for windows and macOS
 [script]
 cross-check: ensure-engine
 	import glob, os, sys
 	sys.path.insert(0, ".github/scripts")
 	from justlib import X11_ONLY, run
 
-	for target in ("windows_amd64", "darwin_amd64"):
-		# macOS is the one platform whose engine binary is not vendored, and single_binary `#load`s it.
-		skip = set(X11_ONLY) | ({"single_binary"} if target == "darwin_amd64" else set())
+	targets = ("windows_amd64", "darwin_amd64", "darwin_arm64")
+	for target in targets:
+		skip = set(X11_ONLY)
 		print(f"--- {target}")
 		run(["odin", "check", ".", "-no-entry-point", f"-target:{target}"])
 		run(["odin", "check", "sciter_app", "-no-entry-point", f"-target:{target}"])
@@ -888,7 +906,7 @@ cross-check: ensure-engine
 			if os.path.basename(f)[:-5] in skip:
 				continue
 			run(["odin", "check", f, "-file", "-no-entry-point", f"-target:{target}"])
-	print("ok: both packages, the doc snippets and every portable example type check for windows_amd64 and darwin_amd64")
+	print(f"ok: both packages, the doc snippets and every portable example type check for {', '.join(targets)}")
 
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
 # a separate application that attaches over a socket, so it is run *alongside* your app, not by it:

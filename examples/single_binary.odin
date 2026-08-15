@@ -17,8 +17,8 @@
 // platforms. What it buys is a single artifact to ship; see `sciter_app/embed.odin` for the full list
 // of trade-offs, including the Windows anti-malware one.
 //
-// The engine is vendored for Linux x64 and Windows x64 in this repository, so those are the platforms
-// this example compiles on today. macOS is the gap, and it is a vendoring gap rather than a code one.
+// The engine is vendored for Linux x64, Windows x64 and macOS (universal) in this repository, so this
+// example compiles on all three.
 package main
 
 import sciter ".."
@@ -31,19 +31,30 @@ import "core:path/filepath"
 import "core:slice"
 import "core:testing"
 
-// The engine itself. ~25 MB on Linux, ~18 MB on Windows, straight into the executable's read-only data.
+// The engine itself. ~25 MB on Linux, ~18 MB on Windows, ~48 MB on macOS, straight into the
+// executable's read-only data.
 //
 // One `when` per vendored binary, and the `else` is a compile-time error rather than a runtime one on
 // purpose: an executable that embeds nothing is not a smaller version of this example, it is a broken
 // one, and the failure belongs at the build rather than in front of a user.
+//
+// **macOS embeds both architectures, and that is not a mistake.** `lib/macosx/libsciter.dylib` is a
+// universal binary, so an arm64 build of this example carries the x86_64 slice it will never use -
+// ~24 MB of dead weight. Embedding one slice would mean splitting the vendored file with `lipo`, which
+// means a second artifact and a second hash to pin, and the extracted copy would then be thinner than
+// the thing `just fetch-engine --check` verified. Whole file, one pin; `lipo -thin` in your own build
+// is the answer if the size matters to you.
 when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
 	ENGINE :: #load("../lib/linux/x64/libsciter.so")
 } else when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {
 	ENGINE :: #load("../lib/windows/x64/sciter.dll")
+} else when ODIN_OS == .Darwin && (ODIN_ARCH == .arm64 || ODIN_ARCH == .amd64) {
+	ENGINE :: #load("../lib/macosx/libsciter.dylib")
 } else {
 	#panic(
-		"single_binary embeds the engine, and only lib/linux/x64/libsciter.so and " +
-		"lib/windows/x64/sciter.dll are vendored here - see external/sciter/VENDORED.md",
+		"single_binary embeds the engine, and only lib/linux/x64/libsciter.so, " +
+		"lib/windows/x64/sciter.dll and lib/macosx/libsciter.dylib are vendored here - " +
+		"see external/sciter/VENDORED.md",
 	)
 }
 

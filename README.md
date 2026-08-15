@@ -9,8 +9,10 @@ Node.js, and no separate process. A "hello world" application is one Odin file a
 
 > **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
 > engine, there is an Odin-shaped layer on top of them, and 30 examples, 397 tests and twelve
-> guides cover it (`just stats` prints those; they are measured, not maintained by hand). Linux x64 is the only platform vendored and tested so far; Windows type checks but has not
-> been run. See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
+> guides cover it (`just stats` prints those; they are measured, not maintained by hand). Linux x64 and
+> Windows x64 are vendored and have been run on real machines; macOS is vendored and is exercised in CI
+> only — nobody here owns a Mac, and the table below says exactly what that does and does not prove.
+> See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
 > [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
 
 There are two packages, and you can mix them freely.
@@ -265,11 +267,18 @@ SCITER_SDK=/path/to/sciter-js-sdk just extension-run   # runs it under scapp
 On failure it returns the full candidate list, so print it — that is the fastest way to see what went
 wrong.
 
-| Platform | File | Vendored here | Tested |
-| --- | --- | --- | --- |
-| Linux x64 | `libsciter.so` | yes, `lib/linux/x64/` | yes |
-| Windows x64 | `sciter.dll` | yes, `lib/windows/x64/` | yes, with caveats — see below |
-| macOS | `libsciter.dylib` | not yet | no |
+| Platform | File | Vendored here | Green in CI | Looked at by a human |
+| --- | --- | --- | --- | --- |
+| Linux x64 | `libsciter.so` | yes, `lib/linux/x64/` | yes | yes |
+| Windows x64 | `sciter.dll` | yes, `lib/windows/x64/` | yes | yes, with caveats — see below |
+| macOS (universal) | `libsciter.dylib` | yes, `lib/macosx/` | see below | **no** |
+
+**The last column is not padding.** CI can prove the engine loads, that the ISciterAPI table is the one
+these bindings were generated against, that the suite passes and that nothing leaks. It cannot tell you
+a window renders correctly rather than blank. Nobody working on this repository owns a Mac, so macOS is
+brought up on GitHub's `macos-14` runners and that is the ceiling of what is claimed for it.
+[`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md) is the record: what was established from the
+binary itself, what CI is expected to establish, and the predictions it will confirm or contradict.
 
 Windows x64 was brought up on a real desktop on 2026-08-15: the whole example suite passes, the
 ISciterAPI table is verified and gated in CI, and the leak sweep is clean.
@@ -367,10 +376,10 @@ Two recipes exist for what CI runs, and are worth running by hand after an engin
 
 - `just api-map-verify` — `api_map`, with its table asserted rather than read: 189 slots, API version
   10, every non-null slot resolving to its own `…Imp`, and the platform's null list unchanged
-- `just cross-check` — `odin check -target:windows_amd64` and `darwin_amd64` over both packages, the
-  doc snippets and every portable example. Three examples are excluded for stated reasons: `integration`
-  and `native_child` are raw Xlib, and `single_binary` embeds an engine binary that is only vendored
-  for Linux
+- `just cross-check` — `odin check -target:` for `windows_amd64`, `darwin_amd64` and `darwin_arm64` over
+  both packages, the doc snippets and every portable example. `darwin_arm64` is there because that is
+  what CI's macOS runner is. Two examples are excluded for a stated reason: `integration` and
+  `native_child` are raw Xlib
 
 CI itself is three workflows in `.github/workflows/`: `ci` (the above plus the tests, under Xvfb),
 `bindgen` (regeneration is byte-identical to what is committed), and `canary` — a weekly probe that
