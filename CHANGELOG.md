@@ -206,6 +206,13 @@ against.
   does and does not prove — CI cannot see that a window renders blank.
   [`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md) is the record, and is written as *predictions*
   ahead of the first run, the way the Windows one earned its keep.
+- **`just example-tests` bisects its casualties.** A test that kills the process takes the report with
+  it: `odin test` prints results as it goes, but stdout is a pipe in CI rather than a terminal, so it is
+  block-buffered and an abort discards whatever had not been flushed. The result was `exit 134` against
+  a *file*, naming no test. Any example that exits non-zero is now re-run one test per process, each
+  with a single `ODIN_TEST_NAMES`, and the summary names the one that died — including the tests after
+  it, which a crash would otherwise prevent from running at all. Costs a compile per test, and only on
+  a run that has already failed.
 - **`.github/scripts/macos-canary.sh`** — the Darwin half of `window-canary.sh`. Same contract (exit
   124 means the window lived), entirely different evidence when it fails: `launchctl managername` for
   the session type, `lldb` for the trace, `codesign`/`lipo`/`xattr`/`otool` for the dylib.

@@ -62,7 +62,7 @@ Every row runs in the `macos` job of `.github/workflows/ci.yml` unless it says o
 | 3 | `just api-map-verify` | 189 slots, version 10, 0 mismatches; null list per §5 below | **passes** — the null list it printed still has to be transcribed into `MACOS_NULLS` |
 | 4 | `just check` | builds; nothing is X11- or Win32-shaped outside the two excluded examples | **passes** |
 | 5 | `just window-canary` | the open question — see §1 | **passes** — see §1, and it is the single most useful result so far |
-| 6 | `just example-tests` | the second open question — see §2 | **fails, exactly as predicted** — 18 of 22 abort in AppKit. See §2 |
+| 6 | `just example-tests` | the second open question — see §2 | **21 of 22 example files green.** First run: 18 of 22 aborted in AppKit. After the bootstrap and the windowed-test skip: only `sqlite_extension` fails. See §2 and §2a |
 | 7 | `just leak-check` | clean, as on both other platforms | not reached — step 6 fails first |
 | 8 | `just cross-check` (Linux) | now covers `darwin_arm64` as well as `darwin_amd64` | **done** |
 | 9 | `just example single_binary` | embeds all 50 MB and extracts to `~/Library/Caches/odin-sciter` | |
@@ -221,7 +221,15 @@ Note for applications, since the trace invites the wrong conclusion: none of thi
 app. `main` runs on the main thread, so `create_window` from `main` is correct by construction. Only a
 test binary has this problem.
 
-### 2a. What passed, and what it proves
+### 2a. Where the suite stands
+
+21 of the 22 example files that run off Linux are green — every one except `sqlite_extension`. Across
+them 382 test procedures report success, and **that number should be read carefully**: a large share of
+them are the windowed tests skipping themselves, which is a pass in the runner's accounting and not
+evidence about macOS. What is genuinely exercised here is the display-free half — Values, the DOM over a
+windowless view, archives, images, graphics, the embedded engine, requests, atoms, SOM.
+
+The four that were green from the very first run, before any of this work:
 
 Four examples came back green, and they are not a random four:
 
@@ -236,15 +244,38 @@ Four examples came back green, and they are not a random four:
 second:
 
 - `target/debug/odin-sqlite.dylib` was never built — CI runs `just example-tests` but never
-  `just extension`, so `test_the_extension_loads_and_runs` skips itself with "run `just extension
-  sqlite_extension odin-sqlite` first". That is a gap in the *job*, not a macOS finding: it is true on
-  every platform, and it means the one test that exercises `SciterLibraryInit` has never run in CI
-  anywhere. Fixing it is one step (`just extension sqlite_extension odin-sqlite`) before the suite, in
-  all three jobs — deliberately not done during this bring-up, because it starts a
+  `just extension`, so `test_script_can_load_the_library_and_query` skips itself with "run
+  `just extension sqlite_extension odin-sqlite` first". That is a gap in the *job*, not a macOS finding:
+  it is true on every platform, and it means the one test that exercises `SciterLibraryInit` has never
+  run in CI anywhere. Fixing it is one step (`just extension sqlite_extension odin-sqlite`) before the
+  suite, in all three jobs — deliberately not done during this bring-up, because it starts a
   previously-skipping test on Linux and Windows too and that is a separate thing to land
-- the exit 134 comes *after* that skip, from a later test in the same file, and is the same AppKit
-  abort as everywhere else. So this example needs the bootstrap like the rest; the missing `.dylib` is
-  not what killed it
+- the exit 134 is separate, and it is **not** the AppKit abort. With the bootstrap in place this file
+  still dies with SIGABRT, mid-run, with no `Finished N tests` line and no message of its own
+
+### What the last run says about it
+
+Two things are settled by what is *absent* from the log:
+
+- **`libsqlite3` loads on macOS.** Not one "no libsqlite3 on this machine - skipping" line appears, so
+  the four tests that need it ran for real. Worth knowing because `/usr/lib/libsqlite3.dylib` does not
+  exist as a file on macOS 11+ — the dyld shared cache serves it to `dlopen` by name, which is exactly
+  how `SQLITE_LIBRARY_NAMES` asks for it
+- **the abort is mid-run, not at exit.** No `Finished N tests` line. So it is not the macOS twin of the
+  Windows exit-path fault that `<p>.</p>` works around in this same file
+
+What is missing is *which test*. `odin test` prints results as it goes, but stdout is a pipe in CI
+rather than a terminal, so it is block-buffered and the abort discards whatever had not been flushed —
+which is why this reports `exit 134` against a file and names no test. The whole log shows that
+buffering: skip messages land after the `Finished` lines they precede.
+
+So `example-tests` now **bisects its casualties**: any example that exits non-zero is re-run one test
+per process, each with a single `ODIN_TEST_NAMES`, and the summary names the test that died. It costs a
+compile per test and only happens on a run that has already failed. Verified against a deliberately
+crashing example, where it correctly named the killing test *and* showed that the test after it passes
+in isolation — the one that would otherwise never have run at all.
+
+The next macOS run answers this by itself.
 
 ### 3. Quarantine — **MEASURED: not an issue**
 

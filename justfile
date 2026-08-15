@@ -746,9 +746,15 @@ example-test name="eval" *args: mktarget_dirs
 example-tests: ensure-engine
 	import glob, os, sys
 	sys.path.insert(0, ".github/scripts")
+	import re
 	from justlib import X11_ONLY, run_with_timeout
 
 	limit = int(os.environ.get("EXAMPLE_TEST_TIMEOUT", "0"))
+
+	# The name of the proc `@(test)` decorates. `\s*` spans the newline between them, and any other
+	# attributes stacked in between are `@(...)` lines that the name pattern will not match.
+	TEST_NAME = re.compile(r"@\(test\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*::")
+	bisect = []
 
 	# The X11-only pair does not compile off Linux at all - see justlib - so running their tests there
 	# reports a build failure per example and says nothing about this platform.
@@ -766,6 +772,27 @@ example-tests: ensure-engine
 		code = run_with_timeout(["just", "example-test", name], limit)
 		if code != 0:
 			failed.append(f"{name}(exit {code})")
+			bisect.append(name)
+
+	# **A test that kills the process takes the report with it.** `odin test` prints its per-test
+	# results as it goes, but stdout is a pipe here rather than a terminal, so it is block-buffered and
+	# an abort discards whatever had not been flushed - which is why a SIGABRT reports `exit 134`
+	# against a *file* and names no test at all. Measured on macOS, where sqlite_extension aborted with
+	# nothing in the log but the runner's start-up lines.
+	#
+	# So re-run the casualties one test per process. Each gets its own `odin test` with a single
+	# ODIN_TEST_NAMES, so the one that dies is the one whose name is on the line above the corpse. It
+	# costs a compile per test and only happens on a run that has already failed, which is the run
+	# where the information is worth more than the minute.
+	for name in bisect:
+		names = TEST_NAME.findall(open(f"examples/{name}.odin", encoding="utf-8", errors="replace").read())
+		print()
+		print(f"--- {name}: {len(names)} tests, one process each", flush=True)
+		for test in names:
+			code = run_with_timeout(
+				["just", "example-test", name, f"-define:ODIN_TEST_NAMES={test}"], limit
+			)
+			print(f"    {'ok  ' if code == 0 else f'EXIT {code}'}  {test}", flush=True)
 
 	print()
 	if skip:
