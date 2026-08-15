@@ -32,22 +32,52 @@ has a document loaded segfaults on the next pump unless you hide and pump first.
 
 One order is correct on both. Write it.
 
-## 2. `close` used to be `request_close`, and the header says the difference does not exist
+## 2. Two entry points take untyped words, and the headers under-document both
 
-`sciter-x-def.h` annotates `SCITER_WINDOW_SET_STATE` as `p1 - SCITER_WINDOW_STATE, p2 - N/A`. **`p2` is
-not N/A.** For `.CLOSED` it is the force flag, and the SDK's own C++ layer is where you find that out:
+`SciterExec` and `SciterWindowExec` are ioctl-style dispatchers — one function, many commands, and the
+arguments mean whatever the command says they mean:
+
+```c
+INT_PTR SciterExec      (UINT appCmd    /*SCITER_APP_CMD*/,    UINT_PTR p1, UINT_PTR p2);
+INT_PTR SciterWindowExec(HWINDOW, UINT windowCmd /*SCITER_WINDOW_CMD*/, UINT_PTR p1, UINT_PTR p2);
+```
+
+The enums exist — `SCITER_WINDOW_CMD`, `SCITER_WINDOW_STATE`, `SCITER_APP_CMD` — but **nothing is typed
+as one**: the command is a bare `UINT` with the type name demoted to a comment, and in `sciter-x-api.h`,
+the vtable file these bindings are generated from, even that comment is stripped to `/**/`.
+
+**Two parameters were found hiding there, both by reading the C++ layer:**
+
+| call | what the C header says | what it really is |
+| --- | --- | --- |
+| `SET_STATE` + `.CLOSED` | `p2 - N/A` | `p2` is the force flag |
+| `APP_STOP` | *"reuest to quit message pump loop"* | `p1` is the value `run` returns |
 
 ```cpp
 void request_close() { SciterWindowExec(_hwnd, SET_STATE, STATE_CLOSED, FALSE); }
 void close()         { SciterWindowExec(_hwnd, SET_STATE, STATE_CLOSED, TRUE);  }
+bool request_quit(int rv) { return SciterExec(SCITER_APP_STOP, rv, 0) == 0; }
 ```
 
-This wrapper passed `0` until it was measured, so `close` was really `request_close` — script could
-refuse it, and on Windows the window was simply never destroyed. `close(window, force := true)` is now
-the default and `request_close` is the other one, spelled out.
+This wrapper passed `0` for both. So `close` was really `request_close` — script could refuse it, and on
+Windows the window was never destroyed, which is #1 above — and `stop` could not set an exit code. Both
+fixed: `close(window, force := true)`, `request_close`, and `stop(exit_code := 0)`. Measured: `stop(42)`
+from inside the pump makes `run` return 42.
 
-**The lesson generalises: when the header and `include/*.hpp` disagree, the C++ layer is right.** It is
-the code Terra Informatica actually ships applications with.
+**The force flag itself is not portable.** Windows honours it; **Linux ignores it and closes either
+way**. So `request_close` cannot be used to mean "let script veto this" in portable code — on Linux
+there is no veto. An application that needs one has to ask the document and decide in Odin.
+
+**Why the API is shaped this way.** `ISciterAPI` is 189 offset-addressed slots, so adding a *function* is
+an ABI event while adding a *command* to an existing dispatcher is free. Command dispatch is how this API
+grows without breaking the table — the same trade as `ioctl` or `SendMessage`. The cost is that
+per-command parameter meanings live only in comments, and comments rot: `p2 - N/A` was presumably true
+before `close` gained its flag.
+
+**So when the C header and `include/*.hpp` disagree, the C++ layer is right.** It is the code Terra
+Informatica actually ships applications with; the C header is a machine boundary they do not read. Those
+two dispatchers are the only places a parameter can hide like this, which at least makes it a finite
+list — every command this wrapper sends has now been checked against the C++ layer, and the rest match.
 
 ## 3. Install a debug-output handler on Windows, or a CSS warning can kill your process
 
@@ -72,21 +102,36 @@ kills the test and then hangs the binary. That is an Odin bug, with a written an
 [`odin-test-runner-windows.patch`](./odin-test-runner-windows.patch); four tests carry a
 `when ODIN_OS != .Windows` guard until it lands. If you write your own harness, filter by exception code.
 
-## 5. Sciter is single-threaded, and the test runner is not
+## 5. A test that reads freed memory is a landmine, not a demonstration
+
+`behavior.odin` had a test that deliberately released a `Value` the caller still owned, then read it
+back to prove the reference really was given away. It documented a genuine hazard, and it worked on
+Linux for a long time — then segfaulted the Windows CI runner at exactly that read, took every later
+test in the binary with it, and timed the job out at 420 seconds.
+
+Reading freed memory is entitled to do that. The surprise was that it ever worked, not that it stopped;
+a different allocator is all it takes. The read is now Linux-only, where it is measured, with a note to
+delete rather than chase it if it ever faults there too.
+
+The general point for anything written against this engine: **a use-after-free that "works" is a
+platform accident**, and in a shared-process test binary one of them takes the whole suite down rather
+than failing alone.
+
+## 6. Sciter is single-threaded, and the test runner is not
 
 Every `ISciterAPI` call must come from the thread that ran `SCITER_APP_INIT`. Odin's test runner is
 parallel by default, so every test recipe passes `-define:ODIN_TEST_THREADS=1`. Without it the engine's
 heap is corrupted rather than the tests failing cleanly — it presents as
 `malloc(): unaligned tcache chunk detected`. See [`threading.md`](./threading.md).
 
-## 6. An asset is published *before* the load; a functor *after*
+## 7. An asset is published *before* the load; a functor *after*
 
 Globals belong to the document, so a native functor has to be republished after every `load_html`. A SOM
 asset is the other way round — `set_global_asset` has to happen **before** the load, and it appears in
 the next document rather than the current one. Getting either backwards produces "undefined", not an
 error. `examples/call_odin_from_js.odin` pins both directions.
 
-## 7. Platform differences that are real, and run the way round you would not guess
+## 8. Platform differences that are real, and run the way round you would not guess
 
 | | Linux | Windows |
 | --- | --- | --- |
@@ -101,7 +146,7 @@ error. `examples/call_odin_from_js.odin` pins both directions.
 The portable rule is usually the Linux one: code written against the Windows answer compiles on Linux
 and silently never fires. Keep your own flag rather than asking the engine what state a window is in.
 
-## 8. The inspector needs `.SOCKET_IO`, and says so nowhere obvious
+## 9. The inspector needs `.SOCKET_IO`, and says so nowhere obvious
 
 Three things are required, and the third is the one everyone misses:
 

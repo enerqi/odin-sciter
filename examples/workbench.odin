@@ -2922,17 +2922,27 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 	sciter_app.hide(window)
 	sciter_app.heartbeat() // the turn that takes it off the paint list
 
-	// **`request_close` does not close it**, which is the whole difference between the two calls and the
-	// reason `close` takes a `force` parameter at all. Measured on 6.0.4.9/Windows: the window survives
-	// five turns of the pump afterwards, with a document that refuses the closure *and* with one that
-	// says nothing about it. So `request_close` is the polite ask - it lets script have an opinion, and
-	// on a window nobody is looking at, nothing comes of it.
+	// **The force flag is honoured on Windows and ignored on Linux**, which is the sharpest thing
+	// measured about this pair. `request_close` is `close` with `SET_STATE`'s second parameter off - see
+	// `close` in `window.odin` for why that parameter exists at all when the C header calls it `N/A`.
+	//
+	//	Windows  the window survives five turns of the pump, with a document that refuses the closure
+	//	         *and* with one that says nothing about it. Only the forcing call destroys it.
+	//	Linux    the window is destroyed either way; the flag makes no difference.
+	//
+	// So on Linux there is no polite ask at all, and a portable application cannot use `request_close`
+	// to mean "let script veto this". The Linux half of this was measured by CI failing on it when this
+	// test asserted the Windows answer for both.
 	sciter_app.request_close(window)
 	for _ in 0 ..< 5 {
 		sciter_app.heartbeat()
 	}
 	_, still_there := sciter_app.root(window)
-	testing.expect_value(t, still_there, nil)
+	when ODIN_OS == .Windows {
+		testing.expect_value(t, still_there, nil)
+	} else {
+		testing.expect_value(t, still_there, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+	}
 
 	sciter_app.close(window)
 	sciter_app.heartbeat()

@@ -371,6 +371,16 @@ that mistake is easy to make and hard to see. Both fixed.
 `vendor:x11/xlib` declares nothing elsewhere, so they cannot build on Windows at all. Without that skip
 the Windows CI job could never have passed `just check`, which is most of what that job is.
 
+**The suite takes 20-30 minutes and most of that is compilation.** Every example is a separate
+`odin test` build - the `-file` model means there is no shared build cache - so several spend 30-60
+seconds compiling before running tests that finish in milliseconds. `behavior` compiles for about 30
+seconds and then runs 14 tests in 1.3. Budget accordingly; it is the layout, not a problem.
+
+**Do not run anything else while the suite runs.** `behavior.test_do_click_runs_the_behavior` failed
+twice here, both times with `odin` builds competing for the machine, and passed alone in 1.3 seconds
+immediately afterwards both times. `ci.yml` already predicted this for the element-timer tests in
+`events.odin`. If an example fails once, re-run it on its own before believing it.
+
 **The per-example timeout kills the process tree.** `EXAMPLE_TEST_TIMEOUT` used to be GNU `timeout`,
 which killed `just` and left the test executable `odin test` had spawned still running and still holding
 the inherited stdout pipe - so the ceiling fired and the run hung anyway, which is the opposite of the

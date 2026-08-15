@@ -330,11 +330,14 @@ hide :: proc(window: Window) {
 // Measured with `force`: the handle dies the same way it does on Linux - `root` answers
 // `.INVALID_HWND` and the state is `0xFFFFFFFE`.
 //
-// **The Linux table above was measured with `force` off**, since that is all this wrapper could do at
-// the time, and it has not been re-measured with it on. The hide/pump/close order is still the one to
-// write - it is the only order safe on both, and the Linux failure it avoids is a segfault rather than
-// an error return - but treat the five-row table as describing `request_close` until someone re-runs it
-// on X11.
+// **Linux ignores the flag; Windows honours it.** Measured on both: on Linux the window is destroyed
+// whether it is passed or not, so the five-row table above holds unchanged and there is no such thing
+// as a rejectable close there. On Windows only the forcing call destroys anything - which is why this
+// wrapper's `close` did nothing there for as long as it passed 0.
+//
+// The practical consequence is that **`request_close` is not portable as "let script veto this"**: on
+// Linux it closes regardless. If an application needs a vetoable close, it has to ask the document
+// itself and decide in Odin.
 close :: proc(window: Window, force := true) {
 	sciter.api().SciterWindowExec(
 		rawptr(window),

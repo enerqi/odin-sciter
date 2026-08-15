@@ -105,9 +105,19 @@ heartbeat :: proc() {
 	sciter.api().SciterExec(.LOOP_HEARTBIT, 0, 0)
 }
 
-// Asks the pump to return. Safe to call from an event handler.
-stop :: proc() {
-	sciter.api().SciterExec(.STOP, 0, 0)
+// Asks the pump to return, with the value `run` should hand back. Safe to call from an event handler,
+// and **only** useful from one: called before `run`, it does not pre-arm anything and `run` still
+// blocks.
+//
+// **`exit_code` is a parameter the C header does not mention.** `SCITER_APP_STOP` is documented as
+// `reuest to quit message pump loop` and nothing else; the SDK's C++ layer is where it surfaces, as
+// `request_quit(int rv)`. Measured on 6.0.4.9: `stop(42)` from inside the pump makes `run` return 42,
+// and the underlying call answers 0 to mean the request was accepted.
+//
+// This is the second parameter found hiding behind the two `*Exec` dispatchers - see `close` in
+// `window.odin` for the first, and `docs/gotchas.md` for why this API shape keeps producing them.
+stop :: proc(exit_code := 0) {
+	sciter.api().SciterExec(.STOP, uintptr(exit_code), 0)
 }
 
 // Releases the engine's resources. Call after `run` returns.

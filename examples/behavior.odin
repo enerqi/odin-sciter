@@ -870,22 +870,36 @@ test_clearing_set_values_argument_frees_the_callers_value_under_it :: proc(t: ^t
 	testing.expect(t, handled, "the handler claimed the method")
 	testing.expect(t, clearer.saw, "the handler saw SET_VALUE")
 
-	// The trap: immediately afterwards the caller's Value still reads correctly, because nothing has
-	// reused the freed payload yet.
-	right_after, rerr := sciter_app.value_to_string(&payload, context.temp_allocator)
-	testing.expect_value(t, rerr, nil)
-	testing.expect_value(t, right_after, "the caller still owns this")
+	// **Everything below this line reads a Value the handler has already released, which is undefined
+	// behaviour on purpose - and it is only survivable on some allocators.** It demonstrated the hazard
+	// on Linux for a long time and then segfaulted the Windows CI runner at exactly this test, taking
+	// every later test in the binary with it and timing the job out. That is what reading freed memory
+	// is entitled to do; the surprise was that it ever worked, not that it stopped.
+	//
+	// Kept on Linux, where it is measured and where it is the only thing that *proves* the reference was
+	// given away rather than merely asserting it. Not run on Windows, where the same code faults. If it
+	// ever starts faulting on Linux too, delete it rather than chasing it - the rule it demonstrates is
+	// in the comment above `on_clearing_set_value` and in `docs/rules.md`, which is where a reader
+	// should be learning it anyway.
+	when ODIN_OS != .Windows {
+		// The trap: immediately afterwards the caller's Value still reads correctly, because nothing has
+		// reused the freed payload yet.
+		right_after, rerr := sciter_app.value_to_string(&payload, context.temp_allocator)
+		testing.expect_value(t, rerr, nil)
+		testing.expect_value(t, right_after, "the caller still owns this")
 
-	// Churn the engine's heap, and the same Value now reads as something else - measured, empty. This
-	// is the assertion that says the reference really was given away.
-	for _ in 0 ..< 200 {
-		junk, _ := sciter_app.eval(window, `"z".repeat(5000)`)
-		sciter_app.value_clear(&junk)
+		// Churn the engine's heap, and the same Value now reads as something else - measured, empty.
+		for _ in 0 ..< 200 {
+			junk, _ := sciter_app.eval(window, `"z".repeat(5000)`)
+			sciter_app.value_clear(&junk)
+		}
+		after, _ := sciter_app.value_to_string(&payload, context.temp_allocator)
+		testing.expect(
+			t,
+			after != "the caller still owns this",
+			"the payload should be gone once the engine has reused the memory under it",
+		)
+	} else {
+		_ = window // only the heap-churn loop above needs it, and that is Linux-only
 	}
-	after, _ := sciter_app.value_to_string(&payload, context.temp_allocator)
-	testing.expect(
-		t,
-		after != "the caller still owns this",
-		"the payload should be gone once the engine has reused the memory under it",
-	)
 }
