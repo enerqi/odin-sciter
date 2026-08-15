@@ -66,6 +66,10 @@ target
 !lib/**/*.dll
 !lib/**/*.dylib
 
+# Bytecode from the justfile's `[script]` recipes, which import .github/scripts/justlib.py.
+__pycache__/
+*.pyc
+
 # CodeGraph's local index. Machine-local and regenerable; nothing here should be shared.
 .codegraph/
 .claude

@@ -54,7 +54,13 @@ inspector_rel := if os() == "windows" { "windows/x64/inspector.exe" } else if os
 # SHA-256, so a fetch that checks the length would install the wrong engine and report success. The
 # hash below is the one in `external/sciter/VENDORED.md`, and it is what decides.
 engine_tag := "6.0.4.9-bis"
-engine_sha256 := "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b"
+
+# One hash per platform, because the pin is per *file*, not per tag. A single hash here would have made
+# `just fetch-engine` on Windows fetch sciter.dll and compare it against the Linux .so's digest - which
+# fails with "refusing to install", i.e. the recipe that exists to install the engine cannot install it.
+# macOS is not vendored yet: `TODO` makes fetch-engine install it and print the digest to record here,
+# rather than refusing (see the `unverified` branch in .github/scripts/fetch-engine.py).
+engine_sha256 := if os() == "windows" { "b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083" } else if os() == "macos" { "TODO" } else { "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b" }
 
 # The same relative path under two roots: `bin/` upstream, `lib/` here.
 engine_rel := if os() == "windows" { "windows/x64/sciter.dll" } else if os() == "macos" { "macosx/libsciter.dylib" } else { "linux/x64/libsciter.so" }
@@ -142,21 +148,34 @@ format:
 # nearly all the hand-written code is - unlinted. Not `examples/`: those do not lint clean today.
 # ---
 # lint checks for style and potential bugs. No code generation
+[script]
 lint *args: ensure-engine
-	#!/usr/bin/env bash
-	set -euo pipefail
-	odin check . -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
-	odin check sciter_app -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
+	import glob, os, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import VET, X11_ONLY, run
+
+	args = r"""{{args}}""".split()
+
+	run(["odin", "check", ".", *VET, *args])
+	run(["odin", "check", "sciter_app", *VET, *args])
+
 	# The examples are 23k of the repository's ~34k lines, and they used to be excluded here - which
 	# meant the vet flags covered the third of the code least likely to be read closely. They pass now;
 	# the whole cleanup was 25 findings, all unused imports, unused locals and shadowed `err`s.
 	#
 	# `-no-entry-point` for all of them: `extension.odin` and `sqlite_extension.odin` are native
 	# extensions built as shared libraries and have no `main`, and the flag is harmless for the rest.
-	for f in examples/*.odin; do
-	    odin check "$f" -file -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
-	done
-	echo "ok: both library packages and all $(ls examples/*.odin | wc -l) examples pass -vet" 
+	# The X11-only pair does not compile off Linux at all - see justlib - so there is nothing for the vet
+	# flags to say about it there.
+	skip = () if sys.platform.startswith("linux") else X11_ONLY
+	examples = [f for f in sorted(glob.glob("examples/*.odin"))
+	            if os.path.basename(f)[:-5] not in skip]
+	for f in examples:
+		run(["odin", "check", f, "-file", *VET, *args])
+
+	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
+	all_ = "" if skip else "all "
+	print(f"ok: both library packages and {all_}{len(examples)} examples pass -vet{tail}")
 
 
 # The engine, fetched instead of vendored - see `docs/UPGRADING.md` on the repository-size decision.
@@ -315,16 +334,32 @@ sanitize name="hello_window" kind="address" *args: mktarget_dirs
 # first throw without it.
 # ---
 # run the tests under a sanitizer (address | memory | thread)
+[script]
 test_sanitize name="eval" kind="address" *args: mktarget_dirs
-	#!/usr/bin/env bash
-	set -euo pipefail
-	if [ "$(uname -s)" = "Linux" ]; then
-	    lib=$(ldconfig -p 2>/dev/null | awk '/libstdc\+\+\.so\.6/ {print $NF; exit}' || true)
-	    if [ -n "${lib:-}" ] && [ -f "$lib" ]; then
-	        export LD_PRELOAD="$lib"
-	    fi
-	fi
-	odin test examples/{{name}}.odin -file -debug -sanitize:{{kind}} -define:ODIN_TEST_THREADS=1 -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}-test.exe") }} {{args}}
+	import os, re, subprocess, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import run
+
+	name, kind = "{{name}}", "{{kind}}"
+
+	env = os.environ.copy()
+	if sys.platform.startswith("linux"):
+		# See the recipe comment: without a real `__cxa_throw` to find, ASan dies on the engine's first
+		# C++ exception. `ldconfig -p` is the only portable way to locate the system libstdc++.
+		try:
+			cache = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True).stdout
+			hit = re.search(r"=> (\S*libstdc\+\+\.so\.6)", cache)
+			if hit and os.path.isfile(hit.group(1)):
+				env["LD_PRELOAD"] = hit.group(1)
+		except FileNotFoundError:
+			pass
+
+	out = os.path.join("target", "debug", f"sanitize-{kind}-{name}-test.exe")
+	run([
+		"odin", "test", f"examples/{name}.odin", "-file", "-debug", f"-sanitize:{kind}",
+		"-define:ODIN_TEST_THREADS=1", f"-out:{out}",
+		*r"""{{args}}""".split(),
+	], env=env)
 
 # Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `run_debug`/`run` build.
 # ---
@@ -572,31 +607,46 @@ bindgen:
 # drifts silently, so it is checked like anything else.
 # ---
 # type check both packages and the guides' snippets, and build every example
+[script]
 check: mktarget_dirs ensure-engine
-	#!/usr/bin/env bash
-	set -euo pipefail
-	odin check . -no-entry-point
-	odin check sciter_app -no-entry-point
-	odin check docs/snippets -no-entry-point
+	import glob, os, subprocess, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import EXTENSIONS, X11_ONLY, parallel, run, shared_ext
+
+	run(["odin", "check", ".", "-no-entry-point"])
+	run(["odin", "check", "sciter_app", "-no-entry-point"])
+	run(["odin", "check", "docs/snippets", "-no-entry-point"])
+
 	# One output path per example, and the loop run in parallel. Both halves matter: every example used
 	# to link over a single `check.exe`, which serialised the slowest non-test step in CI onto one core
 	# and left the *previous* example's binary in place when one failed, so the artifact said nothing
 	# about which. Building rather than `odin check`ing is deliberate - single_binary.odin has a `when`
 	# guarded `#panic` that only fires at build time, and linking is what proves an example is shippable.
-	mkdir -p target/debug/check
-	build_one() {
-	    f="$1"
-	    name="$(basename "$f" .odin)"
-	    if [ "$f" = "examples/extension.odin" ] || [ "$f" = "examples/sqlite_extension.odin" ]; then
-	        # Not applications: native extensions, so they have no `main` and build as shared libraries.
-	        odin build "$f" -file -build-mode:shared -out:"target/debug/check/$name{{ shared_ext }}"
-	    else
-	        odin build "$f" -file -out:"target/debug/check/$name.exe"
-	    fi
-	}
-	export -f build_one
-	ls examples/*.odin | xargs -P "$(nproc 2>/dev/null || echo 4)" -I{} bash -c 'build_one "$@"' _ {}
-	echo "ok: both packages and the doc snippets type check, all $(ls examples/*.odin | wc -l) examples build"
+	out = os.path.join("target", "debug", "check")
+	os.makedirs(out, exist_ok=True)
+
+	# The X11-only pair does not build off Linux - see justlib. Without this skip the Windows CI job can
+	# never pass `just check`, which is most of what that job is.
+	skip = () if sys.platform.startswith("linux") else X11_ONLY
+	targets = [f for f in sorted(glob.glob("examples/*.odin"))
+	           if os.path.basename(f)[:-5] not in skip]
+
+	def build_one(f):
+		name = os.path.basename(f)[:-5]
+		if name in EXTENSIONS:
+			cmd = ["odin", "build", f, "-file", "-build-mode:shared",
+			       f"-out:{os.path.join(out, name + shared_ext())}"]
+		else:
+			cmd = ["odin", "build", f, "-file", f"-out:{os.path.join(out, name + '.exe')}"]
+		print(" ".join(cmd), flush=True)
+		return subprocess.run(cmd).returncode
+
+	if any(parallel(targets, build_one)):
+		raise SystemExit(1)
+
+	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
+	all_ = "" if skip else "all "
+	print(f"ok: both packages and the doc snippets type check, {all_}{len(targets)} examples build{tail}")
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
 # repository root so the loader finds lib/<platform>/ - see `load` in src/prelude.odin for the full
@@ -618,21 +668,13 @@ check: mktarget_dirs ensure-engine
 # since it indexes the blob in place rather than copying it.
 # ---
 # rebuild examples/assets/app.pak from examples/assets/app/
+[script]
 pack:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	sdk="${SCITER_SDK:-}"
-	if [ -z "$sdk" ]; then
-	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
-	    echo "packfolder is not vendored here; see external/sciter/VENDORED.md." >&2
-	    exit 1
-	fi
-	packfolder="$sdk/bin/{{ packfolder_platform }}/packfolder{{ exe_ext }}"
-	if [ ! -x "$packfolder" ]; then
-	    echo "no packfolder at $packfolder" >&2
-	    exit 1
-	fi
-	"$packfolder" examples/assets/app examples/assets/app.pak -binary
+	import sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import run, sdk_tool
+
+	run([sdk_tool("packfolder"), "examples/assets/app", "examples/assets/app.pak", "-binary"])
 
 # `examples/extension.odin` is not an application - it is a Sciter *native extension*, a shared library
 # the engine loads in response to script's `sciter.loadLibrary("odin-ext")`. It exports exactly one
@@ -649,26 +691,13 @@ extension name="extension" lib="odin-ext": mktarget_dirs
 	odin build examples/{{name}}.odin -file -build-mode:shared -out:{{ target_path("debug", lib + shared_ext) }}
 
 # build the SQLite extension and run it under the SDK's scapp
+[script]
 extension-sqlite: (extension "sqlite_extension" "odin-sqlite")
-	#!/usr/bin/env bash
-	set -euo pipefail
-	sdk="${SCITER_SDK:-}"
-	if [ -z "$sdk" ]; then
-	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
-	    exit 1
-	fi
-	scapp="$sdk/bin/{{ scapp_platform }}/scapp{{ exe_ext }}"
-	if [ ! -x "$scapp" ]; then
-	    echo "no scapp at $scapp" >&2
-	    exit 1
-	fi
-	app="target/debug/sqlite-app"
-	rm -rf "$app" && mkdir -p "$app"
-	cp "$scapp" "$app/"
-	cp {{ target_path("debug", "odin-sqlite" + shared_ext) }} "$app/"
-	cp examples/assets/sqlite/index.htm "$app/"
-	echo "running $app/scapp{{ exe_ext }}"
-	cd "$app" && ./scapp{{ exe_ext }} index.htm
+	import sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import scapp_app
+
+	scapp_app("sqlite-app", "odin-sqlite", "examples/assets/sqlite/index.htm")
 
 # Assembles a throwaway app folder - scapp, the extension and its document together, which is the
 # layout `loadLibrary` requires - and runs it. Nothing in the SDK checkout is modified.
@@ -679,27 +708,13 @@ extension-sqlite: (extension "sqlite_extension" "odin-sqlite")
 #     SCITER_SDK=~/dev/sciter-js-sdk just extension-run
 # ---
 # build the extension and run it under the SDK's scapp
+[script]
 extension-run: extension
-	#!/usr/bin/env bash
-	set -euo pipefail
-	sdk="${SCITER_SDK:-}"
-	if [ -z "$sdk" ]; then
-	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
-	    echo "scapp is not vendored here; see external/sciter/VENDORED.md." >&2
-	    exit 1
-	fi
-	scapp="$sdk/bin/{{ scapp_platform }}/scapp{{ exe_ext }}"
-	if [ ! -x "$scapp" ]; then
-	    echo "no scapp at $scapp" >&2
-	    exit 1
-	fi
-	app="target/debug/extension-app"
-	rm -rf "$app" && mkdir -p "$app"
-	cp "$scapp" "$app/"
-	cp {{ target_path("debug", "odin-ext" + shared_ext) }} "$app/"
-	cp examples/assets/extension/index.htm "$app/"
-	echo "running $app/scapp{{ exe_ext }}"
-	cd "$app" && ./scapp{{ exe_ext }} index.htm
+	import sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import scapp_app
+
+	scapp_app("extension-app", "odin-ext", "examples/assets/extension/index.htm")
 
 # Run the `@(test)` procs that live inside the examples.
 #
@@ -725,30 +740,38 @@ example-test name="eval" *args: mktarget_dirs
 # compilation too - `odin test` builds before it runs.
 # ---
 # run every example's tests
+[script]
 example-tests: ensure-engine
-	#!/usr/bin/env bash
-	set -uo pipefail
-	limit="${EXAMPLE_TEST_TIMEOUT:-0}"
-	failed=()
-	for f in examples/*.odin; do
-	    name=$(basename "$f" .odin)
-	    grep -q '@(test)' "$f" || continue
-	    echo "--- $name"
-	    if [ "$limit" != "0" ]; then
-	        timeout --kill-after=10s "$limit" just example-test "$name"
-	    else
-	        just example-test "$name"
-	    fi
-	    code=$?
-	    [ "$code" -eq 0 ] || failed+=("$name(exit $code)")
-	done
-	if [ "${#failed[@]}" -ne 0 ]; then
-	    echo
-	    echo "FAILED: ${failed[*]}"
-	    exit 1
-	fi
-	echo
-	echo "ok: every example's tests passed"
+	import glob, os, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import X11_ONLY, run_with_timeout
+
+	limit = int(os.environ.get("EXAMPLE_TEST_TIMEOUT", "0"))
+
+	# The X11-only pair does not compile off Linux at all - see justlib - so running their tests there
+	# reports a build failure per example and says nothing about this platform.
+	skip = () if sys.platform.startswith("linux") else X11_ONLY
+
+	failed = []
+	for f in sorted(glob.glob("examples/*.odin")):
+		name = os.path.basename(f)[:-5]
+		if name in skip:
+			continue
+		with open(f, encoding="utf-8", errors="replace") as fh:
+			if "@(test)" not in fh.read():
+				continue
+		print(f"--- {name}", flush=True)
+		code = run_with_timeout(["just", "example-test", name], limit)
+		if code != 0:
+			failed.append(f"{name}(exit {code})")
+
+	print()
+	if skip:
+		print(f"(skipped, X11-only: {' '.join(skip)})")
+	if failed:
+		print(f"FAILED: {' '.join(failed)}")
+		raise SystemExit(1)
+	print("ok: every example's tests passed")
 
 # build and run an example, e.g. `just example hello_window`
 example name="hello_window" *args: mktarget_dirs ensure-engine
@@ -757,16 +780,27 @@ example name="hello_window" *args: mktarget_dirs ensure-engine
 # `just example api_map` prints the table and leaves the judging to a human, which is right for a
 # diagnostic and wrong for a gate: docs/UPGRADING.md calls the slot check "the step the whole procedure
 # exists for", and a step whose pass/fail lives in someone's eyes cannot run in CI. This pipes the
-# output through .github/scripts/check-api-map.sh, which applies the rules the example's header states
+# output through .github/scripts/check-api-map.py, which applies the rules the example's header states
 # - 189 slots, ISciterAPI version 10, every non-null slot resolving to its own name plus `Imp`, and the
 # platform's known null list unchanged. Run it after any engine bump, and edit the script's expectations
 # as the record of what the new engine changed.
 # ---
 # run api_map and assert its table (slots, version, symbols, null list)
+[script]
 api-map-verify: mktarget_dirs
-	#!/usr/bin/env bash
-	set -euo pipefail
-	just example api_map | .github/scripts/check-api-map.sh
+	import subprocess, sys
+
+	# The two halves are run and joined here rather than with a `|`, so this needs no shell at all and
+	# behaves the same under cmd.exe as under sh.
+	table = subprocess.run(["just", "example", "api_map"], capture_output=True, text=True)
+	if table.returncode != 0:
+		sys.stderr.write(table.stderr)
+		raise SystemExit(table.returncode)
+
+	check = subprocess.run(
+		[sys.executable, ".github/scripts/check-api-map.py"], input=table.stdout, text=True
+	)
+	raise SystemExit(check.returncode)
 
 
 # ---
@@ -776,8 +810,6 @@ api-map-verify: mktarget_dirs
 # than passing vacuously. Not part of `example-tests` because it is a program, not a test file - see the
 # header of examples/leak_sweep.odin for why the check cannot live in a test binary.
 leak-check: mktarget_dirs ensure-engine
-	#!/usr/bin/env bash
-	set -euo pipefail
 	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
 	{{ target_path("debug", "leak_sweep.exe") }}
 
@@ -785,9 +817,7 @@ leak-check: mktarget_dirs ensure-engine
 # ---
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
 check-ownership:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	python3 .github/scripts/check-ownership.py
+	uv run --no-project -p 3.14 python .github/scripts/check-ownership.py
 
 
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
@@ -799,7 +829,7 @@ check-ownership:
 # ---
 # C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
 parity *args:
-	.github/scripts/parity.sh {{args}}
+	uv run --no-project -p 3.14 python .github/scripts/parity.py {{args}}
 
 
 # The counts the documentation quotes about itself - examples, tests, wrapper procs, and how many of
@@ -809,7 +839,7 @@ parity *args:
 # ---
 # suite and coverage counts; `just stats --check` asserts the docs still agree
 stats *args:
-	.github/scripts/stats.sh {{args}}
+	uv run --no-project -p 3.14 python .github/scripts/stats.py {{args}}
 
 
 # The precondition every windowed test has and none of them states. A machine with no working EGL/GLES
@@ -834,28 +864,31 @@ window-canary: mktarget_dirs
 #                              in each other's frame", and on Linux that means X11 - `vendor:x11/xlib`
 #                              declares nothing off Linux. The Windows equivalents would be different
 #                              programs, not the same program compiled elsewhere.
-#   single_binary              embeds the engine with #load, and only lib/linux/x64/libsciter.so is
-#                              vendored. Its `when` has a deliberate #panic saying so. Extend that
-#                              `when` when a platform's binary is vendored - step 8 of
-#                              docs/WINDOWS-CHECKLIST.md.
+#   single_binary              embeds the engine with #load, and macOS is the one platform whose binary
+#                              is not vendored. Its `when` has a deliberate #panic saying so, which is
+#                              a *build*-time error, so this is skipped for darwin_amd64 only - it is
+#                              checked for windows_amd64 since lib/windows/x64/sciter.dll landed.
+#                              Extend the `when` and drop it from `extra_skip` when macOS is vendored.
 # ---
 # type check both packages, the snippets and every portable example for windows_amd64 and darwin_amd64
+[script]
 cross-check: ensure-engine
-	#!/usr/bin/env bash
-	set -euo pipefail
-	skip="integration native_child single_binary"
-	for target in windows_amd64 darwin_amd64; do
-	    echo "--- $target"
-	    odin check . -no-entry-point -target:$target
-	    odin check sciter_app -no-entry-point -target:$target
-	    odin check docs/snippets -no-entry-point -target:$target
-	    for f in examples/*.odin; do
-	        name=$(basename "$f" .odin)
-	        case " $skip " in *" $name "*) continue ;; esac
-	        odin check "$f" -file -no-entry-point -target:$target
-	    done
-	done
-	echo "ok: both packages, the doc snippets and every portable example type check for windows_amd64 and darwin_amd64"
+	import glob, os, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import X11_ONLY, run
+
+	for target in ("windows_amd64", "darwin_amd64"):
+		# macOS is the one platform whose engine binary is not vendored, and single_binary `#load`s it.
+		skip = set(X11_ONLY) | ({"single_binary"} if target == "darwin_amd64" else set())
+		print(f"--- {target}")
+		run(["odin", "check", ".", "-no-entry-point", f"-target:{target}"])
+		run(["odin", "check", "sciter_app", "-no-entry-point", f"-target:{target}"])
+		run(["odin", "check", "docs/snippets", "-no-entry-point", f"-target:{target}"])
+		for f in sorted(glob.glob("examples/*.odin")):
+			if os.path.basename(f)[:-5] in skip:
+				continue
+			run(["odin", "check", f, "-file", "-no-entry-point", f"-target:{target}"])
+	print("ok: both packages, the doc snippets and every portable example type check for windows_amd64 and darwin_amd64")
 
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
 # a separate application that attaches over a socket, so it is run *alongside* your app, not by it:
@@ -871,20 +904,13 @@ cross-check: ensure-engine
 # SCITER_SDK at a checkout.
 # ---
 # run the SDK's inspector, to attach to a window built with .ENABLE_DEBUG
+[script]
 inspector:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	sdk="${SCITER_SDK:-}"
-	if [ -z "$sdk" ]; then
-	    echo "SCITER_SDK is not set - point it at a sciter-js-sdk checkout." >&2
-	    echo "the inspector is not vendored here; see external/sciter/VENDORED.md." >&2
-	    exit 1
-	fi
-	insp="$sdk/bin/{{ inspector_rel }}"
-	if [ ! -x "$insp" ]; then
-	    echo "no inspector at $insp" >&2
-	    exit 1
-	fi
-	echo "running $insp"
-	echo "(the app must already be running, built with set_debug_mode() and .ENABLE_DEBUG)"
-	exec "$insp"
+	import sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import run, sdk_tool
+
+	insp = sdk_tool("inspector")
+	print(f"running {insp}")
+	print("(the app must already be running, built with set_debug_mode() and .ENABLE_DEBUG)")
+	run([insp])

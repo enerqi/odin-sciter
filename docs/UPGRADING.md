@@ -201,7 +201,7 @@ headers-disagree-with-the-binary trap that cost this project a day on the GitHub
 every probe.
 
 `api-map-verify`'s expectations — 189 slots, `SCITER_API_VERSION` 10, and the per-platform null list —
-live in `.github/scripts/check-api-map.sh`. On a version bump those are the lines you expect to edit,
+live in `.github/scripts/check-api-map.py`. On a version bump those are the lines you expect to edit,
 and the diff of that file is then the record of what the new engine changed.
 
 ### When `SCITER_API_VERSION` changes

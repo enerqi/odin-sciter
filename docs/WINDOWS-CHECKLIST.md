@@ -1,207 +1,202 @@
-# Windows bring-up checklist
+# Windows bring-up
 
-Everything that could be established without a Windows machine has been. This is the part that cannot:
-the list to work through top to bottom when one is available, with the expected result of each step so
-that a surprise is recognisable as one.
+Status: **Windows x64 is vendored and has been run**, on a real desktop, on 2026-08-15. This file was a
+checklist of things that could not be established without a machine; it is now the record of what that
+machine said, and of the four things still open.
 
-Status: **Linux x64 is the only platform vendored and run.** Windows is expected to work — the
-`ISciterAPI` layout is identical on every platform, the calling convention is already handled, and
-everything in this repository type checks for `windows_amd64` — but "type checks" is not "runs".
+Engine: 6.0.4.9, `bin/windows/x64/sciter.dll`, 19 261 952 bytes,
+`b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083`, recorded in
+`external/sciter/VENDORED.md`. Not `bin/windows.d2d/` (Direct2D) and not `bin/windows.xp/`.
 
-## What was already done for Windows, without the machine
+## What a Windows machine needs
 
-- **`odin check -target:windows_amd64` passes** for `package sciter`, `package sciter_app`,
-  `docs/snippets`, and every *portable* example. That is the cheap half of a port and it is done:
+- **Odin**, **just** ≥ 1.49, and **uv**. That is the whole list. The justfile's multi-step recipes are
+  `[script]` Python running through `uv run --no-project -p 3.14 python`, and its one-liners run under
+  `cmd.exe`, so **nothing here needs bash on Windows** - see `justlib.py`'s header for what forced that.
+  The short version is that `bash` on a stock Windows PATH is the WSL launcher, so a shebang recipe
+  silently ran in a Linux VM with none of the toolchain, and `just` additionally wants `cygpath` and
+  fails outright without it:
 
-  ```sh
-  just cross-check          # windows_amd64 and darwin_amd64, both packages, snippets, examples
+  ```
+  error: could not find `cygpath` executable to translate recipe `check` shebang interpreter path
   ```
 
-  It runs on every push (`.github/workflows/ci.yml`), which is what stops this rotting: nothing here
-  builds for Windows day to day, so an example that stops checking there is otherwise invisible until
-  someone has the machine.
+- Nothing else. No SDK is needed for anything below except steps 9 and 10.
 
-  Three examples are excluded, each deliberately rather than because it failed. `integration` and
-  `native_child` are raw Xlib — they are the two halves of "a Sciter view and a native window inside
-  each other", and on Linux that means X11; the Windows equivalents would be different programs, not
-  the same program compiled elsewhere. `single_binary` embeds the engine with `#load` and only the
-  Linux binary is vendored, so it stops at its own `#panic` — which is step 8 below.
+## The results
 
-- **`examples/api_map.odin` was rewritten to build and mean something on Windows.** It previously used
-  `dladdr` through `foreign import dl "system:dl"`, which does not exist on Windows — the one tool the
-  upgrade procedure tells you to run first would not have linked. It now resolves symbols through
-  dbghelp, falls back to `VirtualQuery` + `GetModuleFileNameW` for module attribution, and prints the
-  null-slot list explicitly. See the header comment for why the Windows check is weaker than the Linux
-  one.
+| | Step | Result |
+| --- | --- | --- |
+| 1 | vendor the DLL | done; `just fetch-engine --check` verifies it |
+| 2 | `just api-map-verify` | **passes, and is now a gate** - 189 slots, ISciterAPI version 10 |
+| 3 | `just example hello_window` | window opens, HTML and CSS render. No XIM equivalent of the Linux segfault |
+| 4 | `just check` | 28 examples build |
+| 5 | `just example-tests` | runs; the windowed tests **run rather than skip**. 11 examples still fail - see below |
+| 6 | core paths | `eval`, `dom_walk`, `events`, `call_odin_from_js` all have failing tests; see below |
+| 7 | resource loading | `custom_loader` passes, `archive` passes, `request_loader` faults at exit |
+| 8 | `just example single_binary` | **done** - see below |
+| 9 | `just example inspector` | not yet run |
+| 10 | `just extension-run` | `just extension` builds `odin-ext.dll`; running it under scapp not yet done |
+| 11 | `just sanitize hello_window` | not yet run |
+| — | `just leak-check` | **clean** - 10 resource kinds exercised and balanced. No Windows-only leak |
+| — | `just lint`, `check-ownership`, `parity --check`, `stats --check` | pass |
 
-- **`just pack` and `just extension-run` now look for `packfolder.exe` and `scapp.exe`** via a new
-  `exe_ext` variable. They would have failed to find the SDK's tools otherwise.
+## What was measured, and where it differed from what was predicted
 
-- The justfile's other Windows handling came with the skeleton and is believed sound: `radlink` as the
-  default linker, `cmd.exe` as the shell, `.dll` for `shared_ext`, `windows/x64` for `scapp_platform`,
-  `windows` (no arch subfolder) for `packfolder_platform`.
+**The ISciterAPI null list is the Linux list minus `SciterProcND`.** One slot is the entire difference
+between the platforms. The prediction recorded here before the machine existed was that Windows would
+*fill* `SciterProc`, `SciterTranslateMessage` and the D2D/DirectX entries. It fills none of them:
+`SciterProc` and `SciterTranslateMessage` are the Sciter 4 HWND message-pump entry points and Sciter 6
+owns its own window procedure, and the D2D/DirectWrite/DirectX slots belong to the `windows.d2d` build
+this one deliberately is not. **An application must not reach for `SciterProc` or
+`SciterTranslateMessage` on Windows.**
 
-## Bring-up, in order
+**`sciter.dll` exports 276 named symbols, not one.** The prediction was that only `SciterAPI` was
+exported, so almost every slot would resolve as `sciter.dll+0x...` and rule 3 of the api-map check would
+degrade to module containment. In fact 172 of the 174 non-null slots resolve to their own `...Imp` name,
+so the Windows check is as strong as the Linux one and `check-api-map.py` now applies the same rule to
+both. The two exceptions are the two whose `Imp` is genuinely absent from the export table, so dbghelp
+names the export below them: `SciterProcND` and `SciterEGLGetProcAddress`, both
+`SciterRequestAPIImp+0x1c...`.
 
-Steps 2, 4, 5 and 7 are already wired into CI: `.github/workflows/ci.yml` has a `windows-2022` job that
-sits dormant while `lib/windows/x64/sciter.dll` is absent and runs `just api-map-verify`, `just check`
-and `just example-tests` the moment it is committed. So step 1 below turns the job on, and a good part
-of this list then answers itself on a runner — including step 5's open question about the display gate.
-What a runner cannot answer is anything that needs eyes on a window (steps 3, 6, 9) or a real desktop's
-anti-malware (step 8).
+**Two slots resolve to another function's name, and it is `/OPT:ICF`, not offset drift.** MSVC folds
+byte-identical functions onto one address and the export table then carries several names for it.
+Verified by parsing the export directory rather than inferred - the names share an RVA:
 
-**1. Vendor the binary.**
+| RVA | names | what it is |
+| --- | --- | --- |
+| `0x19354` | `SciterGetAttributeByNameImp`, `SciterGetElementNamespaceImp`, `SciterGetNthAttributeImp`, `SciterGetObjectImp` | `mov eax,5; ret` - all four are `SCDOM_OPERATION_FAILED` stubs |
+| `0x17ba8` | `SciterElementWrapImp`, `SciterNodeWrapImp` | one real function; wrapping an element and a node is the same code |
+
+Read a *new* pair appearing here as "are these two really the same code" before reading it as drift:
+drift shifts every slot after it, not two in isolation.
+
+**`os.rename` over an existing destination works.** This was the worry recorded against `embed.odin` -
+POSIX `rename(2)` replaces silently and Win32 `MoveFile` refuses. Odin's `core:os` uses the replacing
+variant, so `write_engine`'s rename-into-place behaves identically on both platforms, and the second run
+of `single_binary` does not error. Measured directly, not inferred from the tests passing.
+
+**`os.stat(...).inode` is 0 for every file on Windows.** Two `single_binary` tests asserted `a
+replacement is a rename, not an overwrite` through inode identity, which on Windows is not a weak test
+but a vacuous one - `0 != 0` never holds. Those assertions are now gated on `INODE_IS_MEANINGFUL`; the
+content and size assertions, which are what actually matter, run everywhere.
+
+**`single_binary`'s cache behaves exactly as designed.** The engine extracts to
+`%LOCALAPPDATA%\odin-sciter\<hash>\sciter.dll` - measured
+`C:\Users\...\AppData\Local\odin-sciter\6edbb3491c2976bf\sciter.dll`, 19 261 952 bytes, the vendored DLL
+byte for byte. A second run reuses it: same path, unchanged mtime. **Anti-malware did not quarantine
+it**, which was flagged here as the single most likely Windows-specific failure in the repository. One
+data point on one machine with one product, so it is evidence rather than proof.
+
+**`set_option` differs less than expected, and not where expected.** Measured across all seventeen
+options, with and without a window. `.SMOOTH_SCROLL` needs a window on *both* platforms;
+`.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION` are refused on both - the latter despite UI Automation
+being a Windows API. What actually differs is the HTTP client pair, `.CONNECTION_TIMEOUT` and
+`.HTTPS_ERROR`: refused on Linux, accepted on Windows, because Linux uses the system client and has
+nothing to configure. Windows additionally has `.TRANSPARENT_WINDOW`, `.ALPHA_WINDOW` and
+`.SET_MAIN_WINDOW`, and all three need a window. The `when` in `script_bridge.odin` and the table on
+`set_option` in `app.odin` are now written from this rather than from Linux alone.
+
+**The display gate was right, and it cost what it was meant to.** `have_display` returns true
+unconditionally on Windows, so the first real run executed the whole suite rather than skipping two
+thirds of it silently. That is why this list has an open-failures section.
+
+## Still open
+
+### 1. An access violation inside the engine at process teardown
+
+`call_odin_from_js` and `request_loader` pass **every** test and then fault, so the tests are green and
+the exit code is not. Located precisely:
 
 ```
-lib/windows/x64/sciter.dll        <- from the SDK's bin/windows/x64/
+AV on thread <main> at sciter.dll+0x3db6b, reading 0x38
 ```
 
-Use the plain `bin/windows/` build, not `bin/windows.d2d/` (a Direct2D variant) or `bin/windows.xp/`.
-Record its size and SHA-256 in `external/sciter/VENDORED.md` beside the Linux entry.
+A null-pointer dereference at `this+0x38`, inside the engine, in unexported code (0x175c7 past the
+nearest export, so there is no name to give). What is established about it:
 
-Check `.gitattributes` marks `*.dll` binary — it already covers `*.so`/`*.dll`/`*.dylib`, but confirm
-before the first commit, because a `.dll` that goes through line-ending normalisation is a corrupt
-`.dll` and the failure looks like a broken engine rather than a broken checkout.
+- it needs at least one test to have run - a binary whose test filter matches nothing exits cleanly
+- calling `sciter_app.shutdown()` first does **not** prevent it
+- `@(fini)` never runs; the fault is earlier, in the test runner's deferred cleanup
+- **the faulting thread is the main thread, and the engine was initialised on a worker thread.** The
+  test runner runs tests on a pool thread, so `init` and `create_window` happen there, and the main
+  thread then tears the process down. Sciter is thread-affine - every ISciterAPI call must come from the
+  thread that ran `SCITER_APP_INIT` - and process teardown is a call it never agreed to.
 
-**2. `just example api_map`.** The step everything else depends on.
+That last point is the likely root cause and it is a rule applications need, not only a test artifact.
+Linux does not show it because Odin's test runner leaves through `os.exit`, which is a direct
+`exit_group` syscall: no DLL detach, no destructors, nothing runs. Windows `ExitProcess` runs the
+engine's detach path from a thread that never initialised it.
 
-Expected: **189 slots**, `ISciterAPI version 10`, and a *different* null list from Linux —
-`SciterProc`, `SciterProcND`, `SciterTranslateMessage` and the D2D/DirectX entries should now be
-**present**, while `SciterCreateWidget` (Linux/GTK-era) and `SciterCreateNSView` (macOS) should be
-**null**. `SciterGetViewExpando` and `reserved1..4` are null everywhere.
+Reproduce with the vectored-exception-handler probe described in the history of this file, or simply:
 
-Most slots will print `sciter.dll+0x...` rather than a name: sciter.dll exports only `SciterAPI`, so
-there is nothing for dbghelp to resolve without a PDB. **That is expected and is not a failure.** What
-matters is that every non-null slot lands inside `sciter.dll`. A slot pointing into some *other*
-module, or `<unmapped>`, is a real problem.
+```
+just example-test call_odin_from_js
+```
 
-Record the null list in the header comment of `api_map.odin`, where the Linux one already is.
+Other examples fault mid-run rather than at exit, and have not been separated from this one yet:
+`dom_walk` #22, `eval` #7, `input` #8, `task_list` #4, `sqlite_extension` #0, `graphics_gallery` #25.
 
-**3. `just example hello_window`.** A window with rendered HTML and CSS. The Linux XIM segfault
-(`XSetICFocus`, worked around with `XMODIFIERS=@im=none`) is X11-specific and should not appear.
+### 2. Window state is implemented on Windows and is not on Linux
 
-**4. `just check`.** Both packages, the doc snippets and all twenty-one examples build.
+The characterization tests were measured on Linux and assert the engine reports almost nothing. Windows
+reports the truth, so they fail:
 
-**5. `just example-tests`.** All tests, with `-define:ODIN_TEST_THREADS=1` already in the recipe. The tests that
-need a display gate themselves on `DISPLAY`/`WAYLAND_DISPLAY`, **which are POSIX environment variables
-that do not exist on Windows** — so check whether those tests skip themselves (wrong, but harmless) or
-run (correct). Fix the gate to treat Windows as always-having-a-display if they skip.
+- `dom_walk.test_a_window_that_was_never_shown_reports_itself_closed` - Windows says `HIDDEN`, Linux
+  says `CLOSED`
+- `dom_walk.test_asking_for_a_window_state_never_breaks_the_window` - asking for `MINIMIZED`,
+  `MAXIMIZED` and `HIDDEN` gets each of them back, where Linux only ever reports `SHOWN` or `CLOSED`
+- `workbench.test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first` - and a destroyed window
+  reports `0xFFFFFFFE`, which is not a value the enum has
 
-**6. `just example eval`, `dom_walk`, `events`, `call_odin_from_js`.** The core paths: script, DOM,
-events, native functors. Watch for anything UTF-16-shaped going wrong — Windows is where an
-encoding-conversion bug would show up differently, though the C API is UTF-16 on every platform so
-there is no separate code path to get wrong.
+Mechanical: widen the `when`s the way `set_option`'s were. The Windows behaviour is the *better* one, so
+the guards should not read as "Windows is the exception".
 
-**7. `just example custom_loader` and `archive`.** Resource loading. `archive` uses the committed
-`app.pak` and needs no SDK.
+### 3. Behavioural differences not yet characterized
 
-**8. `just example single_binary`.** This one **will not compile as-is**: `ENGINE` is behind
-`when ODIN_OS == .Linux && ODIN_ARCH == .amd64`, with a deliberate `#panic` otherwise. Extend the
-`when` to cover Windows once the DLL is vendored, then check the interesting parts:
+- `dom_walk.test_element_uid_is_readable_but_not_resolvable` - the UID **is** resolvable on Windows; the
+  test name is a Linux fact
+- `dom_walk.test_finalizing_a_removed_node_takes_it_out_of_the_document` - `node_remove(finalize=true)`
+  returns `INVALID_PARAMETER`
+- `input.test_combine_url_resolves_against_the_document` - `combine_url("style.css")` against
+  `file:///base/dir/doc.htm` yields `file://base/dir/style.css`, one slash short of the Linux answer.
+  **This is the one that looks like a defect rather than a platform fact** and is worth reading before
+  the others.
+- `eval.test_a_value_scope_releases_the_whole_batch` - `Call_Failed`
+- `graphics_gallery.styled_element` - `Not_Found` / `INVALID_HANDLE`
 
-- the cache directory resolves to `%LOCALAPPDATA%\odin-sciter\<hash>\sciter.dll`
-- the file is written once and reused on the second run
-- **anti-malware does not quarantine it.** A freshly written DLL is exactly the heuristic pattern, and
-  this is the single most likely Windows-specific failure in the repository. If it trips, that is a
-  finding for `docs/deployment.md`, not necessarily a bug to fix.
+### 4. Steps 9, 10 and 11
 
-**9. `just example inspector`.** Needs the SDK's `inspector.exe` running; `SCITER_SET_DEBUG_MODE` and
-`.ENABLE_DEBUG` are already set by the example.
+`just example inspector`, `SCITER_SDK=... just extension-run`, and `just sanitize hello_window`. The SDK
+is at `C:\Users\Enerqi\dev\sciter-js-sdk` on this machine and has all three tools in the layout the
+justfile expects. For step 11, read the justfile's own comment first: Windows ASan does not intercept
+Odin's `HeapAlloc`-based allocator and so catches no heap errors at all. A clean Windows ASan run rules
+out stack bugs and nothing else.
 
-**10. `just extension` and `SCITER_SDK=... just extension-run`.** Builds `odin-ext.dll` and runs it
-under `scapp.exe`. `loadLibrary("odin-ext")` looks for `odin-ext.dll` beside the executable, and
-`-out:` already names it exactly. The `.exe` suffixes fixed above are what make this recipe find the
-SDK's tools at all.
+## Notes for whoever runs this next
 
-**11. `just sanitize hello_window`.** ASan on Windows is genuinely different from Linux: it does not
-intercept Odin's `HeapAlloc`-based allocator the way it intercepts the Linux one, so it catches less.
-The justfile's own comments cover this. Do not treat a clean Windows ASan run as equivalent to a clean
-Linux one.
+**`just check` and `just lint` skip `integration` and `native_child` off Linux.** They are raw Xlib and
+`vendor:x11/xlib` declares nothing elsewhere, so they cannot build on Windows at all. Without that skip
+the Windows CI job could never have passed `just check`, which is most of what that job is.
 
-## Things to look at specifically
+**The per-example timeout kills the process tree.** `EXAMPLE_TEST_TIMEOUT` used to be GNU `timeout`,
+which killed `just` and left the test executable `odin test` had spawned still running and still holding
+the inherited stdout pipe - so the ceiling fired and the run hung anyway, which is the opposite of the
+point. `run_with_timeout` in `justlib.py` uses `taskkill /T` on Windows and a process group on POSIX.
+Note that the budget covers compilation, so a tight ceiling times out examples that are merely slow to
+build.
 
-**`single_binary.odin` will fail the build until its `when` covers Windows.** It has a deliberate
-`#panic` for platforms whose engine is not vendored, so `just check` on the Windows CI job fails on it
-the first time the DLL lands. That failure is step 8 of this list asking to be done, not a regression -
-which is worth knowing before someone reads it as a broken build. (Previously recorded as a TODO in
-`ci.yml`; it belongs here.)
+**`just fetch-engine` on Windows runs `python`, not `python3`**, and `engine_sha256` is per-platform.
+It was a single value, which meant fetching on Windows compared `sciter.dll` against the Linux `.so`'s
+digest and refused to install - the recipe that exists to install the engine could not install it.
 
-**The display gate is already correct here, and its cost is that nothing has run.** `have_display` in
-the examples returns true unconditionally `when ODIN_OS == .Windows`, because `DISPLAY` and
-`WAYLAND_DISPLAY` are X11/Wayland variables that do not exist on Windows - had it tested for them, every
-windowed test would have skipped silently, which is the worst way for a test not to run. So the first
-real Windows run executes the whole suite, roughly two thirds of which has never run on this platform.
-Budget for that rather than expecting a quick green.
+**`libpng error: IDAT: incorrect header check`** is printed by `just leak-check` on Windows. The sweep
+still reports clean. Not investigated.
 
-`examples/windowless_gl.odin` is the one deliberate exception: it gates on `ODIN_OS != .Linux` and skips
-everywhere else, because it creates its GL context with EGL.
-
-**`just fetch-engine` on Windows runs `python`, not `python3`.** The Windows recipe variant uses the
-launcher name that actually exists there; GitHub's `windows-2022` image ships Python on PATH, and a
-developer box may not. If it fails with "python is not recognized", that is the reason, and the engine
-is still committed today so nothing is blocked by it - `just ensure-engine` only fetches when the file
-is missing.
-
-**Recipes with a bash shebang.** `pack`, `extension-run`, `check` and a few others are `#!/usr/bin/env
-bash` scripts. `just` runs those through the shebang rather than `windows-shell`, so they need bash in
-`PATH` — Git for Windows provides it. If they fail with something like "The system cannot find the file
-specified", that is what happened.
-
-**`os.rename` over an existing file.** `embed.odin` writes to a temporary name and renames into place.
-Windows `MoveFile` fails when the destination exists, unlike POSIX. The code already treats a failed
-rename as "someone else won the race" and verifies the destination's size, so the behaviour should be
-correct either way — but confirm the *second* run of `single_binary` does not error, since that is the
-path where the destination exists.
-
-**Executable permission bits.** `write_engine` sets read+execute permissions, which mean nothing on
-Windows. Harmless, but if a DLL fails to load from the cache directory, permissions are not the reason
-— look at anti-malware and at `LoadLibrary` dependency resolution instead.
-
-**Dependent DLL resolution.** `sciter.dll` links only system libraries, so loading it from a cache
-directory should be fine. If it is not, that is `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)`
-territory, in `core:dynlib`, and worth reporting upstream rather than working around here.
-
-**Path separators.** `examples/load_file.odin`'s `file_url` already converts `C:\x\y` to
-`file:///C:/x/y`. Confirm it, since it is the only place in the repository that builds a URL from a
-filesystem path.
-
-**The ownership types and the leak sweep are new since this list was written, and none of it has run on
-Windows.** All of it is platform-independent by construction, which is the reason to check it rather
-than the reason to skip it:
-
-- `Owned_Element` and `Owned_Request` are `distinct` types over the same handles, so they cannot behave
-  differently per platform — but they changed the signature of `use_element`, `remove_element` and
-  `use_request`, and every example was touched. A build failure here is a missed call site, not a
-  platform difference.
-- `just leak-check` builds `examples/leak_sweep.odin` with `-debug` and fails if the engine is still
-  holding anything at exit. It needs a display (it makes a windowless view, which still needs one — see
-  `windowless.odin`), so run it after the window canary. A leak reported *only* on Windows would be a
-  genuine finding: it would mean a reference-counting path differs there, which nothing in the wrapper
-  intends.
-- `sciter_app/tracking.odin` compiles to nothing without `-debug`, so confirm the ordinary
-  `just example-tests` run is unaffected and only `leak-check` pays for it.
-- `just check-ownership` is a Python script over the source and needs neither engine nor display; it
-  should pass identically. If Python is missing from the Windows runner, that step is the one to skip
-  rather than to fix in a hurry.
-
-**`set_option`'s per-option behaviour is measured on Linux and is expected to differ.**
-`examples/script_bridge.odin`'s `test_which_options_this_engine_takes_and_which_it_refuses` asserts two
-things unconditionally — an unknown option code is refused, and nine named options are accepted with no
-window — and puts the rest behind `when ODIN_OS == .Linux`, because what an engine build does with an
-option it does not implement is a property of that build. The guarded half says `.SMOOTH_SCROLL` needs a
-window, and that `.CONNECTION_TIMEOUT`, `.HTTPS_ERROR`, `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION` are
-refused either way. Several of those are Windows features (`TRANSPARENT_WINDOW`, `ALPHA_WINDOW` and
-`ENABLE_UIAUTOMATION` most obviously), so a different answer there is the expected outcome, not a
-failure: measure it, widen the `when`, and record it on `set_option` in `app.odin` next to the Linux
-column. If the unguarded half fails, that is a real finding.
-
-## After it works
+## After the open items close
 
 - update the platform table in `README.md` (Windows row: vendored yes, tested yes)
-- update `external/sciter/VENDORED.md` with the DLL's size and SHA-256
 - update `docs/PLAN.md` milestone 10
 - update `docs/deployment.md`'s status note, which currently says Windows is unverified
-- record the Windows null-slot list in `examples/api_map.odin`
-- per `docs/UPGRADING.md`, this is when the repository's history cost goes from ~11 MB to ~19 MB per
-  engine bump. Nothing to do about it now, but it is the moment the row-10 hybrid (Linux committed,
-  Windows on releases) stops being hypothetical.
+- per `docs/UPGRADING.md`, the repository's history cost is now ~19 MB per engine bump rather than ~11,
+  so the row-10 hybrid (Linux committed, Windows on releases) has stopped being hypothetical

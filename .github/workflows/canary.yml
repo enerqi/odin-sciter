@@ -8,7 +8,7 @@
 # Nothing is committed and the pin does not move.
 #
 # What it can tell you before you spend an upgrade:
-#   - the engine added, removed or REORDERED ISciterAPI slots (check-api-map.sh catches all three)
+#   - the engine added, removed or REORDERED ISciterAPI slots (check-api-map.py catches all three)
 #   - SCITER_API_VERSION changed, so bindings and engine must ship together
 #   - a header patch in src/flatten_headers.py stopped matching, which is a hard error by design
 #   - the generated sciter.odin changed, and by how much - the diffstat is the API's release notes

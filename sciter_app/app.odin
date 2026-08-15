@@ -138,16 +138,23 @@ version :: proc() -> [4]u32 {
 // An engine option. `window` is nil for the process-wide options, which is most of them.
 //
 // **`Sciter_Rt_Options`'s `hWnd` comments do not tell you which ones need a window, and the return
-// value is the only thing that does.** Measured on 6.0.4.9 (Linux), with `examples/script_bridge.odin`
-// holding the test:
+// value is the only thing that does.** Measured on 6.0.4.9, on Linux and on Windows, with
+// `examples/script_bridge.odin` holding the test:
 //
-//   - Accepted with no window: `.SET_SCRIPT_RUNTIME_FEATURES`, `.SET_GFX_LAYER`, `.SET_DEBUG_MODE`,
-//     `.SET_UX_THEMING`, `.SET_MAX_HTTP_DATA_LENGTH`, `.SET_PX_AS_DIP`, `.SET_INIT_SCRIPT`,
-//     `.USE_INTERNAL_HTTP_CLIENT`, `.EXTENDED_TOUCHPAD_SUPPORT`.
-//   - **Needs a window**: `.SMOOTH_SCROLL`, whose header comment says only "value:TRUE - enable" and
-//     reads like a global preference. It fails with nil and succeeds with a window.
-//   - Refused either way on this build: `.CONNECTION_TIMEOUT`, `.HTTPS_ERROR`, `.FONT_SMOOTHING`,
-//     `.ENABLE_UIAUTOMATION`. The option exists in the header and does nothing here.
+//   - Accepted with no window, both platforms: `.SET_SCRIPT_RUNTIME_FEATURES`, `.SET_GFX_LAYER`,
+//     `.SET_DEBUG_MODE`, `.SET_UX_THEMING`, `.SET_MAX_HTTP_DATA_LENGTH`, `.SET_PX_AS_DIP`,
+//     `.SET_INIT_SCRIPT`, `.USE_INTERNAL_HTTP_CLIENT`, `.EXTENDED_TOUCHPAD_SUPPORT`.
+//   - **Needs a window**, both platforms: `.SMOOTH_SCROLL`, whose header comment says only
+//     "value:TRUE - enable" and reads like a global preference. It fails with nil and succeeds with a
+//     window.
+//   - Refused either way, both platforms: `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION`. The option
+//     exists in the header and is implemented on neither - `.ENABLE_UIAUTOMATION` notably so, since UI
+//     Automation is a Windows API.
+//   - **Platform-specific**: `.CONNECTION_TIMEOUT` and `.HTTPS_ERROR` are refused either way on Linux
+//     and accepted either way on Windows. Both configure the HTTP client, and the split follows it -
+//     Linux uses the system client and has nothing to set.
+//   - **Windows only, and all three need a window**: `.TRANSPARENT_WINDOW`, `.ALPHA_WINDOW` and
+//     `.SET_MAIN_WINDOW`. Not measured on Linux, where the features they name do not exist.
 //
 // An unknown option code is refused rather than ignored, so a failure really is a failure. Check the
 // error; the only way to find out that an option did not take is to look.

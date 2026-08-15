@@ -592,8 +592,11 @@ test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(
 // refused with a nil window and accepted with one. So a nil `window` is not the safe default the
 // comment on `set_option` would suggest; it is the one to try second.
 //
-// Measured on 6.0.4.9 on Linux, which is why the platform-specific half is guarded: what an engine
-// build does with an option it has no implementation for is a property of that build.
+// Measured on 6.0.4.9 on Linux and on Windows. Most of what was guarded as Linux-specific turned out
+// not to be - `.SMOOTH_SCROLL` needs a window on both, and `.FONT_SMOOTHING` and `.ENABLE_UIAUTOMATION`
+// are refused on both, the last of those despite being a Windows feature. What actually differs is the
+// HTTP client pair, `.CONNECTION_TIMEOUT` and `.HTTPS_ERROR`: refused on Linux, accepted on Windows.
+// The guard is now around that pair and the three window-shape options that exist only on Windows.
 @(test)
 test_which_options_this_engine_takes_and_which_it_refuses :: proc(t: ^testing.T) {
 	window, ok := test_view(t)
@@ -618,24 +621,47 @@ test_which_options_this_engine_takes_and_which_it_refuses :: proc(t: ^testing.T)
 		testing.expectf(t, sciter_app.set_option(option, 1) == nil, "%v should be accepted", option)
 	}
 
-	when ODIN_OS == .Linux {
-		// Needs a window, despite reading like a global preference.
-		testing.expect_value(
-			t,
-			sciter_app.set_option(.SMOOTH_SCROLL, 1),
-			sciter_app.Error(sciter_app.Api_Error.Option_Failed),
-		)
-		testing.expect_value(t, sciter_app.set_option(.SMOOTH_SCROLL, 1, window), nil)
+	// Needs a window, despite reading like a global preference. Measured the same on Linux and Windows,
+	// so it is not a property of one build after all.
+	testing.expect_value(
+		t,
+		sciter_app.set_option(.SMOOTH_SCROLL, 1),
+		sciter_app.Error(sciter_app.Api_Error.Option_Failed),
+	)
+	testing.expect_value(t, sciter_app.set_option(.SMOOTH_SCROLL, 1, window), nil)
 
-		// Refused either way on this build - the option exists in the header and does nothing here.
-		for option in ([]sciter.Sciter_Rt_Options {
-				.CONNECTION_TIMEOUT,
-				.HTTPS_ERROR,
-				.FONT_SMOOTHING,
-				.ENABLE_UIAUTOMATION,
-			}) {
+	// Refused either way, on both builds: the option is in the header and implemented in neither.
+	// `.ENABLE_UIAUTOMATION` is the surprise of the pair - it is a Windows feature, and the Windows build
+	// refuses it exactly as Linux does.
+	for option in ([]sciter.Sciter_Rt_Options{.FONT_SMOOTHING, .ENABLE_UIAUTOMATION}) {
+		testing.expectf(t, sciter_app.set_option(option, 1) != nil, "%v with no window", option)
+		testing.expectf(t, sciter_app.set_option(option, 1, window) != nil, "%v with a window", option)
+	}
+
+	// The two that genuinely differ, which is what the guard is for. Both are HTTP-client settings, and
+	// the split follows the client: Linux uses the system one and has nothing to configure, Windows uses
+	// the internal one and takes them.
+	when ODIN_OS == .Linux {
+		for option in ([]sciter.Sciter_Rt_Options{.CONNECTION_TIMEOUT, .HTTPS_ERROR}) {
 			testing.expectf(t, sciter_app.set_option(option, 1) != nil, "%v with no window", option)
 			testing.expectf(t, sciter_app.set_option(option, 1, window) != nil, "%v with a window", option)
+		}
+	} else when ODIN_OS == .Windows {
+		for option in ([]sciter.Sciter_Rt_Options{.CONNECTION_TIMEOUT, .HTTPS_ERROR}) {
+			testing.expectf(t, sciter_app.set_option(option, 1) == nil, "%v with no window", option)
+			testing.expectf(t, sciter_app.set_option(option, 1, window) == nil, "%v with a window", option)
+		}
+
+		// The window-shape options, which exist only here. All three read like global preferences and
+		// all three are refused without a window, the same way `.SMOOTH_SCROLL` is - so "needs a window"
+		// is the rule and the header's `hWnd = N/A` annotations are the exception worth distrusting.
+		for option in ([]sciter.Sciter_Rt_Options {
+				.TRANSPARENT_WINDOW,
+				.ALPHA_WINDOW,
+				.SET_MAIN_WINDOW,
+			}) {
+			testing.expectf(t, sciter_app.set_option(option, 1) != nil, "%v with no window", option)
+			testing.expectf(t, sciter_app.set_option(option, 1, window) == nil, "%v with a window", option)
 		}
 	}
 }

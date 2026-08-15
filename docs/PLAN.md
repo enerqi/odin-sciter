@@ -16,7 +16,7 @@ turned up something the headers do not say, which is the argument for closing co
 annotating them; the same pass measured what the three kinds of borrowed `Value` really cost and what a
 node reference really owes. See their doc comments and `docs/rules.md`.
 
-Every number in that paragraph comes from `just stats` (`.github/scripts/stats.sh`), and `just stats
+Every number in that paragraph comes from `just stats` (`.github/scripts/stats.py`), and `just stats
 --check` fails if this file and `README.md` have drifted from it - which they had, by 29 tests. The
 counting rule is `\.name\b` and not `\.name(`: the examples store and forward wrappers as often as
 they call them, and matching the open paren undercounts. `close` is now among the covered ones: there is exactly one order in which

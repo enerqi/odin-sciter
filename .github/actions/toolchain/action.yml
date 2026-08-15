@@ -30,9 +30,9 @@ inputs:
     required: false
     default: 'false'
   uv:
-    description: also install uv (only the python steps of `just bindgen` need it)
+    description: install uv - every `[script]` recipe runs Python through it, so this is on by default
     required: false
-    default: 'false'
+    default: 'true'
 
 runs:
   using: composite
@@ -136,13 +136,30 @@ runs:
         echo "$TOOLS/just" >> "$GITHUB_PATH"
         if [ '${{ inputs.odinfmt }}' = 'true' ]; then echo "$TOOLS/ols" >> "$GITHUB_PATH"; fi
 
+    # uv is what `set script-interpreter` in the justfile runs, so every `[script]` recipe - `check`,
+    # `lint`, `cross-check`, `example-tests` and the rest - needs it. It used to be opt-in for `bindgen`
+    # alone, back when those recipes were bash; they are Python now, because `just` cannot reliably find
+    # a bash on Windows (see justlib.py's header).
+    #
+    # Two installers, because Astral ships two. The shell one puts uv in ~/.local/bin; the PowerShell one
+    # puts it in %USERPROFILE%\.local\bin, which is the same directory spelled differently, so one
+    # GITHUB_PATH line covers both.
     - name: Install uv
-      if: inputs.uv == 'true'
+      if: inputs.uv == 'true' && runner.os != 'Windows'
       shell: bash
       run: |
         set -euo pipefail
         curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Install uv (Windows)
+      if: inputs.uv == 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: irm https://astral.sh/uv/install.ps1 | iex
+
+    - name: Add uv to PATH
+      if: inputs.uv == 'true'
+      shell: bash
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Report versions
       shell: bash

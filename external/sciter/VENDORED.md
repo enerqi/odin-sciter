@@ -6,6 +6,7 @@
 | --- | --- |
 | `external/sciter/include/` | The SDK's C/C++ headers, unmodified |
 | `lib/linux/x64/libsciter.so` | The Linux x64 engine |
+| `lib/windows/x64/sciter.dll` | The Windows x64 engine |
 
 ## Version
 
@@ -25,12 +26,20 @@ Verified against the shipped library rather than assumed - `just example api_map
 | File | Size | SHA-256 |
 | --- | --- | --- |
 | `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
+| `lib/windows/x64/sciter.dll` | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
+
+The Windows entry is the plain `bin/windows/x64/` build, **not** `bin/windows.d2d/` (a Direct2D variant)
+or `bin/windows.xp/`.
 
 Recorded so a binary obtained out of band can be checked against the one these bindings were verified
 against, and because the download-instead-of-vendor step now exists and verifies against exactly this:
 `just fetch-engine` fetches it, `just fetch-engine --check` verifies what is on disk (and runs in CI),
 and `just ensure-engine` is a dependency of every build recipe. Regenerate with
 `sha256sum lib/linux/x64/libsciter.so`.
+
+The justfile's `engine_sha256` is per-platform for the same reason this table has a row per file: the
+pin is on the binary, not on the tag. One shared hash made `just fetch-engine` on Windows compare
+`sciter.dll` against the Linux `.so`'s digest and refuse to install.
 
 **The upstream tag is `6.0.4.9-bis`, and the suffix is not cosmetic.** The plain `6.0.4.9` tag serves a
 `libsciter.so` of *exactly* the same 25 015 296 bytes with a different SHA-256 - measured, by fetching
@@ -54,8 +63,8 @@ budget.
 
 Only what the bindings need is vendored. Everything else stays upstream:
 
-- `bin/` for platforms other than Linux x64 - Windows (`windows/`, `windows.d2d/`, `windows.xp/`),
-  macOS, Android, and the 32-bit and ARM Linux builds
+- `bin/` for platforms other than Linux x64 and Windows x64 - the `windows.d2d/` and `windows.xp/`
+  variants, macOS, Android, and the 32-bit and ARM Linux builds
 - the SDK tools: `packfolder`, `inspector`, `scapp`, `usciter`, `tsciter`, `lite-sciter-sdl`,
   `sciter-sqlite.so`
 - `demos/`, `samples*/`, `widgets/`, `quark/`, `sciter+/`, `sciter-webview/`, `docs/`

@@ -202,32 +202,36 @@ jobs:
             echo "::notice::lib/windows/x64/sciter.dll is not vendored - skipping the runtime steps. Step 1 of docs/WINDOWS-CHECKLIST.md is what turns this job on."
           fi
 
-      # Checklist step 2, and the same weaker check the example's header describes: sciter.dll exports
-      # one symbol, so almost every slot resolves as `sciter.dll+0x...` and containment is what is
-      # being asserted. The null list is expected to differ from Linux and is reported, not enforced,
-      # until a real run records it.
+      # Checklist step 2, now a real gate rather than a report: the null list and the symbol names were
+      # measured on a Windows machine on 2026-08-15 and are pinned in check-api-map.py. The prediction
+      # that lived here - "sciter.dll exports one symbol, so containment is all that can be asserted" -
+      # was wrong twice over, and usefully: the DLL exports 276 symbols, so the name check is as strong
+      # as Linux's, and the Windows null list is the Linux one minus SciterProcND rather than the
+      # D2D-filled list that was expected.
       - name: Verify the ISciterAPI table
         if: steps.engine.outputs.have == 'true'
-        shell: bash
         run: just api-map-verify
 
-      # Checklist step 4. `single_binary.odin` will fail here on its deliberate `#panic` until its
-      # `when` is extended to cover Windows - that failure *is* checklist step 8 asking to be done, not
-      # a broken build. Tracked in docs/WINDOWS-CHECKLIST.md.
+      # Checklist step 4. `single_binary.odin`'s `when` now covers windows_amd64, and `just check` skips
+      # the two raw-Xlib examples off Linux - without that skip this step could never have passed.
       - name: Type check and build everything
         if: steps.engine.outputs.have == 'true'
-        shell: bash
         run: just check
 
-      # Checklist step 5. The display gate is already right for this platform: `have_display` in the
-      # examples returns true unconditionally `when ODIN_OS == .Windows`, because DISPLAY and
-      # WAYLAND_DISPLAY are X11/Wayland variables that would otherwise skip every windowed test here
-      # forever, silently. A session that genuinely cannot open a window fails at `create_window`
-      # instead, which is visible. The remaining open items for this job are in
+      # Checklist step 5. The display gate is right for this platform: `have_display` in the examples
+      # returns true unconditionally `when ODIN_OS == .Windows`, because DISPLAY and WAYLAND_DISPLAY are
+      # X11/Wayland variables that would otherwise skip every windowed test here forever, silently.
+      # Confirmed on a real machine: the windowed tests run. The remaining open items for this job are in
       # docs/WINDOWS-CHECKLIST.md rather than in this comment.
+      #
+      # EXAMPLE_TEST_TIMEOUT for the same reason as the Linux job, and with a Windows-specific caveat
+      # worth knowing: `timeout` kills `just`, not the test executable `odin test` spawned underneath it,
+      # so a genuinely wedged example can outlive its ceiling. The job timeout is the real backstop.
       - name: Run the example tests
         if: steps.engine.outputs.have == 'true'
-        shell: bash
+        timeout-minutes: 45
+        env:
+          EXAMPLE_TEST_TIMEOUT: '420'
         run: just example-tests
 
   macos:

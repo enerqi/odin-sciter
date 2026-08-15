@@ -17,8 +17,8 @@
 // platforms. What it buys is a single artifact to ship; see `sciter_app/embed.odin` for the full list
 // of trade-offs, including the Windows anti-malware one.
 //
-// The engine is only vendored for Linux x64 in this repository, so that is the only platform this
-// example compiles on today.
+// The engine is vendored for Linux x64 and Windows x64 in this repository, so those are the platforms
+// this example compiles on today. macOS is the gap, and it is a vendoring gap rather than a code one.
 package main
 
 import sciter ".."
@@ -31,13 +31,19 @@ import "core:path/filepath"
 import "core:slice"
 import "core:testing"
 
-// The engine itself. ~25 MB, straight into the executable's read-only data.
+// The engine itself. ~25 MB on Linux, ~18 MB on Windows, straight into the executable's read-only data.
+//
+// One `when` per vendored binary, and the `else` is a compile-time error rather than a runtime one on
+// purpose: an executable that embeds nothing is not a smaller version of this example, it is a broken
+// one, and the failure belongs at the build rather than in front of a user.
 when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
 	ENGINE :: #load("../lib/linux/x64/libsciter.so")
+} else when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {
+	ENGINE :: #load("../lib/windows/x64/sciter.dll")
 } else {
 	#panic(
-		"single_binary embeds the engine, and only lib/linux/x64/libsciter.so is vendored here - " +
-		"see external/sciter/VENDORED.md",
+		"single_binary embeds the engine, and only lib/linux/x64/libsciter.so and " +
+		"lib/windows/x64/sciter.dll are vendored here - see external/sciter/VENDORED.md",
 	)
 }
 
@@ -276,6 +282,20 @@ test_the_directory_is_named_by_the_hash :: proc(t: ^testing.T) {
 	testing.expect_value(t, again, first)
 }
 
+// **`os.stat(...).inode` is 0 for every file on Windows**, so an inode comparison there is not a weak
+// test, it is a vacuous one: `0 != 0` never holds and `0 == 0` always does. Measured, not assumed.
+// Where the file identity is real it is the sharpest available signal for "this file was replaced
+// rather than written over", so the assertions below keep it and gate it, rather than dropping to
+// timestamps everywhere for the sake of one platform.
+//
+// What is *not* platform-specific, and was the open question on this file before a Windows machine
+// existed: `os.rename` over an existing destination succeeds here. POSIX `rename(2)` replaces silently,
+// Win32 `MoveFile` refuses - but Odin's `core:os` uses the replacing variant, so `write_engine`'s
+// rename-into-place works identically on both. The content assertions below are what prove it, and they
+// run everywhere.
+@(private = "file")
+INODE_IS_MEANINGFUL :: ODIN_OS != .Windows
+
 // Write-once. The file is replaced by a rename, so a second write would show up as a new inode even
 // though the bytes are identical - which is a sharper test than comparing timestamps.
 @(test)
@@ -299,7 +319,9 @@ test_an_already_extracted_blob_is_not_written_again :: proc(t: ^testing.T) {
 
 	after, serr2 := os.stat(second, context.temp_allocator)
 	testing.expect_value(t, serr2, nil)
-	testing.expect_value(t, after.inode, before.inode)
+	when INODE_IS_MEANINGFUL {
+		testing.expect_value(t, after.inode, before.inode)
+	}
 	testing.expect_value(t, after.modification_time, before.modification_time)
 }
 
@@ -330,7 +352,9 @@ test_a_file_of_the_wrong_size_is_replaced :: proc(t: ^testing.T) {
 	after, serr2 := os.stat(second, context.temp_allocator)
 	testing.expect_value(t, serr2, nil)
 	testing.expect_value(t, after.size, i64(len(blob)))
-	testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	when INODE_IS_MEANINGFUL {
+		testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	}
 
 	written, rerr := os.read_entire_file(second, context.temp_allocator)
 	testing.expect_value(t, rerr, nil)
@@ -369,7 +393,9 @@ test_a_file_of_the_right_size_but_the_wrong_content_is_replaced :: proc(t: ^test
 
 	after, serr2 := os.stat(second, context.temp_allocator)
 	testing.expect_value(t, serr2, nil)
-	testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	when INODE_IS_MEANINGFUL {
+		testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	}
 
 	written, rerr := os.read_entire_file(second, context.temp_allocator)
 	testing.expect_value(t, rerr, nil)

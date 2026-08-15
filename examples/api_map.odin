@@ -27,10 +27,16 @@
 //            SciterCreateNSView, SciterCreateWidget, reserved1..4, and the three DirectX entries.
 //            Note SciterCreateWidget is null here too - Sciter 6 dropped GTK on Linux, so there is no
 //            host widget to create.
-//   Windows   expected to fill SciterProc, SciterProcND, SciterTranslateMessage and the D2D/DirectX
-//            entries, and to leave SciterCreateWidget and SciterCreateNSView null. Not yet verified -
-//            record what this prints when it is.
-//   macOS     expected to fill SciterCreateNSView. Likewise unverified.
+//   Windows  15 null, measured 2026-08-15 on `bin/windows/x64/sciter.dll`: the Linux list minus
+//            SciterProcND. That one slot is the entire difference between the platforms, and it is not
+//            what was expected here before the machine existed - the guess was that Windows would fill
+//            SciterProc, SciterTranslateMessage and the D2D/DirectX entries. It fills none of them.
+//            SciterProc and SciterTranslateMessage are the Sciter 4 HWND message-pump entry points;
+//            Sciter 6 owns its window procedure and does not publish them, so a Windows application
+//            must not reach for them. The D2D/DirectWrite and DirectX slots are null because this is
+//            the plain `bin/windows/` build, which renders through Skia - they belong to
+//            `bin/windows.d2d/`, which is deliberately not the one vendored.
+//   macOS     expected to fill SciterCreateNSView. Still unverified.
 //
 // `SciterGetViewExpando` and the four `reserved` slots are null on every platform: leftovers from the
 // removed script-VM API. The first of those is why `sciter_app.set_global` evaluates an assignment
@@ -44,18 +50,27 @@
 //                 symbols (its vendored QuickJS, libjpeg and Skia internals), so every slot resolves to
 //                 its own `...Imp` name and the check is exact.
 //
-//   Windows       sciter.dll exports exactly one symbol, `SciterAPI` - the `Imp` functions are internal
-//                 and have no export entry - so there is usually no name to find without a PDB.
-//                 dbghelp is still asked (it resolves them when symbols happen to be available), and
-//                 the fallback is what can always be checked: `VirtualQuery` reports which module the
-//                 address belongs to, so every slot must land inside sciter.dll at a sane offset.
-//                 That catches a table pointing at the wrong module, a partially-filled table and an
-//                 offset shift into padding - just not a swap of two neighbouring engine functions.
+//   Windows       dbghelp reports the nearest exported symbol, and the `VirtualQuery` +
+//                 `GetModuleFileNameW` fallback reports which module an address belongs to when there
+//                 is no symbol at all. This was written expecting to live on the fallback: sciter.dll
+//                 was assumed to export only `SciterAPI`, with the `Imp` functions internal, so nearly
+//                 every slot would print `sciter.dll+0x...`.
 //
-// So on Windows this is a weaker check than on Linux, and it is worth knowing that rather than reading
-// a wall of `sciter.dll+0x...` as a failure. Generating the bindings on Linux and verifying there
-// remains the authoritative pass; `SCITER_API_VERSION` plus the module/offset check is what the other
-// platforms add on top.
+//                 Measured, it does not. sciter.dll exports 276 named symbols, and 172 of the 174
+//                 non-null slots resolve to their own `...Imp` name - the same exact check as Linux.
+//                 The two exceptions are the two whose `Imp` is genuinely absent from the export
+//                 table, so dbghelp names the export below them instead:
+//
+//                     SciterProcND            -> SciterRequestAPIImp+0x1cc
+//                     SciterEGLGetProcAddress -> SciterRequestAPIImp+0x1c4
+//
+//                 Those two get module containment only; everything else gets the name.
+//
+// So Windows is very nearly as strong a check as Linux, rather than the weak module-containment one
+// this comment used to promise. `.github/scripts/check-api-map.py` applies exactly that split. A wall
+// of `sciter.dll+0x...` would now be a *finding* - it would mean the engine build stopped exporting
+// its internals - rather than the expected output. Generating the bindings on Linux and verifying
+// there remains the authoritative pass.
 package main
 
 import sciter ".."
