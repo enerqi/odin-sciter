@@ -121,6 +121,11 @@ jobs:
           cp -r "$RUNNER_TEMP/sdk/include" external/sciter/include
           rm -rf external/sciter/include/behaviors external/sciter/include/gles
           rm -f external/sciter/include/*.hpp external/sciter/include/sciter-main.cpp
+          # `mkdir -p` because no engine is committed any more, so `lib/` is not in a fresh checkout at
+          # all - git does not track empty directories, and the binary was the only thing under it.
+          # `fetch-engine.py` creates the directory itself; this path bypasses it deliberately, because
+          # the whole point of the probe is to run against a binary the pin does *not* cover yet.
+          mkdir -p lib/linux/x64
           cp "$RUNNER_TEMP/sdk/bin/linux/x64/libsciter.so" lib/linux/x64/libsciter.so
           sha256sum lib/linux/x64/libsciter.so
           api_version=$(grep -hoE '#define[[:space:]]+SCITER_API_VERSION[[:space:]]+[0-9]+' external/sciter/include/*.h | grep -oE '[0-9]+$' | head -1)

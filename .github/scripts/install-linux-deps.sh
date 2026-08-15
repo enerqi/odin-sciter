@@ -59,6 +59,12 @@ command -v clang >/dev/null || sudo apt-get install -y --no-install-recommends c
 #   - what the engine's own dependencies resolve to
 #   - which EGL vendor ICDs libglvnd can see. An empty directory here means `libegl1` has nothing to
 #     dispatch to, which is the difference between "no GPU" (fine, llvmpipe) and "no EGL at all".
-ldd lib/linux/x64/libsciter.so
+# Guarded because the engine is fetched rather than committed: this script is useful before there is
+# one, and `ldd` on a missing file is a non-zero exit that would fail the whole job.
+if [ -f lib/linux/x64/libsciter.so ]; then
+	ldd lib/linux/x64/libsciter.so
+else
+	echo "--- lib/linux/x64/libsciter.so is not here yet; \`just fetch-engine\` installs it"
+fi
 echo "--- EGL vendor ICDs:"
 ls -l /usr/share/glvnd/egl_vendor.d/ 2>&1 || true

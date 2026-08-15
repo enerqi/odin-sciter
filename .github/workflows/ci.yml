@@ -52,22 +52,14 @@ jobs:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
 
-      # X11 and EGL development packages, the engine's own runtime dependencies, and fonts. The script
-      # says which group is which and how each one fails when it is missing.
-      - name: Install build and runtime dependencies
-        run: .github/scripts/install-linux-deps.sh
-
-      # `-vet`, `-vet-cast`, `-strict-style` and `-vet-tabs` were configured in the justfile and then
-      # never run by anything, so they enforced nothing. Seconds, no engine and no display, so it goes
-      # first: a shadowed declaration is cheaper to hear about before a 45-minute test job.
-      #
-      # Both library packages *and* every example. The examples used to be excluded - which meant the
-      # vet flags covered the third of the code least likely to be read closely - and the cleanup that
-      # let them in was 25 findings, all unused imports, unused locals and shadowed `err`s.
       # The engine's identity, established rather than assumed. No engine is committed any more, so this
       # downloads it and verifies the download against the SHA-256 in `external/sciter/VENDORED.md` -
       # the switch docs/UPGRADING.md predicted, and it cost this line. `ensure-engine` would do it from
       # the first build recipe anyway; it is a step of its own so a bad pin fails here, named.
+      #
+      # **Before the dependency step, not after.** install-linux-deps.sh runs `ldd` on the engine as
+      # evidence, which was free while the binary was committed and is a failed job now if nothing has
+      # fetched it yet. That was the first thing the un-vendoring broke.
       #
       # Worth naming because the failure it catches is otherwise baffling: the upstream tag `6.0.4.9`
       # serves a libsciter.so of *exactly* the same size as `6.0.4.9-bis` and a different hash, so "the
@@ -75,6 +67,18 @@ jobs:
       - name: Fetch and verify the pinned engine
         run: just fetch-engine
 
+      # X11 and EGL development packages, the engine's own runtime dependencies, and fonts. The script
+      # says which group is which and how each one fails when it is missing.
+      - name: Install build and runtime dependencies
+        run: .github/scripts/install-linux-deps.sh
+
+      # `-vet`, `-vet-cast`, `-strict-style` and `-vet-tabs` were configured in the justfile and then
+      # never run by anything, so they enforced nothing. Seconds and no display, so it goes early: a
+      # shadowed declaration is cheaper to hear about before a 45-minute test job.
+      #
+      # Both library packages *and* every example. The examples used to be excluded - which meant the
+      # vet flags covered the third of the code least likely to be read closely - and the cleanup that
+      # let them in was 25 findings, all unused imports, unused locals and shadowed `err`s.
       - name: Lint
         run: just lint
 

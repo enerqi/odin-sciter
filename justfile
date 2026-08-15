@@ -939,9 +939,16 @@ window-canary: mktarget_dirs
 #                              declares nothing off Linux. The Windows equivalents would be different
 #                              programs, not the same program compiled elsewhere.
 #
-# `single_binary` used to be a third, because it `#load`s the engine and macOS was the platform whose
-# binary was not vendored. It is vendored now, its `when` covers both Darwin architectures, and so it
-# is checked here like everything else.
+# `single_binary` is a conditional third. It `#load`s the target platform's engine into the executable,
+# and `#load` is a *compile-time* read of a real file - so checking it for `windows_amd64` needs
+# `lib/windows/x64/sciter.dll` on this disk. No engine is committed any more and `just fetch-engine`
+# installs only the host's, so on a CI runner two of the three are absent. It is skipped per target when
+# its file is missing, with a line saying so rather than silently, and checked when it is there - which
+# is the normal case on a development machine that has fetched more than one.
+#
+# Nothing is lost by that skip: all three platform jobs run `just check`, which builds `single_binary`
+# natively against the engine they just fetched. This recipe is for the code that *nothing* builds
+# elsewhere, and that file is not it.
 # ---
 # type check both packages, the snippets and every portable example for windows and macOS
 [script]
@@ -950,10 +957,21 @@ cross-check: ensure-engine
 	sys.path.insert(0, ".github/scripts")
 	from justlib import X11_ONLY, run
 
+	# What `single_binary` #loads for each target, and therefore what has to be on disk to check it.
+	engine_for = {
+		"windows_amd64": "lib/windows/x64/sciter.dll",
+		"darwin_amd64": "lib/macosx/libsciter.dylib",
+		"darwin_arm64": "lib/macosx/libsciter.dylib",
+	}
+
 	targets = ("windows_amd64", "darwin_amd64", "darwin_arm64")
 	for target in targets:
 		skip = set(X11_ONLY)
 		print(f"--- {target}")
+		engine = engine_for[target]
+		if not os.path.exists(engine):
+			skip.add("single_binary")
+			print(f"    single_binary: skipped, it #loads {engine} and that is not on disk")
 		run(["odin", "check", ".", "-no-entry-point", f"-target:{target}"])
 		run(["odin", "check", "sciter_app", "-no-entry-point", f"-target:{target}"])
 		run(["odin", "check", "docs/snippets", "-no-entry-point", f"-target:{target}"])
