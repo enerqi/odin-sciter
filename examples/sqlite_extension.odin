@@ -982,9 +982,9 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 	if err != nil {return}
 
 	// **The trailing `<p>.</p>` is load-bearing on Windows**, and has nothing to do with SQLite: a
-	// document that never renders any text faults inside sciter.dll at process teardown. This one was a
-	// bare `<script>`. See the note on `TEST_DOC` in call_odin_from_js.odin, and section 1 of
-	// docs/WINDOWS-CHECKLIST.md for the reproduction.
+	// Windows process that exits with a live view faults inside the engine unless its document laid out
+	// some text, and this one was a bare `<script>`. See the note on `TEST_DOC` in
+	// call_odin_from_js.odin, and docs/gotchas.md #1.
 	LOADER :: `<html><body><script type="module">
 	  import * as sciter from "@sciter";
 	  try {

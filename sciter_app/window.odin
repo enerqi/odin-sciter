@@ -311,16 +311,46 @@ hide :: proc(window: Window) {
 // Nothing about the close is signalled, either: immediately afterwards the handle still answers - even
 // `root` succeeds - because the close has not happened yet. It happens on the pump.
 //
-// **None of the above is true on Windows, in either direction.** Measured on 6.0.4.9 over 30 turns of
-// the pump after a `close` on a secondary window with a document loaded: nothing crashes in any of the
-// five teardown orders, and the handle never dies - `root` keeps answering and the state stays
-// `.HIDDEN`. `close` there behaves as `hide` does, so a Windows application that closes a window and
-// expects the handle to become invalid will wait forever.
+// **`force` is the second parameter of `SET_STATE`, and the C header says it does not exist.**
+// `sciter-x-def.h` annotates `SCITER_WINDOW_SET_STATE` as `p1 - SCITER_WINDOW_STATE, p2 - N/A`. It is
+// not N/A for `.CLOSED`: the SDK's own C++ layer distinguishes the two calls by exactly that parameter,
 //
-// Write the hide/pump/close order anyway. It is the only order that is safe on both, it costs nothing
-// on Windows, and the Linux failure it avoids is a segfault rather than an error return.
-close :: proc(window: Window) {
-	set_window_state(window, .CLOSED)
+//	void request_close() { SciterWindowExec(_hwnd, SET_STATE, STATE_CLOSED, FALSE); }
+//	void close()         { SciterWindowExec(_hwnd, SET_STATE, STATE_CLOSED, TRUE);  }
+//
+// and `FALSE` is a *request*, which script is allowed to reject. This wrapper passed 0 for it until it
+// was measured, which meant `close` was `request_close` under another name - and on Windows the window
+// was simply never destroyed. See `docs/gotchas.md`.
+//
+// That mistake had a consequence worth stating on its own, because it looked like a platform
+// difference and was not: **a Windows process that exits with a live Sciter window faults inside the
+// engine.** With `force` the window really closes and the fault goes away. So this is not only about
+// tidiness - on Windows it is the difference between exit code 0 and an access violation.
+//
+// Measured with `force`: the handle dies the same way it does on Linux - `root` answers
+// `.INVALID_HWND` and the state is `0xFFFFFFFE`.
+//
+// **The Linux table above was measured with `force` off**, since that is all this wrapper could do at
+// the time, and it has not been re-measured with it on. The hide/pump/close order is still the one to
+// write - it is the only order safe on both, and the Linux failure it avoids is a segfault rather than
+// an error return - but treat the five-row table as describing `request_close` until someone re-runs it
+// on X11.
+close :: proc(window: Window, force := true) {
+	sciter.api().SciterWindowExec(
+		rawptr(window),
+		.SET_STATE,
+		uintptr(sciter.Sciter_Window_State.CLOSED),
+		uintptr(1 if force else 0),
+	)
+}
+
+// Asks the window to close and lets the document refuse - the `beforeunload`-shaped half of `close`.
+//
+// This is the SDK's `request_close()`: the same call with the force parameter off. Script gets to see
+// the closure and can reject it, so the window may still be there afterwards. `close` is the one to use
+// on the way out of an application, and the one that actually destroys the window.
+request_close :: proc(window: Window) {
+	close(window, force = false)
 }
 
 // Brings the window forward and gives it focus.

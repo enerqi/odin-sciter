@@ -139,7 +139,33 @@ four now closed:
 Two of those are still live bugs in other people's code - the engine's teardown fault and Odin's
 exception filtering - and both have reproductions written down here.
 
-### 1. A text-free document faults the engine at process teardown — FOUND, worked around
+### 1. Exiting with a live window faults the engine — ROOT-CAUSED, and it found a wrapper bug
+
+**The rule is: close every window before the process exits.** That is all of it, and it is what the
+SDK's forum has said since 2019 - "close all windows and free all resources before exiting from
+WinMain". Measured as a matrix over three independent variables, closing the window is *sufficient on
+its own*:
+
+| window closed | `HELEMENT`/`VALUE` held to exit | document has text | result |
+| --- | --- | --- | --- |
+| **yes** | either | either | clean, 4 of 4 |
+| no | either | yes | clean |
+| no | either | **no** | **access violation** |
+
+So the second half of the forum's advice - "and free all resources" - does not apply to this fault at
+all; holding an `Owned_Element` and a `Value` to exit changes nothing.
+
+**This is also how a bug in this wrapper was found.** `close` was passing 0 for `SET_STATE`'s second
+parameter, which the C header annotates as `N/A` and which the SDK's C++ layer uses as the force flag:
+`request_close()` passes FALSE, `close()` passes TRUE. So `close` was `request_close` under another
+name, script could refuse it, and **on Windows the window was never destroyed** - which is why closing
+appeared not to help, and why two "Windows platform differences" recorded earlier in this file were
+artifacts of our own code rather than platform facts. `close(window, force := true)` is now the default.
+
+The rest of this section is the road there, kept because the reproduction is still the tightest
+statement of the engine's half of the bug.
+
+### 1a. The engine's half: a text-free document faults if the window outlives the process
 
 **A window whose document never renders any text faults inside sciter.dll when the process exits.** An
 unhandled null dereference at `this+0x38`, deep in unexported engine code:
@@ -181,14 +207,20 @@ the three whose *test* documents render nothing. `call_odin_from_js` used `<p id
 `request_loader` an `<img>` on its own, `sqlite_extension` a bare `<script>`. Every other example's
 document has visible text, which is why realistic documents never showed it.
 
-The workaround is one character: each of those three documents now ends `<p>.</p>`, with a comment
-saying why. **Do not tidy those away.** The engine bug is real and unfixed - anything here that loads a
-text-free document into a window will hit it again.
+The workaround in the tests is one character: each of those three documents now ends `<p>.</p>`, with a
+comment saying why. An *application* should close its windows instead, which fixes it whatever the
+document contains - but a test binary cannot, because the window is shared across tests for the life of
+the process and an Odin test binary has no exit hook to close it from. **Do not tidy those away.**
 
-Earlier notes on this file blamed thread affinity, because the engine is initialised on the test
-runner's pool thread and the fault surfaces on the main thread. That was wrong: the thread arrangement
-is incidental. Linux does not show it because Odin's test runner leaves through `os.exit`, a direct
-`exit_group` syscall - no DLL detach, no destructors, nothing runs.
+Two earlier explanations in this file were wrong and are worth recording as such, because both were
+plausible and both cost time. It is not thread affinity - the engine being initialised on the runner's
+pool thread while the fault surfaces on the main thread is incidental. And it is not "the host left
+objects alive" - that was tested directly and makes no difference. Linux does not show it because Odin's
+test runner leaves through `os.exit`, a direct `exit_group` syscall: no DLL detach, no destructors,
+nothing runs. A Linux application that exits normally may well reach the same code.
+
+Filed as [UPSTREAM-DEFECTS.md #11](./UPSTREAM-DEFECTS.md), and summarised for users in
+[gotchas.md #1](./gotchas.md).
 
 ### 1b. Odin's test runner cannot host a library that throws C++ exceptions
 

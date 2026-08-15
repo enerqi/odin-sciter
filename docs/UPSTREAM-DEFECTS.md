@@ -91,14 +91,18 @@ Since `params` is already in the passport, the thunk has everything it needs to 
 This binding now refuses the call itself (`asset_call` → `.Wrong_Arity`), but every other host binding
 is one mistake away from the same crash.
 
-## 5. `SciterGetElementByUID` refuses every UID `SciterGetElementUID` produces
+## 5. `SciterGetElementByUID` refuses every UID `SciterGetElementUID` produces — on Linux only
 
 **Severity:** an API pair that cannot be used. **Workaround:** keep `HELEMENT`s, or use ids.
 
-On the vendored 6.x engine, a UID obtained from `SciterGetElementUID` is rejected by
+On the vendored 6.x **Linux** engine, a UID obtained from `SciterGetElementUID` is rejected by
 `SciterGetElementByUID` — with either window handle, whether the element was made or found. The pair is
 documented as the way to carry a weak reference to an element across time, and there is no other way to
 do that.
+
+**The Windows build of the same version gets this right**, measured 2026-08-15: the round trip is exact
+for each of two elements, and an invented UID still fails. So this is a platform-specific regression in
+one build rather than a design change, which should make it cheap to find.
 
 ## 6. `SciterSetMediaType` takes effect only once per window
 
@@ -140,6 +144,53 @@ The renderer is always even-odd; two nested squares wound the same way render wi
 The API slot exists and refuses.
 
 ---
+
+## 11. Windows: exiting with a live window faults, if its document laid out no text
+
+**Severity:** crash at process exit, after the application's work is done. **Workaround:** close every
+window before exiting — which is the documented advice anyway, and which fixes it outright.
+
+**Platform:** Windows x64. Not reproducible on Linux, where nothing runs at exit (see below).
+
+A process that reaches exit with a Sciter window still alive faults inside `sciter.dll`, at a fixed
+address, dereferencing null at `this+0x38`:
+
+```
+AV on thread <main> at sciter.dll+0x3db6b, reading 0x38
+```
+
+Whether it fires depends on the *document*: one that laid out at least one character of text is clean,
+one that laid out none faults. Fifteen lines, deterministic, 3 runs out of 3:
+
+```odin
+w, _ := sciter_app.create_window({width = 400, height = 300})
+sciter_app.load_html(w, `<html><body><p></p></body></html>`)   // faults at exit
+                     // `<html><body>hello</body></html>`      // does not
+```
+
+Measured as a matrix over three independent variables — close the window or not, hold an `HELEMENT` and
+a `VALUE` to exit or release them, text or no text:
+
+| window closed | resources held | text | result |
+| --- | --- | --- | --- |
+| **yes** | either | either | clean, 4/4 |
+| no | either | yes | clean |
+| no | either | **no** | **access violation** |
+
+So closing the window is sufficient on its own, and holding engine-side objects is irrelevant to this
+one — which is worth saying because the standing forum advice pairs the two ("close all windows *and*
+free all resources"). Only the first half matters here.
+
+Ruled out individually: `SCITER_APP_INIT`, SOM asset classes, assets, global assets, native functors,
+functors returning containers, `show`/`hide`/pumping, and `SCITER_APP_SHUTDOWN` before exit. Both
+`SciterCreateWindow` and `SciterLoadHtml` are required; either alone is clean.
+
+**Suggested fix:** whatever the exit path releases at `this+0x38` is created lazily on first text
+layout and released unconditionally. A null check, or eager creation, closes it.
+
+**Why Linux does not show it:** the test harness this came from leaves through `os.exit`, a direct
+`exit_group` syscall — no DLL detach, no static destructors, nothing runs. Windows `ExitProcess` runs
+the engine's detach path. A Linux application that exits normally may well hit the same code.
 
 ## Not defects — corrections this repository had to make to itself
 

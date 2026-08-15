@@ -10,11 +10,16 @@ whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
 `just example-tests` runs 397 `@(test)` procs, and the twelve guides in `docs/` are written. Coverage of
-the wrapper is 401 of its 401 exported procedures called from a test. The five that closed that gap -
+the wrapper is 402 of its 402 exported procedures called from a test. The five that closed that gap -
 `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members - each
 turned up something the headers do not say, which is the argument for closing coverage gaps rather than
 annotating them; the same pass measured what the three kinds of borrowed `Value` really cost and what a
 node reference really owes. See their doc comments and `docs/rules.md`.
+
+`request_close` is the 402nd, and it makes the same argument again: it exists because `close` was found
+to be passing 0 for a parameter the C header calls `N/A` and the SDK's C++ layer uses as a force flag -
+so `close` was really `request_close`, and on Windows nothing was ever destroyed. Covering it measured
+the difference: `request_close` leaves the window alive even when the document refuses nothing.
 
 Every number in that paragraph comes from `just stats` (`.github/scripts/stats.py`), and `just stats
 --check` fails if this file and `README.md` have drifted from it - which they had, by 29 tests. The

@@ -18,7 +18,11 @@ In this order. Each assumes the one before it.
 3. [`rules.md`](./rules.md) — **the four contracts that decide whether your program is correct**:
    thread affinity, `Value` ownership, handle lifetimes, and which allocator a call uses. Short, and
    the one page here that is not optional.
-4. [`api.md`](./api.md) — the reference. What exists, grouped by area.
+4. [`gotchas.md`](./gotchas.md) — **the things that cost a day each.** Close every window before you
+   exit, install a debug-output handler on Windows, publish assets before the load and functors after,
+   and the platform differences that run the way round you would not guess. Measured, not guessed, and
+   none of it derivable from the headers.
+5. [`api.md`](./api.md) — the reference. What exists, grouped by area.
 
 ## Topic guides
 
@@ -37,6 +41,7 @@ Read the one you need, when you need it.
 | [`EMBEDDING.md`](./EMBEDDING.md) | windowless rendering into a surface you own |
 | [`deployment.md`](./deployment.md) | shipping: the engine, archives, one-file builds |
 | [`JS-RUNTIME.md`](./JS-RUNTIME.md) | what script can reach at runtime |
+| [`gotchas.md`](./gotchas.md) | the footguns, worst first — and where the knowledge actually lives |
 | [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md) | engine bugs you will meet, and the workarounds |
 | [`UPGRADING.md`](./UPGRADING.md) | the procedure for moving to a new SDK |
 

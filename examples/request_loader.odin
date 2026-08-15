@@ -288,10 +288,10 @@ test_nil_request_is_bad_param :: proc(t: ^testing.T) {
 //     the test runner's tracking one.
 
 @(private = "file")
-// **The `.` is load-bearing on Windows**, and has nothing to do with request loading: a window whose
-// document never renders any text faults inside sciter.dll at process teardown. This document was an
-// `<img>` on its own. See the note on `TEST_DOC` in call_odin_from_js.odin and section 1 of
-// docs/WINDOWS-CHECKLIST.md.
+// **The `<p>.</p>` is load-bearing on Windows**, and has nothing to do with request loading: a Windows
+// process that exits with a live window faults inside the engine unless that window's document laid out
+// some text, and this one was an `<img>` on its own. See the note on `TEST_DOC` in
+// call_odin_from_js.odin, and docs/gotchas.md #1.
 TEST_DOC :: `<html><head><link rel="stylesheet" href="t.css?theme=dark&size=14" /></head>
 <body><img id="img" src="t.svg" /><p>.</p></body></html>`
 

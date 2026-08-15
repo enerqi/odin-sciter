@@ -2891,11 +2891,11 @@ test_the_details_window_shows_the_row_it_was_opened_on :: proc(t: ^testing.T) {
 // every test after it in the file goes with it. That is the same hazard `dom_walk` records for the
 // unhidden close, and it is why the safe order is pinned by a test rather than by a comment.
 //
-// **Windows does not destroy the window at all, and does not have the hazard.** Measured over 30 turns
-// of the pump after a `close`: the handle stays valid, `root` keeps answering, and the state stays
-// `.HIDDEN`. So `close` there is closer to `hide` than to a destroy, and nothing crashes whichever order
-// you use. The safe order is still the one to write, because it is the only one that is safe on both -
-// but the *assertions* about a dead handle below are Linux facts and are guarded as such.
+// **On Windows this same order also destroys the window, and must** - a process that exits with a live
+// Sciter window faults inside the engine there. That was not obvious for a while, because `close` was
+// passing 0 for `SET_STATE`'s force parameter and so never destroyed anything; see the note on `close`
+// in `window.odin` and `docs/gotchas.md`. Whether the X11 crash hazard the order exists for also
+// applies with the force parameter on has not been re-measured.
 @(test)
 test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^testing.T) {
 	app, _, ok := test_app(t)
@@ -2921,29 +2921,34 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 
 	sciter_app.hide(window)
 	sciter_app.heartbeat() // the turn that takes it off the paint list
+
+	// **`request_close` does not close it**, which is the whole difference between the two calls and the
+	// reason `close` takes a `force` parameter at all. Measured on 6.0.4.9/Windows: the window survives
+	// five turns of the pump afterwards, with a document that refuses the closure *and* with one that
+	// says nothing about it. So `request_close` is the polite ask - it lets script have an opinion, and
+	// on a window nobody is looking at, nothing comes of it.
+	sciter_app.request_close(window)
+	for _ in 0 ..< 5 {
+		sciter_app.heartbeat()
+	}
+	_, still_there := sciter_app.root(window)
+	testing.expect_value(t, still_there, nil)
+
 	sciter_app.close(window)
 	sciter_app.heartbeat()
 
-	when ODIN_OS == .Windows {
-		// The handle is still alive: `close` does not destroy a secondary window here. Asserted rather
-		// than skipped, because "close leaves you holding a live window" is the thing an application
-		// written against the Linux behaviour would get wrong.
-		_, after := sciter_app.root(window)
-		testing.expect_value(t, after, nil)
-		state, state_ok := sciter_app.window_state(window)
-		testing.expect(t, state_ok, "a closed window still reports a state here")
-		testing.expect_value(t, state, sciter.Sciter_Window_State.HIDDEN)
-	} else {
-		// Now the handle is dead, and says so in the two ways `window.odin` records: an invalid handle
-		// from the DOM, and a state that is not in the enum at all.
-		_, after := sciter_app.root(window)
-		testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
-		// `ok` false is the whole point of the pair: the engine answers 0xFFFFFFFE, which is not a member
-		// of SCITER_WINDOW_STATE, so there is no state to report and the wrapper says so instead of
-		// handing back an out-of-range enum value.
-		_, state_ok := sciter_app.window_state(window)
-		testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
-	}
+	// Now the handle is dead, and says so in the two ways `window.odin` records: an invalid handle
+	// from the DOM, and a state that is not in the enum at all. **The same on both platforms** - this
+	// was guarded as a Windows difference for a while, and it was not one: `close` was passing 0 for
+	// `SET_STATE`'s force parameter, so it was really `request_close` and the window was never
+	// destroyed. See the note on `close` in `window.odin`.
+	_, after := sciter_app.root(window)
+	testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+	// `ok` false is the whole point of the pair: the engine answers 0xFFFFFFFE, which is not a member
+	// of SCITER_WINDOW_STATE, so there is no state to report and the wrapper says so instead of
+	// handing back an out-of-range enum value.
+	_, state_ok := sciter_app.window_state(window)
+	testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
 
 	// And the application's own window came through it untouched, which is the part that would not
 	// survive the unsafe order: there, the next pump takes the process down whatever it is doing.

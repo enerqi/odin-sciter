@@ -426,14 +426,18 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 
 // A document with no script of its own: everything reachable in these tests was put there from Odin.
 //
-// **The `.` is load-bearing on Windows, and it is not about this example.** A window whose document
-// never renders any text faults inside sciter.dll at process teardown - an unhandled null dereference,
-// measured down to a fifteen-line reproduction, and the reason this example, `request_loader` and
-// `sqlite_extension` were the only three failing the Windows suite. All three had text-free documents:
-// an empty `<p>`, an `<img>` on its own, a bare `<script>`. Give the document one character to lay out
-// and the fault goes away.
+// **The `.` is load-bearing on Windows, and it is not about this example.** A Windows process that
+// exits with a live Sciter window faults inside the engine - unless the window's document laid out at
+// least one character of text. An application closes its windows on the way out and never sees it; a
+// *test* binary cannot, because the window is shared across tests for the life of the process and an
+// Odin test binary has no exit hook to close it from. One character is the whole workaround.
 //
-// See section 1 of docs/WINDOWS-CHECKLIST.md. Do not "tidy" this away.
+// `request_loader` and `sqlite_extension` carry the same `<p>.</p>` for the same reason: those three
+// were the only examples whose test documents rendered nothing. See docs/gotchas.md #1 and
+// docs/UPSTREAM-DEFECTS.md #11 for the matrix - closing the window fixes it outright, holding engine
+// objects is irrelevant, and text only matters when the window is left alive.
+//
+// Do not "tidy" this away.
 TEST_DOC :: `<html><body><p id="out"></p><p>.</p></body></html>`
 
 // Publishes the example's two functors into the document that is loaded now. Globals belong to the
