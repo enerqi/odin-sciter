@@ -497,6 +497,13 @@ test_value_parse_json :: proc(t: ^testing.T) {
 	testing.expect_value(t, stored_type, sciter.Value_Type.STRING)
 }
 
+// **A `value_parse` that fails makes the engine throw a C++ exception and catch it itself**, which is
+// ordinary control flow and which Odin's Windows test runner stops the test for - see the comment above
+// the diagnostics tests in this file, and `docs/odin-test-runner-windows.patch`. That applies to every
+// parse failure, so this whole test and the failing half of `test_value_parse_dialects` are guarded.
+// With the patch applied, both run on Windows and pass.
+when ODIN_OS != .Windows {
+
 @(test)
 test_value_parse_reports_the_message :: proc(t: ^testing.T) {
 	if !engine_loaded(t) {return}
@@ -519,6 +526,8 @@ test_value_parse_reports_the_message :: proc(t: ^testing.T) {
 	defer sciter_app.value_clear(&plain)
 	testing.expect(t, !sciter_app.value_is_error(&plain))
 }
+
+} // when ODIN_OS != .Windows - see above
 
 @(test)
 test_value_parse_dialects :: proc(t: ^testing.T) {
@@ -557,9 +566,15 @@ test_value_parse_dialects :: proc(t: ^testing.T) {
 
 	// A whole document is therefore the failing case, not the obvious success: the `{` it starts with
 	// is one the parser has already consumed as far as it is concerned.
-	whole, werr := sciter_app.value_parse(`{"a":1}`, .JSON_MAP)
-	defer sciter_app.value_clear(&whole)
-	testing.expect_value(t, werr, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
+	//
+	// **Only the failing half is guarded on Windows.** Every `value_parse` failure makes the engine throw
+	// - see `test_value_parse_reports_the_message` - and Odin's Windows test runner stops the test for
+	// it. The successes above run on every platform, which is most of what this test is for.
+	when ODIN_OS != .Windows {
+		whole, werr := sciter_app.value_parse(`{"a":1}`, .JSON_MAP)
+		defer sciter_app.value_clear(&whole)
+		testing.expect_value(t, werr, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
+	}
 }
 
 @(private = "file")
@@ -1185,10 +1200,16 @@ collect_diagnostic :: proc "system" (
 // `testing.expect_signal` only whitelists SIGILL, SIGSEGV and SIGFPE, none of which this is, and the
 // runner's handler cannot be removed without its registration handle.
 //
-// The fix belongs upstream - the handler should ignore codes it does not recognise, which is the set its
-// own `switch` already enumerates. Until then this is guarded rather than deleted, so the coverage loss
-// is visible and the guard can come off in one line. The behaviour it pins is not platform-specific;
-// it is simply unobservable here.
+// **The fix belongs upstream, and it has been written and verified** - see docs/WINDOWS-CHECKLIST.md for
+// the patch. `stop_test_callback` needs one early return for exception codes that do not mean "this
+// thread cannot continue"; with it, all 38 tests in this file pass on Windows with no guard at all, a
+// genuine null dereference is still caught and still reported as `Segmentation_Fault`, and `task_list`
+// goes from hanging to green.
+//
+// The guard stays until that lands in a released Odin, because CI builds with the stock toolchain and
+// an unguarded run there does not fail - it *hangs*, for the whole 45-minute job timeout. Take the guard
+// off in one line once the runner is fixed. The behaviour it pins is not platform-specific; it is simply
+// unobservable on a stock Windows toolchain.
 //
 // **The guard covers all three diagnostics tests**, not just this one: each of them loads a document
 // whose script will not parse, because that is the only way to make the engine produce a diagnostic on

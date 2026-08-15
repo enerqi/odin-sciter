@@ -124,14 +124,19 @@ That one change took the suite from 11 failing examples to 7, and it is recorded
 
 ### The state of the suite, as of the last full run
 
+On a **stock** Odin toolchain, which is what CI uses:
+
 ```
-FAILED: call_odin_from_js(exit 1) eval(exit 124) request_loader(exit 1)
-        sqlite_extension(exit 1) task_list(exit 124)
+FAILED: call_odin_from_js(exit 1) request_loader(exit 1) sqlite_extension(exit 1)
 ```
 
-Three of those five - `call_odin_from_js`, `request_loader`, `sqlite_extension` - **pass every test they
-contain** and fail only on the exit code, from the teardown fault in section 1. The two `exit 124`s are
-timeouts from section 1b. Everything else in the suite is green.
+Three examples, **one cause**, and all three **pass every test they contain** - they fail only on the
+exit code, from the teardown fault in section 1. Everything else in the suite is green.
+
+That is down from eleven failing examples and four distinct causes at the start of the bring-up. The
+other three causes are closed: the missing debug-output handler (section 0), the runner's exception
+filtering (section 1b, patched and guarded), and a set of behavioural differences that turned out to be
+characterization gaps rather than faults (section 3).
 
 ### 1. An access violation inside the engine at process teardown
 
@@ -183,22 +188,61 @@ So loading a document whose script will not parse kills the test that did it and
 the binary. Nothing on this side can prevent it: `testing.expect_signal` only whitelists SIGILL, SIGSEGV
 and SIGFPE, and the handler cannot be removed without its registration handle.
 
-It is worse than a failed test, because the binary usually **hangs** afterwards: the runner marks the
-test stopped and then waits for a thread that is still inside the engine. That is what the `exit 124`
-entries in the summary are. `EXAMPLE_TEST_TIMEOUT` is not optional on Windows.
+It is worse than a failed test, because the binary then **hangs**: execution recovers from the benign
+exception and the test runs to completion, while the runner has already been told to stop it and waits
+for a test that never stops. That is what the `exit 124` entries in the summary are, and it is why
+`EXAMPLE_TEST_TIMEOUT` is not optional on Windows.
 
-**This belongs upstream, and chasing it test by test is the wrong shape.** `stop_test_callback` should
-ignore codes outside the set its own `switch` already enumerates; until it does, *every* test that
-provokes an engine throw is affected, and the engine throws in ordinary operation - a document whose
-script will not parse, `value_parse` on text that will not parse, and more that have not been
-enumerated. Three of them are guarded, as a group, in `eval.odin` (the diagnostics tests, all of which
-load a deliberately broken script) with the reasoning at the guard. The rest are not, deliberately: 20
-scattered `when`s would hide the systemic problem rather than record it.
+**Diagnosed to a minimal reproduction, and fixed.** The reproduction needs no third-party library -
+`OutputDebugStringW` raises `0x4001000A` by itself:
 
-Guarding those three exposed what their crash had been hiding - the tests after them in that file now
-run, and `test_every_scoped_value_producer_releases` fails with `INVALID_HANDLE` and
-`INCOMPATIBLE_TYPE` from the scoped Value producers. `eval` still hangs somewhere after that, most
-likely on one of the `value_parse` failure cases. Next layer, not a regression.
+```odin
+@(test)
+on_the_test_thread :: proc(t: ^testing.T) {
+	OutputDebugStringW(&MSG[0])          // runner hangs after this
+}
+
+@(test)
+on_a_spawned_thread :: proc(t: ^testing.T) {
+	th := thread.create_and_start(proc() { OutputDebugStringW(&MSG[0]) })
+	thread.join(th); thread.destroy(th)  // fine: local_test_index_set is thread_local, and false there
+}
+```
+
+That second test is the handler's own escape hatch - `if !local_test_index_set { return
+EXCEPTION_CONTINUE_SEARCH }` - and it passing is what confirms the diagnosis rather than merely
+suggesting it.
+
+The fix is one early return in `stop_test_callback`, filtering to codes that actually mean "this thread
+cannot continue". It is written up with the reproduction in
+[`odin-test-runner-windows.patch`](./odin-test-runner-windows.patch), ready to submit upstream, and it
+was applied and measured locally:
+
+| | stock runner | patched runner |
+| --- | --- | --- |
+| `task_list` | hangs (`exit 124`) | **11/11 green** |
+| `eval`, guards removed | hangs | **38/38 green** |
+| deliberate null dereference | `Segmentation_Fault` | `Segmentation_Fault` - unchanged |
+
+**The guards stay until the fix is in a released Odin**, because CI builds with the stock toolchain and
+an unguarded run there does not reliably fail - it often hangs, for the whole 45-minute job timeout.
+What is guarded, and why each one throws:
+
+| Guard | What throws |
+| --- | --- |
+| `eval.odin`, three diagnostics tests as a group | each loads a document whose script will not parse |
+| `eval.test_value_parse_reports_the_message` | **every** `value_parse` failure throws |
+| `eval.test_value_parse_dialects`, failing half only | the `.JSON_MAP` whole-document case; the successes above it still run |
+| `task_list.test_load_of_a_missing_or_broken_file` | parses deliberately broken JSON |
+
+Each is a one-line `when` to remove. Finding them was iterative and the lesson is worth recording: a
+guarded test stops masking the next one, so the list grew twice after the first fix looked complete.
+**Do not assume the set is closed** - anything that makes the engine fail a parse is a candidate.
+
+While the patch was applied it also settled section 1: with `TerminateProcess` taken out of the runner's
+main-thread branch, the teardown access violation **still killed the process with `0xC0000005`**. So
+nothing handles that one and it is a genuine unhandled fault in the engine, not a false positive of the
+same kind.
 
 ### 2. Window state is implemented on Windows and is not on Linux
 
@@ -292,10 +336,13 @@ digest and refused to install - the recipe that exists to install the engine cou
 **`libpng error: IDAT: incorrect header check`** is printed by `just leak-check` on Windows. The sweep
 still reports clean. Not investigated.
 
-## After the open items close
+## Done as part of this bring-up
 
-- update the platform table in `README.md` (Windows row: vendored yes, tested yes)
-- update `docs/PLAN.md` milestone 10
-- update `docs/deployment.md`'s status note, which currently says Windows is unverified
-- per `docs/UPGRADING.md`, the repository's history cost is now ~19 MB per engine bump rather than ~11,
-  so the row-10 hybrid (Linux committed, Windows on releases) has stopped being hypothetical
+- `README.md`'s platform table: Windows is vendored and tested, with the two open items named
+- `docs/PLAN.md`: the "what remains is Windows" paragraph, and the null-slot count
+- `docs/deployment.md`'s status note, which said Windows was unverified
+
+## Still to decide
+
+Per `docs/UPGRADING.md`, the repository's history cost is now ~19 MB per engine bump rather than ~11,
+so the row-10 hybrid (Linux committed, Windows on releases) has stopped being hypothetical.

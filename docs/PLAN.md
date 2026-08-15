@@ -22,8 +22,11 @@ counting rule is `\.name\b` and not `\.name(`: the examples store and forward wr
 they call them, and matching the open paren undercounts. `close` is now among the covered ones: there is exactly one order in which
 a secondary window can be closed without crashing the engine - hide, pump, close - and
 `examples/workbench.odin` pins it. What remains
-is Windows - and everything that could be prepared for it without the machine has been, including
-`api_map` building and reporting usefully there; see [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md).
+was Windows, and **Windows x64 has now been vendored and run on a real machine** - the whole example
+suite, the ISciterAPI table (gated in CI), the inspector, native extensions, ASan and the leak sweep.
+What that run found, what it fixed, and the two things still open are in
+[`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md), which is a measurement record rather than a to-do list
+now. macOS is the remaining platform, and it is a vendoring gap rather than a code one.
 
 **Running a windowed example on X11**: this machine's engine build segfaults in `XSetICFocus`, inside
 libsciter's X input-method handling, shortly after a window takes focus — 3 runs out of 3. Running with
@@ -105,7 +108,10 @@ The same pattern covers `SciterTranslateMessage`, `SciterRenderD2D` / `SciterD2D
 `SciterCreateWidget` (Linux). Every padded slot is pointer-sized, so **one Odin struct definition serves
 Windows, Linux and macOS**, and the bindings can be generated on whichever platform is most convenient.
 16 of the 189 slots are NULL on Linux — 12 platform-padded plus 4 `reserved` left from the removed
-script-VM API.
+script-VM API. **Windows nulls 15 — the same list minus `SciterProcND`**, measured. That one slot is the
+entire difference between the platforms, and it is not the difference anyone predicted: `SciterProc`,
+`SciterTranslateMessage` and the D2D/DirectX entries are null on Windows too, because Sciter 6 owns its
+own window procedure and the vendored build renders through Skia rather than Direct2D.
 
 ### Verified, not assumed
 

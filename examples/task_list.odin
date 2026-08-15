@@ -687,6 +687,14 @@ test_save_and_load_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.selected, 0)
 }
 
+// **Guarded on Windows for the same reason as the three diagnostics tests in `eval.odin`** - read the
+// long comment there, and `docs/odin-test-runner-windows.patch`. The short version: parsing the broken
+// JSON below makes the engine throw a C++ exception and catch it itself, which is ordinary control
+// flow; Odin's Windows test runner stops a test for *any* first-chance exception, and then hangs
+// waiting for a test that recovered and finished. With the patch applied this file is 11/11 green with
+// no guard, so this comes off in one line once the fix is in a released Odin.
+when ODIN_OS != .Windows {
+
 @(test)
 test_load_of_a_missing_or_broken_file :: proc(t: ^testing.T) {
 	if !engine_loaded(t) {return}
@@ -707,6 +715,8 @@ test_load_of_a_missing_or_broken_file :: proc(t: ^testing.T) {
 	testing.expect(t, !load(&broken), "and neither is an unreadable one")
 	testing.expect_value(t, len(broken.tasks), 0)
 }
+
+} // when ODIN_OS != .Windows - see above
 
 // --- the windowed half
 

@@ -268,8 +268,24 @@ wrong.
 | Platform | File | Vendored here | Tested |
 | --- | --- | --- | --- |
 | Linux x64 | `libsciter.so` | yes, `lib/linux/x64/` | yes |
-| Windows x64 | `sciter.dll` | not yet | no |
+| Windows x64 | `sciter.dll` | yes, `lib/windows/x64/` | yes, with caveats — see below |
 | macOS | `libsciter.dylib` | not yet | no |
+
+Windows x64 was brought up on a real desktop on 2026-08-15: the whole example suite runs, the ISciterAPI
+table is verified and gated in CI, and the leak sweep is clean. Two things are open and both are
+recorded in [`docs/WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md), which is now the measurement
+record rather than a to-do list:
+
+- three examples pass every test they contain and then fault inside the engine at process teardown, so
+  their exit code is non-zero while their tests are green
+- Odin's Windows test runner stops a test for *any* first-chance exception, and Sciter throws C++
+  exceptions in ordinary operation. A patch is written, verified and ready to submit upstream:
+  [`docs/odin-test-runner-windows.patch`](docs/odin-test-runner-windows.patch)
+
+**One thing every Windows application here must do: call `set_default_debug_output()` (or install your
+own handler).** With none installed the engine reports diagnostics through `OutputDebugStringW`, which
+Windows implements by raising an exception — harmless in a normal run, fatal under anything that treats
+first-chance exceptions as errors.
 
 Linux runtime dependencies are modest and satisfied by a stock desktop install: fontconfig, freetype,
 EGL, GLESv2, expat, zlib, libpng, brotli, libstdc++. **Sciter 6 does not use GTK** — 4.x did, and much

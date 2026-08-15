@@ -3,10 +3,22 @@
 What to ship, where the engine has to be, what you owe Terra Informatica, and what to expect on each
 platform.
 
-> **Status.** Linux x64 is vendored and tested. Windows x64 is expected to work — the `ISciterAPI`
-> layout is identical on every platform and the calling convention is already handled — but has not
-> been run here. macOS is untested and unvendored. Treat the non-Linux rows below as instructions, not
-> as verified results.
+> **Status.** Linux x64 and Windows x64 are both vendored and run. macOS is untested and unvendored —
+> treat its rows below as instructions, not as verified results.
+>
+> Two Windows results here are measured rather than assumed, and both were open questions in this file
+> until 2026-08-15. The single-binary cache resolves to `%LOCALAPPDATA%\odin-sciter\<hash>\sciter.dll`,
+> is written once, is reused on the second run, and **was not quarantined by anti-malware** — one
+> machine and one product, so evidence rather than proof. And `os.rename` over an existing destination
+> succeeds, because Odin's `core:os` uses the replacing variant of `MoveFile`, so the extract-and-rename
+> path behaves identically on both platforms.
+>
+> **Call `set_default_debug_output()`, or install your own handler, in every Windows application.** With
+> none installed the engine reports diagnostics through `OutputDebugStringW`, which Windows implements
+> by raising an exception. That is harmless in a normal run and fatal under anything that treats
+> first-chance exceptions as errors — a test runner, some crash reporters, some sandboxes.
+>
+> What is still open on Windows is in [`WINDOWS-CHECKLIST.md`](WINDOWS-CHECKLIST.md).
 
 ## What ships
 
