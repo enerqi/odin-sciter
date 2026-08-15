@@ -182,7 +182,7 @@ jobs:
       - run: just cross-check
 
   windows:
-    name: windows x64 (needs the engine vendored)
+    name: windows x64 (engine vendored)
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4

@@ -293,6 +293,36 @@ main :: proc() {
 // These need a window, because a behavior has to exist before it can be called, and skip themselves
 // where there is no display. `ODIN_TEST_THREADS=1` is required - see the `example-tests` recipe.
 
+// **macOS: the engine's AppKit singleton has to be built on the main thread, and a test never runs on
+// it.** Odin's test runner puts every test on a `thread.Pool` worker and keeps the main thread for its
+// own event loop, at any `ODIN_TEST_THREADS` count - so the first engine call from a test lands on the
+// wrong thread and AppKit aborts the process:
+//
+//	*** Assertion failure in -[NSMenu _setMenuName:]
+//	API misuse: setting the main menu on a non-main thread.
+//	  ... _Z11initMenuBarv -> wing::internal::InitCocoa -> wing::init -> SciterExecImp
+//
+// `@(init)` procedures do run on the main thread, before the runner starts, so this builds the
+// singleton there and every later `sciter_app.init()` is a no-op (`g_initialized` in
+// sciter_app/app.odin). `ODIN_TEST` scopes it to test binaries: a normal build already reaches the
+// engine from `main`, which is the main thread by definition.
+//
+// This is the macOS analogue of the Windows test-runner problem, and it is an *experiment* until CI
+// says otherwise - see docs/MACOS-CHECKLIST.md section 2. It fixes the thread the singleton is built
+// on; it does not move the tests themselves, so anything AppKit requires the main thread for after
+// that point can still fail here.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
+
 @(private = "file")
 have_display :: proc() -> bool {
 	when ODIN_OS == .Windows || ODIN_OS == .Darwin {

@@ -245,6 +245,34 @@ main :: proc() {
 // They skip themselves without a display, like the windowed examples, because **`SXM_CREATE` segfaults
 // when there is none** - measured, and the surprise of the whole exercise.
 
+// **On macOS a windowless view stands up AppKit anyway, and the header's claim above it does not hold
+// there.** `main` says this example must not call `sciter_app.init()` because that builds the windowed
+// application subsystem - true on Linux and Windows, false here. Measured from the abort trace:
+//
+//	lite::application::factory -> xskia::application -> xwing::application -> wing::init
+//	  -> wing::internal::InitCocoa -> initMenuBar -> -[NSApplication setMainMenu:]
+//
+// `create_windowless` reaches the same singleton the windowed path does, so the engine constructs
+// `NSApplication` either way and AppKit aborts when that happens off the main thread. Odin's test
+// runner never runs a test on the main thread, so this `@(init)` - which does - builds the singleton
+// before the runner starts. `sciter_app.init()` is what does the building; calling it costs this
+// example nothing on macOS that the engine has not already taken.
+//
+// An experiment until CI says otherwise, and the best case for it: nothing here needs a *window*, so if
+// the thread is the whole problem, these tests are the ones that come back. See
+// docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
+
 @(private = "file")
 have_display :: proc() -> bool {
 	when ODIN_OS == .Windows || ODIN_OS == .Darwin {

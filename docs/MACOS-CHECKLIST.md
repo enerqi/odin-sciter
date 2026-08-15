@@ -1,10 +1,16 @@
 # macOS bring-up
 
-Status: **the engine is vendored; nothing has been run yet.** This file is written *before* the first
-run, on purpose. [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) earned its keep because the
-predictions in it were recorded before the machine existed and then turned out wrong twice — the null
-list was not what was predicted, and `sciter.dll` exported 276 symbols rather than the one that was
-expected. A prediction that is only written down after the measurement is not a prediction.
+Status: **vendored, and the first CI run has happened.** The engine loads, the ISciterAPI table verifies,
+everything builds, and **a `macos-14` runner can open a Sciter window** — the canary passed, which is
+what the suite steps below it running at all proves. What fails is the test *runner*, on the thread
+this file predicted it would, for the reason it predicted.
+
+This file was written *before* that run, on purpose. [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md)
+earned its keep because the predictions in it were recorded before the machine existed and then turned
+out wrong twice — the null list was not what was predicted, and `sciter.dll` exported 276 symbols
+rather than the one that was expected. A prediction that is only written down after the measurement is
+not a prediction. Sections below are being converted from prediction to measurement as results arrive;
+each says which it is.
 
 Engine: 6.0.4.9, `bin/macosx/libsciter.dylib`, 50 029 168 bytes,
 `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c`, recorded in
@@ -53,11 +59,11 @@ Every row runs in the `macos` job of `.github/workflows/ci.yml` unless it says o
 | --- | --- | --- | --- |
 | 1 | vendor the dylib, `just fetch-engine --check` | passes | **done** — verified from Windows, no Mac involved |
 | 2 | `lipo` / `codesign` / `xattr` report | universal, ad-hoc signed, no quarantine | **done** — read from the file itself |
-| 3 | `just api-map-verify` | 189 slots, version 10, 0 mismatches; null list per §5 below | |
-| 4 | `just check` | builds; nothing is X11- or Win32-shaped outside the two excluded examples | |
-| 5 | `just window-canary` | the open question — see §1 | |
-| 6 | `just example-tests` | the second open question — see §2 | |
-| 7 | `just leak-check` | clean, as on both other platforms | |
+| 3 | `just api-map-verify` | 189 slots, version 10, 0 mismatches; null list per §5 below | **passes** — the null list it printed still has to be transcribed into `MACOS_NULLS` |
+| 4 | `just check` | builds; nothing is X11- or Win32-shaped outside the two excluded examples | **passes** |
+| 5 | `just window-canary` | the open question — see §1 | **passes** — see §1, and it is the single most useful result so far |
+| 6 | `just example-tests` | the second open question — see §2 | **fails, exactly as predicted** — 18 of 22 abort in AppKit. See §2 |
+| 7 | `just leak-check` | clean, as on both other platforms | not reached — step 6 fails first |
 | 8 | `just cross-check` (Linux) | now covers `darwin_arm64` as well as `darwin_amd64` | **done** |
 | 9 | `just example single_binary` | embeds all 50 MB and extracts to `~/Library/Caches/odin-sciter` | |
 | 10 | `just pack`, `just inspector` (needs the SDK) | the justfile's `macosx` / `inspector.app/Contents/MacOS` paths are untested | |
@@ -66,50 +72,120 @@ Every row runs in the `macos` job of `.github/workflows/ci.yml` unless it says o
 
 ## The predictions
 
-### 1. Does a CI runner have a window server?
+### 1. Does a CI runner have a window server? — **MEASURED: yes**
 
-**The single question the whole job depends on.** A process in a `Background` launchd session has no
-connection to WindowServer, and AppKit does not degrade when that is true — it aborts, classically with
-`_RegisterApplication(), FAILED TO establish the default connection to the WindowServer`. GitHub's
-macOS runners are believed to run in an `Aqua` session, which would make this a non-issue, but
-"believed" is why `.github/scripts/macos-canary.sh` prints `launchctl managername` first thing.
+Predicted: it works, the canary exits 124 and the suite runs. **It does.**
 
-Prediction: **it works.** The canary exits 124 and the suite runs.
+The canary passed, and the way that is known is worth stating because the log does not say it in words:
+the job's steps are ordered and fail-fast, and `just example-tests` ran, so every step above it — the
+engine verification, `api-map-verify`, `check` and `window-canary` — passed first. A `macos-14` runner
+therefore builds `hello_window`, opens a real Sciter window, and is still running twenty seconds later.
 
-If it does not, the port is not blocked — it is reduced. The display-free two thirds of the suite still
-run (`have_display()` already expresses that split, and would need a WindowServer check on Darwin
-rather than its current unconditional `true`), and the windowed third would wait for a real Mac.
+That is the best single result of the bring-up. It means:
 
-### 2. The main thread — the likeliest thing to sink the suite
+- GitHub's hosted macOS runners are in a session that can reach WindowServer. No `Background`-session
+  problem, and `launchctl managername` never had to be read in anger
+- the ad-hoc code signature is sufficient — the dylib maps and `dlopen` succeeds on arm64
+- nothing is quarantined
+- the engine's Cocoa backend initialises and creates an `NSView`-backed window on this hardware
 
-AppKit requires window work on the main thread. The engine's `HWINDOW` **is** an `NSView*`
-(`sciter_app/window.odin:6`), and Odin's test runner does not run tests on the process main thread.
+What it does **not** mean: nobody has seen what is in that window. The canary's pass condition is "the
+process was still alive after 20s", which a blank window satisfies. That is the ceiling described at the
+top of this file, and it has not moved.
 
-That is the same shape as the Windows finding — a test *runner* incompatibility, not a binding bug —
-which took the Windows bring-up a patch to solve
-([`odin-test-runner-windows.patch`](./odin-test-runner-windows.patch)).
+### 2. The main thread — **MEASURED: confirmed, and worse in one specific way**
 
-Prediction: **the canary passes and the windowed tests fault**, because the canary is a plain program
-with its window on the main thread and the tests are not. Predicted symptom: an abort or an assertion
-naming a main-thread requirement, in every windowed test, on every example — the failure that looks
-like a broken binding and is not one.
+Predicted: the canary passes and the windowed tests fault, with an assertion naming a main-thread
+requirement, in every windowed test. **That is what happened**, and the abort message is exact:
 
-Fallback if that happens, in preference order:
+```
+*** Assertion failure in -[NSMenu _setMenuName:], NSMenu.m:777
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException',
+    reason: 'API misuse: setting the main menu on a non-main thread.
+             Main menu contents should only be modified from the main thread.'
 
-1. check whether `ODIN_TEST_THREADS=1` (already passed by the test recipes) puts tests on the main
-   thread on Darwin — if it does, there is nothing to do
-2. drive the windowed examples as *programs* under the canary harness, and keep only the display-free
-   tests under `odin test`. The split already exists in every example as `have_display()`
-3. a runner patch, as on Windows
+  3  AppKit         -[NSMenu _setMenuName:]
+  4  AppKit         -[NSApplication setMainMenu:]
+  5  libsciter      initMenuBar()
+  6  libsciter      wing::internal::InitCocoa()
+  7  libsciter      wing::init()
+  8  libsciter      xwing::application::application()
+  9  libsciter      xskia::application::application()
+ 12  libsciter      SciterExecImp
+ 13  <example>      sciter_app::init
+ 14  libsystem_pthread  thread_start          <- not the main thread, and that is the whole bug
+```
 
-### 3. Quarantine
+18 of the 22 examples with tests abort with SIGABRT (exit 134) this way. Frame 14 is the finding: the
+test is on a pool worker.
+
+**Where the prediction was too kind: this is not about windows.** Three different entry points reach the
+same abort, because they all construct the one `xwing::application` singleton, which builds
+`NSApplication` and its menu bar:
+
+| Entry point | Path into it |
+| --- | --- |
+| `sciter_app.init` | `SciterExecImp` → `xskia::application` → `wing::init` → `InitCocoa` |
+| `sciter_app.create_image` | `ImageCreateImp` → `gool::bitmap` ctor → `xwing::application` → same |
+| `sciter_app.create_windowless` | `lite::view::proc_x` → `lite::application::factory` → same |
+
+So on macOS there is **no display-free half of the engine**. `examples/windowless.odin`'s header says it
+deliberately does not call `sciter_app.init()` because that "stands up the windowed application
+subsystem" — true on Linux and Windows, **false here**: `create_windowless` stands it up anyway. Same
+for `create_image`, which has nothing to do with windows at all. That is a real platform difference and
+it is now written into both examples.
+
+**Why no `ODIN_TEST_THREADS` value fixes it.** Read `core/testing/runner.odin`: the runner always builds
+a `thread.Pool` (`pool_init`, line ~392), always submits tests as tasks (`pool_add_task`, ~554), and
+keeps the main thread for its own event/timeout/status loop (~609). At `thread_count == 1` there is one
+worker instead of many — still not the main thread. There is no define that changes this.
+
+**The fix being tried: an `@(init)` bootstrap.** `@(init)` procedures *do* run on the main thread, before
+the runner starts — verified directly, by comparing thread ids in a probe test. So building the engine's
+singleton there puts `InitCocoa` on the right thread, and every later `sciter_app.init()` is a no-op
+(`g_initialized`, `sciter_app/app.odin:72`). It is scoped `when ODIN_OS == .Darwin && ODIN_TEST`, so it
+touches test binaries only.
+
+It is in two examples so far, deliberately chosen to answer two different questions in one run:
+
+- **`windowless`** — the best case. Nothing here needs a window, so if the *thread* is the entire
+  problem, these tests come back
+- **`behavior`** — the worst case. These need a real window, created from a worker thread after the
+  bootstrap. AppKit is documented to want `NSWindow` on the main thread too, so this may well still fail
+  — and that answer is the one that decides whether the remaining 16 examples get the same treatment
+
+If `behavior` also comes back, roll the bootstrap out to every example with tests. If only `windowless`
+does, the shape of the answer is: **display-free tests under `odin test`, windowed examples driven as
+programs** — the split `have_display()` already expresses, with the canary harness generalised to run
+them. A runner patch, as on Windows, is the last resort: this is an AppKit rule rather than an Odin bug,
+so patching Odin to run tests on the main thread would be fixing it in the wrong place.
+
+### 2a. What passed, and what it proves
+
+Four examples came back green, and they are not a random four:
+
+| Example | Tests | What it establishes |
+| --- | --- | --- |
+| `archive` | 7 | the engine loads and serves packed resources — no application singleton on this path |
+| `drag_and_drop` | 3 | pure data-shape tests, no engine |
+| `single_binary` | 8 | **`#load` of the 50 MB universal dylib works**, and the extracted copy loads — so the embedded engine keeps its ad-hoc signature through extraction, which §7 predicted and had no way to check |
+| `windowless_gl` | 5 | skips itself off Linux, as designed (its GL context is EGL) |
+
+One failure is not the AppKit one and should not be counted with them: **`sqlite_extension` fails
+because `target/debug/odin-sqlite.dylib` was never built** — CI runs `just example-tests` but never
+`just extension`, so this example has nothing to load. It is a gap in the job, not a macOS finding, and
+it exists on every platform where the extension is not built first. Its exit 134 is a second abort after
+the skip message, so it needs a look rather than an assumption.
+
+### 3. Quarantine — **MEASURED: not an issue**
 
 `just fetch-engine` downloads through `urllib`, which does not set `com.apple.quarantine`; a
-`git checkout` does not either. A dylib that arrived through a browser or an unzipped SDK archive
-does, and is then refused with an error that reads like a missing file.
+`git checkout` does not either. Predicted: not an issue in CI. **Confirmed** — the engine loaded on the
+runner, which it could not have done under quarantine or an unacceptable signature. This also settles
+the code-signing question at the top of this file: ad-hoc is enough to load on arm64.
 
-Prediction: **not an issue in CI.** For a human who fetched the SDK by hand: `xattr -dr
-com.apple.quarantine <path>`. The CI job prints `xattr -l` so this is never a guess.
+For a human who fetched the SDK by hand: `xattr -dr com.apple.quarantine <path>`. The CI job prints
+`xattr -l` so this is never a guess.
 
 ### 4. Bundle and activation policy
 
