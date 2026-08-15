@@ -47,6 +47,19 @@ scapp_platform := if os() == "windows" { "windows/x64" } else if os() == "macos"
 # to scapp.
 inspector_rel := if os() == "windows" { "windows/x64/inspector.exe" } else if os() == "macos" { "macosx/inspector.app/Contents/MacOS/inspector" } else { "linux/x64/inspector" }
 
+# The pinned engine, and where to fetch it when it is not on disk.
+#
+# **The tag suffix is part of the identity, and the size is not.** Measured: the plain `6.0.4.9` tag
+# serves a `libsciter.so` of *exactly* the same 25 015 296 bytes as `6.0.4.9-bis` and a different
+# SHA-256, so a fetch that checks the length would install the wrong engine and report success. The
+# hash below is the one in `external/sciter/VENDORED.md`, and it is what decides.
+engine_tag := "6.0.4.9-bis"
+engine_sha256 := "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b"
+
+# The same relative path under two roots: `bin/` upstream, `lib/` here.
+engine_rel := if os() == "windows" { "windows/x64/sciter.dll" } else if os() == "macos" { "macosx/libsciter.dylib" } else { "linux/x64/libsciter.so" }
+engine_path := "lib/" + engine_rel
+
 # Suffix on the SDK's own tools. They are `packfolder`/`scapp` everywhere except Windows, where they
 # are `packfolder.exe`/`scapp.exe` - which is what `just pack` and `just extension-run` open.
 exe_ext := if os() == "windows" { ".exe" } else { "" }
@@ -129,7 +142,7 @@ format:
 # nearly all the hand-written code is - unlinted. Not `examples/`: those do not lint clean today.
 # ---
 # lint checks for style and potential bugs. No code generation
-lint *args:
+lint *args: ensure-engine
 	#!/usr/bin/env bash
 	set -euo pipefail
 	odin check . -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
@@ -145,6 +158,86 @@ lint *args:
 	done
 	echo "ok: both library packages and all $(ls examples/*.odin | wc -l) examples pass -vet" 
 
+
+# The engine, fetched instead of vendored - see `docs/UPGRADING.md` on the repository-size decision.
+#
+# Today `lib/` is committed, so this is a no-op on a fresh clone and the recipe exists to make the
+# switch a one-line change rather than a project. From the next engine version the binary stops being
+# committed, and then this is the one command a checkout needs before it can build - which is why every
+# entry point below depends on `ensure-engine` rather than leaving it to a README step nobody reads.
+#
+# `--check` verifies what is already on disk, which is the useful mode in CI and after an upgrade.
+# `--force` re-fetches over a file that is already there.
+# ---
+# download the pinned engine into lib/, verified against its SHA-256
+[script]
+fetch-engine *args:
+	import hashlib, os, sys, tempfile, urllib.request
+
+	tag, want, rel = "{{engine_tag}}", "{{engine_sha256}}", "{{engine_rel}}"
+	dest = os.path.join("lib", *rel.split("/"))
+	url = f"https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw/{tag}/bin/{rel}"
+	argv = "{{args}}".split()
+	check_only, force = "--check" in argv, "--force" in argv
+
+	def digest(path):
+		h = hashlib.sha256()
+		with open(path, "rb") as f:
+			for chunk in iter(lambda: f.read(1 << 20), b""):
+				h.update(chunk)
+		return h.hexdigest()
+
+	# No recorded hash for this platform yet - only Linux is vendored and verified. Refusing here would
+	# block the Windows bring-up, which is the first thing that will use this, so it installs and says
+	# loudly what to record.
+	unverified = want == "" or want.startswith("TODO")
+
+	if os.path.exists(dest) and not force:
+		got = digest(dest)
+		if unverified:
+			print(f"{dest}: present, sha256 {got} (no recorded hash for this platform - add it to external/sciter/VENDORED.md)")
+		elif got == want:
+			print(f"{dest}: present and verified")
+		else:
+			sys.exit(f"{dest}: sha256 {got}\n  expected {want}\n  this is not the pinned engine - `just fetch-engine --force` replaces it")
+		sys.exit(0)
+
+	if check_only:
+		sys.exit(f"{dest}: missing - run `just fetch-engine`")
+
+	print(f"fetching {url}")
+	os.makedirs(os.path.dirname(dest), exist_ok=True)
+	fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")
+	os.close(fd)
+	try:
+		urllib.request.urlretrieve(url, tmp)
+		got = digest(tmp)
+		if unverified:
+			print(f"  no recorded SHA-256 for this platform. Downloaded {os.path.getsize(tmp)} bytes,")
+			print(f"  sha256 {got} - record it in external/sciter/VENDORED.md before trusting it.")
+		elif got != want:
+			sys.exit(f"  sha256 {got}\n  expected {want}\n  refusing to install: the tag serves same-sized binaries that are not the same file")
+		os.replace(tmp, dest)
+		# Deliberately no chmod +x. `dlopen` does not need it, the committed copy is 0644, and setting
+		# the bit makes `git status` report a mode change on a file whose bytes are identical - which is
+		# exactly the sort of "the engine changed?!" scare this recipe exists to avoid.
+		os.chmod(dest, 0o644)
+		print(f"  installed {dest}")
+	finally:
+		if os.path.exists(tmp):
+			os.remove(tmp)
+
+# Fetch only if it is not there. A stat, not a hash - this runs before every build, and `just
+# fetch-engine --check` is the one that verifies.
+# ---
+# make sure the engine is on disk before anything tries to build against it
+[unix]
+@ensure-engine:
+	test -f {{engine_path}} || just fetch-engine
+
+[windows]
+@ensure-engine:
+	if not exist {{engine_path}} just fetch-engine
 
 # Every `run_*`, `test*` and `diagnose` recipe depends on this, so it runs before every build - which
 # makes its cost a tax on every iteration, and worth keeping small. odin does not create the output
@@ -308,7 +401,7 @@ alias test := example-tests
 #     just test1 eval test_value_array
 # ---
 # run one named test from one example (comma-separated for several)
-test1 example test_name *args: mktarget_dirs
+test1 example test_name *args: mktarget_dirs ensure-engine
 	odin test examples/{{example}}.odin -file -debug -microarch:native -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES={{test_name}} -linker:{{linker}} -out:{{ target_path("debug", example + "_test.exe") }} {{args}}
 
 # simple delete of all debug databases and executables in the target directory
@@ -520,7 +613,7 @@ bindgen:
 # drifts silently, so it is checked like anything else.
 # ---
 # type check both packages and the guides' snippets, and build every example
-check: mktarget_dirs
+check: mktarget_dirs ensure-engine
 	#!/usr/bin/env bash
 	set -euo pipefail
 	odin check . -no-entry-point
@@ -673,7 +766,7 @@ example-test name="eval" *args: mktarget_dirs
 # compilation too - `odin test` builds before it runs.
 # ---
 # run every example's tests
-example-tests:
+example-tests: ensure-engine
 	#!/usr/bin/env bash
 	set -uo pipefail
 	limit="${EXAMPLE_TEST_TIMEOUT:-0}"
@@ -699,7 +792,7 @@ example-tests:
 	echo "ok: every example's tests passed"
 
 # build and run an example, e.g. `just example hello_window`
-example name="hello_window" *args: mktarget_dirs
+example name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
 # `just example api_map` prints the table and leaves the judging to a human, which is right for a
@@ -723,7 +816,7 @@ api-map-verify: mktarget_dirs
 # Needs -debug: sciter_app/tracking.odin compiles to nothing without it, and the sweep says so rather
 # than passing vacuously. Not part of `example-tests` because it is a program, not a test file - see the
 # header of examples/leak_sweep.odin for why the check cannot live in a test binary.
-leak-check: mktarget_dirs
+leak-check: mktarget_dirs ensure-engine
 	#!/usr/bin/env bash
 	set -euo pipefail
 	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
@@ -788,7 +881,7 @@ window-canary: mktarget_dirs
 #                              docs/WINDOWS-CHECKLIST.md.
 # ---
 # type check both packages, the snippets and every portable example for windows_amd64 and darwin_amd64
-cross-check:
+cross-check: ensure-engine
 	#!/usr/bin/env bash
 	set -euo pipefail
 	skip="integration native_child single_binary"

@@ -27,8 +27,14 @@ Verified against the shipped library rather than assumed - `just example api_map
 | `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
 
 Recorded so a binary obtained out of band can be checked against the one these bindings were verified
-against, and so a future download-instead-of-vendor step has something to verify against. Regenerate
-with `sha256sum lib/linux/x64/libsciter.so`.
+against, and because the download-instead-of-vendor step now exists and verifies against exactly this:
+`just fetch-engine` fetches it, `just fetch-engine --check` verifies what is on disk (and runs in CI),
+and `just ensure-engine` is a dependency of every build recipe. Regenerate with
+`sha256sum lib/linux/x64/libsciter.so`.
+
+**The upstream tag is `6.0.4.9-bis`, and the suffix is not cosmetic.** The plain `6.0.4.9` tag serves a
+`libsciter.so` of *exactly* the same 25 015 296 bytes with a different SHA-256 - measured, by fetching
+both. Size is not identity here; the tag and the hash are.
 
 Upgrading the pinned version is a procedure with one non-negotiable step in it - see
 [`docs/UPGRADING.md`](../../docs/UPGRADING.md), which also covers our tagging and the repository-size

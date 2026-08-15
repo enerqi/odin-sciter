@@ -64,6 +64,12 @@ offline with nothing else installed — which is also why the clone is ~24 MB: `
 is the engine itself, tracked in git. The `--depth 1` above is what keeps you from fetching every past
 copy of it.
 
+**That changes at the next engine version**, and the mechanism is already here: `just fetch-engine`
+downloads the pinned binary and verifies it against a recorded SHA-256, and every recipe that builds or
+runs anything depends on `just ensure-engine`, so a fresh checkout fetches once on its first build
+rather than needing a step you have to know about. The reasoning — and why not git-lfs — is in
+[`docs/UPGRADING.md`](docs/UPGRADING.md).
+
 **On X11, run that with `XMODIFIERS=@im=none`** if it segfaults — the engine, not your build. Details
 two paragraphs down.
 

@@ -34,12 +34,16 @@ The Odin ecosystem has no package manager to satisfy, so the tag is for humans a
 
 ## Cutting a release
 
-## Before the second engine binary lands: decide about the vendored `.so`
+## The vendored engine: decided - fetch, from the next version on
 
-`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. That is fine for one engine
-and it does not stay fine:
+`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. Measured today: it is **one
+blob**, committed once at the initial spike and never changed, and it packs to ~19 MB of the
+repository's 20 MB `.git`. So there is nothing to clean up yet - which is exactly why the decision was
+worth making now rather than after it costs a history rewrite.
 
-- a binary does not delta against its predecessor, so **every upgrade adds another ~24 MB to history,
+It does not stay fine:
+
+- a binary does not delta against its predecessor, so **every upgrade adds another ~19 MB to history,
   permanently**. This document treats upgrades as routine and `canary.yml` surfaces upstream tags
   weekly, so the intended cadence is "regularly"
 - Windows and macOS are both meant to be vendored, at which point every clone carries three engines for
@@ -47,17 +51,44 @@ and it does not stay fine:
 - `docs/PLAN.md` already records that a full-history clone of the *upstream* SDK is ~4 GB because "800+
   commits, each carrying every platform's binaries" - the same failure mode, one scale down
 
-There are two ways out and both are cheap **now** and expensive later, because migrating history is
-what costs:
+**The decision: do not vendor, from the next engine version onwards.** `just fetch-engine` downloads the
+pinned binary and verifies it against the SHA-256 in
+[`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md); `ensure-engine` runs it automatically
+and is a dependency of every recipe that builds or runs anything, so a checkout needs no ceremony beyond
+the first build. Both exist and work **now**, against the still-committed binary, which makes the switch
+a gitignore line rather than a project.
 
-1. **git-lfs** for `lib/**/libsciter.*` and `lib/**/sciter.dll`. Keeps the vendored-and-offline
-   property; costs some friction for forks and for CI setups that have to enable LFS.
-2. **Do not vendor.** A `just fetch-engine` recipe that downloads the binary from the pinned SDK tag and
-   checks it against a committed SHA-256. Keeps the repository small; costs the "works offline from a
-   clean clone with nothing installed" property, which `README.md` currently advertises.
+git-lfs was the alternative and was rejected: it keeps the offline-clone property but trades a size
+problem you understand for a tooling one your contributors meet on their first `git clone` - a pointer
+file and a confusing failure if `git-lfs` is not installed - plus quota and bandwidth billing that forks
+inherit. The fetch recipe reaches the same place with no new dependency.
 
-Nothing here has been changed, because it is a repository-history decision rather than a code one. It
-is recorded here so that it is made deliberately, before the second binary makes it expensive.
+### What changes at the switch, and what it costs
+
+The cost is real and worth stating: **`git clone` alone stops being enough**, and the "works offline
+from a clean clone with nothing installed" line in `README.md` becomes "works offline after one
+command". `examples/single_binary.odin` embeds the engine with `#load`, which is *compile-time*, so
+`just check` cannot build without the file - that is why `ensure-engine` is wired into the recipes
+rather than documented as a step.
+
+When the next engine version lands, in this order:
+
+1. `just fetch-engine --force` with the new `engine_tag` and `engine_sha256` in the `justfile`, and the
+   new hash recorded in `VENDORED.md`
+2. add `lib/` to `.gitignore` and `git rm --cached` the old binary
+3. change CI's "Verify the pinned engine" step from `just fetch-engine --check` to `just ensure-engine`
+   (the windows and macos jobs already gate on the file being present, and become fetches too)
+4. update the offline-clone claim in `README.md` and `docs/deployment.md`
+5. rewrite history once to drop the superseded blob - one blob, one rewrite, and everyone re-clones at a
+   moment when they were going to re-fetch anyway
+
+### The trap the recipe exists to catch
+
+The upstream tag `6.0.4.9` serves a `libsciter.so` of **exactly** the same 25 015 296 bytes as
+`6.0.4.9-bis`, with a different SHA-256. Measured, by downloading both. A fetch that checked the length -
+or a human comparing `ls -l` - would install the wrong engine and report success, and the failure would
+surface later as something inexplicable in `api_map`. The tag suffix is part of the engine's identity and
+the hash is what decides; `just fetch-engine --check` runs in CI for that reason.
 
 A release here is a git tag and nothing else — there is no package manager to publish to, and Odin
 consumers vendor or submodule the repository or import it by path.

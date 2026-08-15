@@ -190,6 +190,18 @@ against.
   reject — measured, and that is the exact shape that leaked in the examples.
 - **`just check-ownership`**, in CI — asserts the rule that if a procedure takes an allocator its result
   is yours and otherwise it is borrowed. It holds across all 30 procedures that return memory.
+- **`just fetch-engine` and `just ensure-engine`** - the engine can now be downloaded and verified
+  rather than vendored, which settles review finding R7-03. `fetch-engine` pulls the pinned binary from
+  the SDK tag and checks it against the SHA-256 in `external/sciter/VENDORED.md`; `--check` verifies
+  what is already on disk and runs in CI; `ensure-engine` is a dependency of every recipe that builds or
+  runs anything, costs 7 ms when the file is there, and fetches when it is not. The binary is **still
+  committed today** - the switch happens at the next engine version, and the mechanism landing first is
+  what makes that a gitignore line rather than a project. `docs/UPGRADING.md` has the decision, the
+  rejected git-lfs alternative, and the five-step switch.
+
+  It also caught something worth knowing: the upstream `6.0.4.9` tag serves a `libsciter.so` of
+  **exactly** the same 25 015 296 bytes as `6.0.4.9-bis` with a different SHA-256. A fetch that checked
+  the size - or a human comparing `ls -l` - would install the wrong engine and report success.
 - **`sciter_app/affinity.odin` - rule 1 is checked now, not just written down.** Every other rule in
   `docs/rules.md` had a gate; thread affinity had a paragraph, and it is the rule whose breach is
   hardest to diagnose - engine-state corruption that surfaces later, somewhere else, with nothing

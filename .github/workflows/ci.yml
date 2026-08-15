@@ -59,6 +59,17 @@ jobs:
       # Both library packages *and* every example. The examples used to be excluded - which meant the
       # vet flags covered the third of the code least likely to be read closely - and the cleanup that
       # let them in was 25 findings, all unused imports, unused locals and shadowed `err`s.
+      # The engine's identity, checked rather than assumed. Today `lib/` is committed, so this verifies
+      # the committed blob against the SHA-256 in `external/sciter/VENDORED.md`; when the engine stops
+      # being committed (see docs/UPGRADING.md on the repository-size decision) this same step becomes
+      # the fetch, because `ensure-engine` runs from every build recipe anyway.
+      #
+      # Worth a step of its own because the failure it catches is otherwise baffling: the upstream tag
+      # `6.0.4.9` serves a libsciter.so of *exactly* the same size as `6.0.4.9-bis` and a different
+      # hash, so "the right size, the wrong engine" is a state that exists.
+      - name: Verify the pinned engine
+        run: just fetch-engine --check
+
       - name: Lint
         run: just lint
 
