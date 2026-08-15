@@ -220,11 +220,17 @@ set_highlighted_element :: proc(window: Window, element: Element) -> Error {
 
 // Asks the window to change state.
 //
-// **Only `.SHOWN` and `.CLOSED` are reflected back by `window_state` on the vendored engine under X11.**
-// `.MINIMIZED`, `.MAXIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are all accepted without complaint and the
-// window goes on reporting `.SHOWN`. Whether the window manager acts on them is its own business; what
-// is measured here is that the engine will not tell you. So this is not a state machine to drive an
-// application from - keep your own flag if you need to know.
+// **What comes back out of `window_state` afterwards is not the same on both platforms**, and this is
+// the sharpest platform difference in this package:
+//
+//	Linux (X11)   only `.SHOWN` and `.CLOSED` are ever reported. `.MINIMIZED`, `.MAXIMIZED`,
+//	              `.FULL_SCREEN` and `.HIDDEN` are accepted without complaint and the window goes on
+//	              reporting `.SHOWN`. Whether the window manager acted on them is its own business;
+//	              what is measured is that the engine will not tell you.
+//	Windows       every request is reflected. Ask for `.MINIMIZED` and the window reports `.MINIMIZED`.
+//
+// So **keep your own flag if you need to know**: code written and tested on Windows against the engine's
+// answer compiles on Linux and silently never fires. The portable rule is the Linux one.
 //
 // **`.FULL_SCREEN` changes the display mode, and nothing puts it back.** Asking a small window to go
 // full screen on X11 made the window manager switch the monitor to the nearest mode - a 300x200 window
@@ -247,9 +253,14 @@ set_window_state :: proc(window: Window, state: sciter.Sciter_Window_State) {
 // from `SCITER_WINDOW_STATE` in sciter-x-def.h and adding to it would put the binding out of step with
 // the C API it exists to mirror.
 //
+// The `0xFFFFFFFE` case is Linux-only in practice, because on Windows nothing here destroys a window -
+// see `close`. Keep handling it: it is what a destroyed handle answers, and the wrapper should not start
+// depending on a platform never producing one.
+//
 // One more measured oddity, inside the valid range: a window that has been created and never shown
-// reports `.CLOSED`, not `.HIDDEN`. Everything else about a destroyed handle is dead too - `root`
-// answers `.INVALID_HWND`.
+// reports `.CLOSED` on Linux and `.HIDDEN` on Windows. The Linux answer is the misleading one - the
+// window is alive and a document loads into it - so **do not read `.CLOSED` as "gone"**. Ask the DOM
+// instead: `root` answers `.INVALID_HWND` for a dead handle on both platforms.
 window_state :: proc(window: Window) -> (state: sciter.Sciter_Window_State, ok: bool) {
 	raw := sciter.api().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0)
 	switch sciter.Sciter_Window_State(raw) {
@@ -299,6 +310,15 @@ hide :: proc(window: Window) {
 //
 // Nothing about the close is signalled, either: immediately afterwards the handle still answers - even
 // `root` succeeds - because the close has not happened yet. It happens on the pump.
+//
+// **None of the above is true on Windows, in either direction.** Measured on 6.0.4.9 over 30 turns of
+// the pump after a `close` on a secondary window with a document loaded: nothing crashes in any of the
+// five teardown orders, and the handle never dies - `root` keeps answering and the state stays
+// `.HIDDEN`. `close` there behaves as `hide` does, so a Windows application that closes a window and
+// expects the handle to become invalid will wait forever.
+//
+// Write the hide/pump/close order anyway. It is the only order that is safe on both, it costs nothing
+// on Windows, and the Linux failure it avoids is a segfault rather than an error return.
 close :: proc(window: Window) {
 	set_window_state(window, .CLOSED)
 }

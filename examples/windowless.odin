@@ -272,6 +272,15 @@ test_view :: proc(t: ^testing.T) -> (^sciter_app.Windowless_View, ^Host, bool) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	if g_view.window == nil {
@@ -493,6 +502,15 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	view, err := sciter_app.create_windowless({width = 300, height = 200})
@@ -604,6 +622,15 @@ test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	view, err := sciter_app.create_windowless({width = 300, height = 200})
@@ -744,6 +771,15 @@ test_a_view_renders_into_a_sub_rectangle_of_a_larger_image :: proc(t: ^testing.T
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	IMAGE_W :: 640
@@ -823,6 +859,15 @@ test_two_views_render_independently :: proc(t: ^testing.T) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	first, err1 := sciter_app.create_windowless({width = 64, height = 64})

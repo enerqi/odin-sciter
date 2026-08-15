@@ -257,6 +257,15 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
 
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
+
 	if g_window == nil {
 		// The engine holds onto the argv it is given and the window for the life of the process, so
 		// both are allocated outside the test runner's tracking allocator - otherwise every test
@@ -780,6 +789,15 @@ test_every_node_call_refuses_a_nil_handle :: proc(t: ^testing.T) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	bad := sciter_app.Error(sciter.Scdom_Result.INVALID_PARAMETER)
 
 	_, count_err := sciter_app.node_child_count(nil)
@@ -870,9 +888,19 @@ test_location_origins :: proc(t: ^testing.T) {
 	testing.expect(t, padding_self.x < 0 && padding_self.y < 0, "padding extends behind the content origin")
 
 	// `#summary` is not at the top of its container, and the container is not at the top of the
-	// document, so these three disagree - a wrapper that ignored the origin would return one rect.
+	// document, so these two disagree - a wrapper that ignored the origin would return one rect.
 	testing.expect(t, from_root.y != from_container.y, "root and container origins must differ")
-	testing.expect(t, from_view != from_root, "the view origin is not the root origin")
+
+	// **`.View` and `.Root` are the same origin on Windows and different on Linux.** `.Root` is the
+	// document's root element, `.View` is the window's client area, and whether there is anything
+	// between them is a windowing-system question rather than a DOM one. Asserted both ways rather than
+	// dropped, because "these two origins coincide" is exactly the kind of thing that is true on the
+	// machine you develop on and false on the one you ship to.
+	when ODIN_OS == .Windows {
+		testing.expect_value(t, from_view, from_root)
+	} else {
+		testing.expect(t, from_view != from_root, "the view origin is not the root origin")
+	}
 }
 
 // Two collapse rules for out-of-flow elements, both of which have cost this repository a false engine
@@ -1539,16 +1567,21 @@ test_sort_children :: proc(t: ^testing.T) {
 	testing.expect(t, past_end.calls > 0, "a clamped `last` sorts to the last child")
 }
 
-// `SciterGetElementUID` works; `SciterGetElementByUID` does not resolve what it produces on the
-// vendored 6.x engine. Every combination fails with OPERATION_FAILED - the element's own window handle
-// and the root one, an element that has been `use_element`ed and one that has not, a freshly made
-// element and the document root - and the UIDs themselves come back near the top of the u32 range
-// (0xFFFFFC31 and neighbours), which suggests the two calls no longer share a numbering.
+// `SciterGetElementUID` works everywhere. **`SciterGetElementByUID` resolves what it produces on
+// Windows and does not on Linux**, and that asymmetry is the whole of this test.
 //
-// So this test pins both halves. If the lookup ever starts working, the second half fails and that is
-// the signal to delete this comment rather than a regression.
+// On the vendored Linux build every combination fails with OPERATION_FAILED - the element's own window
+// handle and the root one, an element that has been `use_element`ed and one that has not, a freshly made
+// element and the document root. On Windows, measured on the same engine version, the round trip is
+// exact: `element_by_uid(element_uid(e))` is `e`, for each of two elements, while an invented UID still
+// fails. The UIDs are the same shape on both - near the top of the u32 range, 0xFFFFFC11 and neighbours -
+// so this is the lookup being broken on one platform rather than two numbering schemes.
+//
+// Practically: **a UID is a within-process handle you can round-trip on Windows and cannot on Linux.**
+// Do not build anything portable on it. If the Linux half ever starts working, this test fails and the
+// signal is to delete the guard, not to hunt a regression.
 @(test)
-test_element_uid_is_readable_but_not_resolvable :: proc(t: ^testing.T) {
+test_element_uid_is_readable_and_resolvable_only_on_windows :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
@@ -1565,12 +1598,21 @@ test_element_uid_is_readable_but_not_resolvable :: proc(t: ^testing.T) {
 	testing.expect_value(t, oerr, nil)
 	testing.expect(t, other_uid != uid)
 
-	// The lookup, however, refuses a UID this engine just handed out.
 	back, berr := sciter_app.element_by_uid(window, uid)
-	testing.expect_value(t, berr, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
-	testing.expect_value(t, back, sciter_app.Element(nil))
+	when ODIN_OS == .Windows {
+		testing.expect_value(t, berr, nil)
+		testing.expect_value(t, back, summary)
 
-	// And an invented one fails the same way, which is why the failure above is not a diagnosis.
+		back_other, boerr := sciter_app.element_by_uid(window, other_uid)
+		testing.expect_value(t, boerr, nil)
+		testing.expect_value(t, back_other, other)
+	} else {
+		// The lookup refuses a UID this engine just handed out.
+		testing.expect_value(t, berr, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
+		testing.expect_value(t, back, sciter_app.Element(nil))
+	}
+
+	// An invented one fails on both, which is why the Linux failure above is not a diagnosis.
 	_, missing := sciter_app.element_by_uid(window, 0xFFFF_FFF0)
 	testing.expect(t, missing != nil)
 }
@@ -2143,6 +2185,15 @@ styled_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, target: scit
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	// The engine keeps the window for the life of the process, so it is not the test's to account for.
 	context.allocator = runtime.default_allocator()
 
@@ -3043,32 +3094,50 @@ test_empty_css_is_refused_but_nonsense_css_is_accepted_and_still_replaces :: pro
 	testing.expect_value(t, styled_color(window), "#000000")
 }
 
-// A window that has been created and never shown reports `.CLOSED`, not `.HIDDEN`. Worth knowing
-// before writing `if window_state(w) == .CLOSED { ... }` and meaning "gone".
+// **A window that has been created and never shown does not report the same thing on both platforms**,
+// and the Linux answer is the surprising one: `.CLOSED`, for a window that is alive and about to load a
+// document. Windows reports `.HIDDEN`, which is what the state means.
+//
+// So `if window_state(w) == .CLOSED { ... }` meaning "gone" is wrong on Linux and right on Windows,
+// which is the worst shape a difference can have. Do not use the state to decide whether a window is
+// alive - ask the DOM, as the second half of this test does; that answers the same way on both.
 @(test)
-test_a_window_that_was_never_shown_reports_itself_closed :: proc(t: ^testing.T) {
+test_what_a_window_that_was_never_shown_reports :: proc(t: ^testing.T) {
 	window, _, ok := styled_window(t)
 	if !ok {return}
 
+	when ODIN_OS == .Windows {
+		NEVER_SHOWN :: sciter.Sciter_Window_State.HIDDEN
+	} else {
+		NEVER_SHOWN :: sciter.Sciter_Window_State.CLOSED
+	}
+
 	before, before_ok := sciter_app.window_state(window)
 	testing.expect(t, before_ok)
-	testing.expect_value(t, before, sciter.Sciter_Window_State.CLOSED)
+	testing.expect_value(t, before, NEVER_SHOWN)
 
 	// It is perfectly usable in that state - a document loads, and the DOM answers.
 	testing.expect_value(t, sciter_app.load_html(window, STYLED), nil)
 	testing.expect(t, styled_target(window) != nil)
 	after, after_ok := sciter_app.window_state(window)
 	testing.expect(t, after_ok)
-	testing.expect_value(t, after, sciter.Sciter_Window_State.CLOSED)
+	testing.expect_value(t, after, NEVER_SHOWN)
 }
 
-// **`window_state` reports almost nothing.** `.MINIMIZED`, `.FULL_SCREEN` and `.HIDDEN` are accepted
-// and not reflected; what a window manager does about them is its own business, and the engine will
-// not tell you either way. So this is a characterization test in the weak sense: what it pins is that
-// the calls are harmless and the window is still usable afterwards, because that is all that held
-// across the arrangements measured.
+// **`window_state` reports almost nothing on Linux, and reports the truth on Windows.** This is the
+// sharpest platform difference in the wrapper's surface, and it runs the way round you would not guess:
 //
-// Keep your own flag if the application needs to know whether it is minimised.
+//   Linux    `.MINIMIZED`, `.MAXIMIZED` and `.HIDDEN` are accepted and not reflected. The window
+//            answers `.SHOWN` or `.CLOSED` and nothing else, whatever it was asked for; what a window
+//            manager did about the request is its own business and the engine will not tell you.
+//   Windows  every one of them comes back. Ask for `.MINIMIZED` and the window reports `.MINIMIZED`.
+//
+// So an application that needs to know whether it is minimised **must keep its own flag on Linux**, and
+// may read the engine on Windows. Writing the Windows-shaped code and testing it there produces
+// something that silently never fires on Linux.
+//
+// What holds on both, and is what this test is really for, is the weaker claim: the calls are harmless
+// and the window is still usable afterwards.
 //
 // **`.FULL_SCREEN` is deliberately not in the list below, and must never be put back.** It is not a
 // window state on X11, it is a display mode change: asking a 300x200 window for it took a 1920x1200
@@ -3087,16 +3156,25 @@ test_asking_for_a_window_state_never_breaks_the_window :: proc(t: ^testing.T) {
 		sciter_app.set_window_state(window, state)
 		sciter_app.heartbeat()
 
-		// Whatever it now claims to be, it is one of the two states this engine reports.
 		reported, reported_ok := sciter_app.window_state(window)
 		testing.expect(t, reported_ok, "a live window always reports a state the enum has")
-		testing.expectf(
-			t,
-			reported == .SHOWN || reported == .CLOSED,
-			"after asking for %v the window reported %v, which this engine was not measured to do",
-			state,
-			reported,
-		)
+		when ODIN_OS == .Windows {
+			testing.expectf(
+				t,
+				reported == state,
+				"after asking for %v the window reported %v; Windows reflects the request",
+				state,
+				reported,
+			)
+		} else {
+			testing.expectf(
+				t,
+				reported == .SHOWN || reported == .CLOSED,
+				"after asking for %v the window reported %v, which this engine was not measured to do",
+				state,
+				reported,
+			)
+		}
 	}
 
 	// `hide` and `activate` are the same call under other names, and equally harmless.

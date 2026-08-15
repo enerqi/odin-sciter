@@ -380,6 +380,15 @@ test_view :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 	sciter_app.set_script_features({.FILE_IO, .SYSINFO, .EVAL})
 
@@ -478,14 +487,22 @@ test_html_comes_back_wrapped_and_nul_terminated :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(contents.html, "<!--StartFragment-->"), "the CF_HTML wrapper is there")
 	testing.expect(t, strings.contains(contents.html, "\x00"), "and a NUL is inside the string")
 
-	// The NUL is not an HTML thing - the text flavour has it too, which is why `get_text` trims.
+	// **On Linux the NUL is not an HTML thing - the text flavour has it too. On Windows it is.** The
+	// CF_HTML wrapper and its NUL come back from the HTML flavour on both platforms; the plain text
+	// flavour is clean on Windows and NUL-terminated on Linux. So `get_text`'s trim is load-bearing on
+	// Linux and a no-op on Windows, and it stays unconditional: trimming a NUL that is not there costs
+	// nothing, and a host that skipped it would compare unequal to what it wrote on one platform only.
 	wrote_text, terr := put_flavour(window, "text", &fragment)
 	testing.expect_value(t, terr, nil)
 	testing.expect(t, wrote_text, "the clipboard accepted the text flavour")
 	plain, perr := read_clipboard(window, context.temp_allocator)
 	testing.expect_value(t, perr, nil)
 	defer sciter_app.value_clear(&plain.json)
-	testing.expect(t, strings.contains(plain.text, "\x00"), "the text flavour carries the NUL too")
+	when ODIN_OS == .Windows {
+		testing.expect(t, !strings.contains(plain.text, "\x00"), "the text flavour is clean here")
+	} else {
+		testing.expect(t, strings.contains(plain.text, "\x00"), "the text flavour carries the NUL too")
+	}
 
 	// And what to do about it.
 	testing.expect_value(t, unwrap_clipboard_html(contents.html), ORIGINAL)
@@ -543,6 +560,15 @@ test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	// Leave the engine as it was found: every later test in this file loads a document too.

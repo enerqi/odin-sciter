@@ -31,9 +31,9 @@ Engine: 6.0.4.9, `bin/windows/x64/sciter.dll`, 19 261 952 bytes,
 | 2 | `just api-map-verify` | **passes, and is now a gate** - 189 slots, ISciterAPI version 10 |
 | 3 | `just example hello_window` | window opens, HTML and CSS render. No XIM equivalent of the Linux segfault |
 | 4 | `just check` | 28 examples build |
-| 5 | `just example-tests` | runs; the windowed tests **run rather than skip**. 11 examples still fail - see below |
-| 6 | core paths | `eval`, `dom_walk`, `events`, `call_odin_from_js` all have failing tests; see below |
-| 7 | resource loading | `custom_loader` passes, `archive` passes, `request_loader` faults at exit |
+| 5 | `just example-tests` | runs; the windowed tests **run rather than skip**. Down from 11 failing examples to 7 - see below |
+| 6 | core paths | `events` and `dom_walk` pass; `eval` has more behind a guard, `call_odin_from_js` passes its tests and faults at exit |
+| 7 | resource loading | `custom_loader`, `archive`, `graphics_gallery`, `input` pass; `request_loader` passes its tests and faults at exit |
 | 8 | `just example single_binary` | **done** - see below |
 | 9 | `just example inspector` | not yet run |
 | 10 | `just extension-run` | `just extension` builds `odin-ext.dll`; running it under scapp not yet done |
@@ -103,6 +103,24 @@ thirds of it silently. That is why this list has an open-failures section.
 
 ## Still open
 
+### 0. The biggest single finding: install a debug-output handler
+
+**`sciter_app.set_default_debug_output()` is close to mandatory on Windows, and every test harness in
+`examples/` now calls it.** With no handler installed the engine reports CSS and script diagnostics
+through `OutputDebugStringW`, and Windows implements that by *raising an exception* -
+`DBG_PRINTEXCEPTION_WIDE_C`, `0x4001000A`. With no debugger attached the OS normally handles it and
+execution continues, so nothing notices. Odin's test runner is the case where something does notice: it
+registers a vectored handler that stops the test on any exception it sees.
+
+Measured: `set_css(window, "this is not css")` inside a test killed that test and every test after it in
+the binary, reported as `Signal caught: Unknown` - which reads like a segfault and is not one. The same
+sequence in a plain `main` is completely clean, which is what made it look like a thread problem for a
+while. Installing a handler routes the diagnostic to the callback and the `OutputDebugStringW` path is
+never taken.
+
+That one change took the suite from 11 failing examples to 7, and it is recorded on
+`set_default_debug_output` in `app.odin` because it is advice for applications too, not only for tests.
+
 ### 1. An access violation inside the engine at process teardown
 
 `call_odin_from_js` and `request_loader` pass **every** test and then fault, so the tests are green and
@@ -134,8 +152,37 @@ Reproduce with the vectored-exception-handler probe described in the history of 
 just example-test call_odin_from_js
 ```
 
-Other examples fault mid-run rather than at exit, and have not been separated from this one yet:
-`dom_walk` #22, `eval` #7, `input` #8, `task_list` #4, `sqlite_extension` #0, `graphics_gallery` #25.
+This one survived the debug-output fix in section 0, so it is not the same thing - though the null
+dereference at `this+0x38` is the shape a diagnostic path with no handler would have, and it is worth
+re-testing once the engine is next upgraded.
+
+### 1b. Odin's test runner cannot host a library that throws C++ exceptions
+
+Separate from the above, same symptom. Sciter throws C++ exceptions in ordinary operation and catches
+them itself - the justfile's ASan notes already record this. On Windows every C++ throw is an SEH
+exception (code `0xE06D7363`), and `core/testing/signal_handler_windows.odin` registers a vectored
+handler that stops the test on **any** exception code, with no filtering:
+
+```odin
+win32.AddVectoredExceptionHandler(0, stop_test_callback)   // stop_test_callback does not check `code`
+```
+
+So loading a document whose script will not parse kills the test that did it and every test after it in
+the binary. Nothing on this side can prevent it: `testing.expect_signal` only whitelists SIGILL, SIGSEGV
+and SIGFPE, and the handler cannot be removed without its registration handle.
+
+**This belongs upstream** - `stop_test_callback` should ignore codes outside the set its own `switch`
+already enumerates. Until then, `eval.test_a_script_error_in_a_document_reaches_the_installed_handler` is
+behind `when ODIN_OS != .Windows`, with the reasoning at the guard. `task_list` #4 is the same shape and
+is not guarded yet.
+
+Guarding `eval` #7 exposed what its crash had been hiding: the tests after it in that file now run, and
+several fail (`test_every_scoped_value_producer_releases` - `INVALID_HANDLE` and `INCOMPATIBLE_TYPE`
+from the scoped Value producers; `test_the_diagnostics_handler_can_be_detached`), and one of them
+**hangs**. That is the next layer rather than a regression, but be aware that `just example-test eval`
+needs `EXAMPLE_TEST_TIMEOUT` set or it will not return.
+
+`sqlite_extension` #0 is a genuine `Segmentation_Fault` and is a third, separate thing.
 
 ### 2. Window state is implemented on Windows and is not on Linux
 
@@ -152,18 +199,33 @@ reports the truth, so they fail:
 Mechanical: widen the `when`s the way `set_option`'s were. The Windows behaviour is the *better* one, so
 the guards should not read as "Windows is the exception".
 
-### 3. Behavioural differences not yet characterized
+### 3. Behavioural differences - characterized and closed
 
-- `dom_walk.test_element_uid_is_readable_but_not_resolvable` - the UID **is** resolvable on Windows; the
-  test name is a Linux fact
-- `dom_walk.test_finalizing_a_removed_node_takes_it_out_of_the_document` - `node_remove(finalize=true)`
-  returns `INVALID_PARAMETER`
-- `input.test_combine_url_resolves_against_the_document` - `combine_url("style.css")` against
-  `file:///base/dir/doc.htm` yields `file://base/dir/style.css`, one slash short of the Linux answer.
-  **This is the one that looks like a defect rather than a platform fact** and is worth reading before
-  the others.
-- `eval.test_a_value_scope_releases_the_whole_batch` - `Call_Failed`
-- `graphics_gallery.styled_element` - `Not_Found` / `INVALID_HANDLE`
+All of these were measured with a throwaway probe and the tests widened from the measurement. They are
+recorded on the wrapper procedures as well as in the tests, because each is something an application
+would get wrong.
+
+- **Element UIDs round-trip on Windows and not on Linux.** `element_by_uid(element_uid(e))` returns
+  exactly `e` here, for each of two elements, while an invented UID still fails - so the Linux build's
+  `SciterGetElementByUID` is the broken one. Recorded on `element_by_uid` in `dom.odin`; the test is
+  `test_element_uid_is_readable_and_resolvable_only_on_windows`.
+- **`file:` URLs from `combine_url` have two slashes here and three on Linux.** This looked like a
+  defect and is not: the wrapper is a straight `SciterCombineURL` pass-through, and the engine's
+  canonical Windows `file:` form has no empty authority - a document loaded with either
+  `file:///C:/tmp/dir/` or `file://C:/tmp/dir/` resolves `style.css` to `file://C:/tmp/dir/style.css`
+  both times. `https:` is identical on both. The one inconsistency is on *both* platforms: a
+  root-relative reference gives three slashes and drops the drive letter (`/abs.css` ->
+  `file:///abs.css`). Recorded on `combine_url`.
+- **`.View` and `.Root` are the same origin here and different on Linux** - `.Root` is the document root,
+  `.View` is the window client area, and whether anything sits between them is a windowing-system
+  question. `dom_walk.test_location_origins`.
+- **The clipboard's text flavour is clean here and NUL-terminated on Linux.** The HTML flavour carries
+  the CF_HTML wrapper and its NUL on both. `get_text`'s trim stays unconditional - it costs nothing
+  where there is no NUL. `script_bridge.test_html_comes_back_wrapped_and_nul_terminated`.
+- Two apparent differences turned out to be **collateral from an earlier crash in the same binary** and
+  pass in isolation: `dom_walk.test_finalizing_a_removed_node_takes_it_out_of_the_document` and
+  `eval.test_a_value_scope_releases_the_whole_batch`. Worth checking any new "difference" that way
+  before investigating it.
 
 ### 4. Steps 9, 10 and 11
 

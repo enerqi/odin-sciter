@@ -180,6 +180,15 @@ engine_loaded :: proc(t: ^testing.T) -> bool {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	return true
 }
 
@@ -1093,6 +1102,15 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	// The engine keeps the window for the life of the process.
 	context.allocator = runtime.default_allocator()
 
@@ -1154,6 +1172,25 @@ collect_diagnostic :: proc "system" (
 //
 // The message crosses as counted UTF-16 rather than as a NUL-terminated run, so `string_from_utf16` is
 // the decoder for it, not `string_from_utf16_cstring`.
+// **This test cannot run on Windows, and the reason is Odin's test runner rather than either the engine
+// or this wrapper.** Loading a document whose script will not parse makes the engine throw a C++
+// exception and catch it itself - ordinary operation, and the justfile's ASan notes already record that
+// Sciter throws in normal use. On Windows every C++ throw is an SEH exception, and
+// `core/testing/signal_handler_windows.odin` registers a vectored handler that stops the test on *any*
+// exception code it sees, without filtering: `stop_test_callback` records the code and reports the test
+// as signalled. Measured code `0xE06D7363`, which is MSVC's C++ exception marker.
+//
+// So the test dies at the `load_html` below and takes the rest of the binary's tests with it, reported
+// as `Signal caught: Unknown` - which reads like a segfault and is not one. Nothing here can prevent it:
+// `testing.expect_signal` only whitelists SIGILL, SIGSEGV and SIGFPE, none of which this is, and the
+// runner's handler cannot be removed without its registration handle.
+//
+// The fix belongs upstream - the handler should ignore codes it does not recognise, which is the set its
+// own `switch` already enumerates. Until then this is guarded rather than deleted, so the coverage loss
+// is visible and the guard can come off in one line. The behaviour it pins is not platform-specific;
+// it is simply unobservable here.
+when ODIN_OS != .Windows {
+
 @(test)
 test_a_script_error_in_a_document_reaches_the_installed_handler :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
@@ -1198,6 +1235,8 @@ test_a_script_error_in_a_document_reaches_the_installed_handler :: proc(t: ^test
 	)
 	testing.expect(t, strings.contains(thrown, "from a module"), thrown)
 }
+
+} // when ODIN_OS != .Windows - see above
 
 // The handler is per window when it is given one, and global when it is not - so an application can
 // route one window's diagnostics into that window's own log panel.

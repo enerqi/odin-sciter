@@ -359,6 +359,15 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_a
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
 
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
+
 	if g_window == nil {
 		// The engine keeps the argv and the window for the life of the process; allocating them outside
 		// the test runner's tracking allocator keeps them from being reported as leaks.
@@ -689,13 +698,33 @@ test_combine_url_resolves_against_the_document :: proc(t: ^testing.T) {
 	root, _ = sciter_app.root(g_window)
 	el, _ := sciter_app.select_first(root, "#scroller")
 
+	// **`file:` URLs come back with two slashes on Windows and three on Linux**, and the engine is
+	// consistent about it rather than random: measured with `file:///C:/tmp/dir/` and `file://C:/tmp/dir/`
+	// as bases, Windows normalises both to `file://C:/tmp/dir/...`. Its canonical `file:` form has no
+	// empty authority. Nothing in the wrapper touches the string - `combine_url` is a straight
+	// `SciterCombineURL` - so this is the engine's own resolution and the right thing to record rather
+	// than to correct.
+	//
+	// The `/abs.css` row is where that consistency stops, and it is the same on both platforms: a
+	// root-relative reference against a `file:` base produces three slashes even where the relative rows
+	// produce two, and loses the drive letter doing it (`file:///C:/tmp/dir/` + `/abs.css` ->
+	// `file:///abs.css`). Worth knowing before handing that result to the filesystem. `https:` bases are
+	// unaffected throughout - the whole difference is the `file:` scheme.
+	when ODIN_OS == .Windows {
+		FILE_BASE :: "file://base/dir/"
+		FILE_UP :: "file://base/up.css"
+	} else {
+		FILE_BASE :: "file:///base/dir/"
+		FILE_UP :: "file:///base/up.css"
+	}
+
 	for pair in ([?][2]string {
-			{"style.css", "file:///base/dir/style.css"},
-			{"sub/a.png", "file:///base/dir/sub/a.png"},
-			{"../up.css", "file:///base/up.css"},
-			{"/abs.css", "file:///abs.css"},
+			{"style.css", FILE_BASE + "style.css"},
+			{"sub/a.png", FILE_BASE + "sub/a.png"},
+			{"../up.css", FILE_UP},
+			{"/abs.css", "file:///abs.css"}, // three slashes on both, and the drive letter is gone
 			{"http://example.com/a.css", "http://example.com/a.css"}, // already absolute, untouched
-			{"", "file:///base/dir/"}, // the base itself
+			{"", FILE_BASE}, // the base itself
 		}) {
 		got, err := sciter_app.combine_url(el, pair[0], context.temp_allocator)
 		testing.expect_value(t, err, nil)
@@ -815,6 +844,15 @@ test_graphics_caps :: proc(t: ^testing.T) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	caps, ok := sciter_app.graphics_caps()
 	testing.expect(t, ok, "the engine reported its graphics capabilities")
 	// Documented as an ordinal scale, not a bitmask - see `Graphics_Caps`. The vendored Linux build

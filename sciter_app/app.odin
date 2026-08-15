@@ -209,6 +209,18 @@ set_debug_output :: proc(handler: sciter.Debug_Output_Proc, param: rawptr = nil,
 // a script exception are all completely silent, which is the most confusing thing about a first Sciter
 // document.
 //
+// **On Windows it is not only about visibility, and it is close to mandatory.** With no handler
+// installed the engine falls back to `OutputDebugStringW`, and Windows implements that by *raising an
+// exception* - `DBG_PRINTEXCEPTION_WIDE_C`, `0x4001000A`. Ordinarily nothing notices: with no debugger
+// attached the OS handles it and execution continues. But any process that installs a vectored or
+// unhandled-exception filter and treats what it catches as fatal will be taken down by a CSS warning.
+//
+// Odin's own test runner is exactly such a process. Measured: `set_css(window, "this is not css")` in a
+// test killed the test and every test after it in the binary, reported as `Signal caught: Unknown`,
+// which reads like a segfault and is not one. Installing a handler routes the diagnostic to the
+// callback and the `OutputDebugStringW` path is never taken. That is why every test harness in
+// `examples/` calls this, not only the ones that want to read the messages.
+//
 // The context captured here is only used for `fmt`'s own needs - the message itself is decoded into a
 // fixed buffer, so a diagnostic emitted from a thread other than this one does not touch a per-thread
 // arena. See `default_debug_output`.

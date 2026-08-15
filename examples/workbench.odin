@@ -1893,6 +1893,15 @@ test_app :: proc(t: ^testing.T) -> (app: ^App, host: ^Host, ok: bool) {
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
 	if g_window == nil {
@@ -2273,6 +2282,15 @@ test_the_view_state_round_trips_through_a_value_as_json :: proc(t: ^testing.T) {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
 
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
+
 	original := View {
 		filter   = "pump",
 		selected = 4321,
@@ -2306,6 +2324,15 @@ test_a_missing_or_broken_state_file_leaves_a_usable_view :: proc(t: ^testing.T) 
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
+
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
 
 	empty: sciter_app.Value
 	defer sciter_app.value_clear(&empty)
@@ -2851,10 +2878,10 @@ test_the_details_window_shows_the_row_it_was_opened_on :: proc(t: ^testing.T) {
 	testing.expect_value(t, still_there, app.rows[42].name)
 }
 
-// **The measured rule, and the reason this test is worth the risk of running it.** Closing a secondary
-// window that has a document loaded segfaults the engine on the next turn of the pump - inside its own
-// `check_paint`, on a window whose X11 window is gone but which is still on the paint list. Hiding it
-// and letting one turn of the pump run takes it off that list, and then the close is clean.
+// **The measured rule, and the reason this test is worth the risk of running it.** On Linux, closing a
+// secondary window that has a document loaded segfaults the engine on the next turn of the pump - inside
+// its own `check_paint`, on a window whose X11 window is gone but which is still on the paint list.
+// Hiding it and letting one turn of the pump run takes it off that list, and then the close is clean.
 //
 // Four teardowns were measured on 6.0.4.9 under X11; only `hide` + pump + `close` and "never close it"
 // survived. In particular `load_html("<html></html>")` before the close - which `window.odin` used to
@@ -2863,6 +2890,12 @@ test_the_details_window_shows_the_row_it_was_opened_on :: proc(t: ^testing.T) {
 // If this rule ever stops holding, this test does not fail: **the whole test binary dies here**, and
 // every test after it in the file goes with it. That is the same hazard `dom_walk` records for the
 // unhidden close, and it is why the safe order is pinned by a test rather than by a comment.
+//
+// **Windows does not destroy the window at all, and does not have the hazard.** Measured over 30 turns
+// of the pump after a `close`: the handle stays valid, `root` keeps answering, and the state stays
+// `.HIDDEN`. So `close` there is closer to `hide` than to a destroy, and nothing crashes whichever order
+// you use. The safe order is still the one to write, because it is the only one that is safe on both -
+// but the *assertions* about a dead handle below are Linux facts and are guarded as such.
 @(test)
 test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^testing.T) {
 	app, _, ok := test_app(t)
@@ -2872,11 +2905,16 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 	testing.expect_value(t, werr, nil)
 	testing.expect_value(t, sciter_app.load_html(window, DETAILS_DOC), nil)
 
-	// A window that was created and never shown reports `.CLOSED` - see `dom_walk`. The document in it
-	// is perfectly live all the same.
+	// A window that was created and never shown reports `.CLOSED` on Linux and `.HIDDEN` on Windows -
+	// see `dom_walk`. The document in it is perfectly live either way.
+	when ODIN_OS == .Windows {
+		NEVER_SHOWN :: sciter.Sciter_Window_State.HIDDEN
+	} else {
+		NEVER_SHOWN :: sciter.Sciter_Window_State.CLOSED
+	}
 	never_shown, never_shown_ok := sciter_app.window_state(window)
 	testing.expect(t, never_shown_ok, "a live window reports a state the enum has")
-	testing.expect_value(t, never_shown, sciter.Sciter_Window_State.CLOSED)
+	testing.expect_value(t, never_shown, NEVER_SHOWN)
 	root, rerr := sciter_app.root(window)
 	testing.expect_value(t, rerr, nil)
 	testing.expect(t, root != nil)
@@ -2886,15 +2924,26 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 	sciter_app.close(window)
 	sciter_app.heartbeat()
 
-	// Now the handle is dead, and says so in the two ways `window.odin` records: an invalid handle from
-	// the DOM, and a state that is not in the enum at all.
-	_, after := sciter_app.root(window)
-	testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
-	// `ok` false is the whole point of the pair: the engine answers 0xFFFFFFFE, which is not a member
-	// of SCITER_WINDOW_STATE, so there is no state to report and the wrapper says so instead of
-	// handing back an out-of-range enum value.
-	_, state_ok := sciter_app.window_state(window)
-	testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
+	when ODIN_OS == .Windows {
+		// The handle is still alive: `close` does not destroy a secondary window here. Asserted rather
+		// than skipped, because "close leaves you holding a live window" is the thing an application
+		// written against the Linux behaviour would get wrong.
+		_, after := sciter_app.root(window)
+		testing.expect_value(t, after, nil)
+		state, state_ok := sciter_app.window_state(window)
+		testing.expect(t, state_ok, "a closed window still reports a state here")
+		testing.expect_value(t, state, sciter.Sciter_Window_State.HIDDEN)
+	} else {
+		// Now the handle is dead, and says so in the two ways `window.odin` records: an invalid handle
+		// from the DOM, and a state that is not in the enum at all.
+		_, after := sciter_app.root(window)
+		testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+		// `ok` false is the whole point of the pair: the engine answers 0xFFFFFFFE, which is not a member
+		// of SCITER_WINDOW_STATE, so there is no state to report and the wrapper says so instead of
+		// handing back an out-of-range enum value.
+		_, state_ok := sciter_app.window_state(window)
+		testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
+	}
 
 	// And the application's own window came through it untouched, which is the part that would not
 	// survive the unsafe order: there, the next pump takes the process down whatever it is doing.

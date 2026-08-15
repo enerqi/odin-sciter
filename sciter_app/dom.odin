@@ -757,6 +757,17 @@ element_uid :: proc(element: Element) -> (uid: Element_Uid, err: Error) {
 }
 
 // The element a UID refers to. Returns `.Not_Found` for a UID this window does not know.
+//
+// **This does not work on Linux, and does work on Windows.** Measured on 6.0.4.9: on Windows the round
+// trip is exact - `element_by_uid(element_uid(e))` gives back `e` - while on the vendored Linux build
+// every call fails with `.OPERATION_FAILED`, including on a UID `element_uid` produced a line earlier,
+// and for every combination of window handle and element tried. An invented UID fails on both, so the
+// Linux failure is indistinguishable from "no such element" and there is nothing to branch on.
+//
+// So a UID round trip is not portable. Storing the UID is fine everywhere - it is `element_uid` that
+// works on both - but anything that has to get an element *back* needs to keep the handle, or use
+// something in the document (an `id` attribute and `select_first`) that resolves on both platforms.
+// `examples/dom_walk.odin` pins both halves.
 element_by_uid :: proc(window: Window, uid: Element_Uid) -> (element: Element, err: Error) {
 	he: sciter.Helement
 	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), u32(uid), &he)) or_return
@@ -780,6 +791,17 @@ element_by_uid :: proc(window: Window, uid: Element_Uid) -> (element: Element, e
 // document loaded with a base URL: a relative path resolves against it, `..` walks up, a leading `/`
 // becomes root-relative, and an already-absolute URL with a scheme is returned unchanged. An empty
 // string answers with the base itself.
+//
+// **`file:` results have two slashes on Windows and three on Linux, and this does not normalise them.**
+// The engine's canonical `file:` form on Windows has no empty authority: measured, a document loaded
+// with either `file:///C:/tmp/dir/` or `file://C:/tmp/dir/` resolves `style.css` to
+// `file://C:/tmp/dir/style.css` both times. Either spelling is accepted going *in*; only one comes out.
+// `https:` and the other schemes are identical on both platforms - the whole difference is `file:`.
+//
+// The one place the engine is inconsistent with itself, and it is inconsistent the same way on both
+// platforms: a **root-relative** reference against a `file:` base produces three slashes where the
+// relative ones produce two, and drops the drive letter - `file:///C:/tmp/dir/` plus `/abs.css` is
+// `file:///abs.css`, not `file:///C:/abs.css`. Check for that before handing a result to the filesystem.
 //
 // The result is allocated in `allocator`. A detached element is `.INVALID_HANDLE`, since the base
 // comes from the document.

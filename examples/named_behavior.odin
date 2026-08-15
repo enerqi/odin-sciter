@@ -341,6 +341,15 @@ test_app :: proc(t: ^testing.T, doc := DOC) -> (app: ^App, root: sciter_app.Elem
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
 
+	// **Not optional on Windows, and the reason is not obvious.** With no host handler installed the
+	// engine reports parse errors and script diagnostics through `OutputDebugStringW`, which Windows
+	// implements by *raising an exception* (DBG_PRINTEXCEPTION_WIDE_C, 0x4001000A). Odin's test runner
+	// installs a handler that treats any exception as fatal to the test, so a CSS warning killed the
+	// test that provoked it and every test after it in the file - reported as `Signal caught: Unknown`,
+	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
+	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
+	sciter_app.set_default_debug_output()
+
 	context.allocator = runtime.default_allocator()
 
 	if g_window == nil {
