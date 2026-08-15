@@ -354,6 +354,8 @@ test_a_file_of_the_wrong_size_is_replaced :: proc(t: ^testing.T) {
 	testing.expect_value(t, after.size, i64(len(blob)))
 	when INODE_IS_MEANINGFUL {
 		testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	} else {
+		_ = original // still stat'ed above, to prove the file was there before the replacement
 	}
 
 	written, rerr := os.read_entire_file(second, context.temp_allocator)
@@ -395,6 +397,8 @@ test_a_file_of_the_right_size_but_the_wrong_content_is_replaced :: proc(t: ^test
 	testing.expect_value(t, serr2, nil)
 	when INODE_IS_MEANINGFUL {
 		testing.expect(t, after.inode != original.inode, "a replacement is a rename, not an overwrite")
+	} else {
+		_, _ = original, after // both still stat'ed above, and both checked for an error
 	}
 
 	written, rerr := os.read_entire_file(second, context.temp_allocator)

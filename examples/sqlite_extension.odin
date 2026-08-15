@@ -99,6 +99,8 @@ Sqlite_Api :: struct {
 	) -> c.int,
 	sqlite3_last_insert_rowid: proc "c" (db: rawptr) -> i64,
 	sqlite3_changes:           proc "c" (db: rawptr) -> c.int,
+	// Not optional, despite every SQLite tutorial omitting it - see `load_sqlite`.
+	sqlite3_initialize:        proc "c" () -> c.int,
 	_handle:                   dynlib.Library,
 }
 
@@ -120,13 +122,21 @@ SQLITE_NULL :: 5
 // The candidates, in the order they are tried. **`libsqlite3.so` - no version suffix - is the one a
 // linker wants and the one only a `-dev` package installs**, so it is last: on an ordinary machine the
 // versioned name is the one that exists.
+//
+// **`winsqlite3.dll` comes before `sqlite3.dll`, and that order is load-bearing.** A bare
+// `sqlite3.dll` is resolved by the Windows loader against `PATH`, and on a developer machine that means
+// some *other application's* copy - measured on this one, the first hit was
+// `C:\Program Files\Amazon\AWSCLIV2\sqlite3.dll`, with Sublime Text's and Zeal's behind it. Which build
+// you get is then a property of the machine's `PATH`, and they are not interchangeable: see
+// `load_sqlite` for the one that crashed. `winsqlite3.dll` ships with Windows, is always present, and
+// is the same library on every machine.
 SQLITE_LIBRARY_NAMES :: []string {
 	"libsqlite3.so.0",
 	"libsqlite3.so",
 	"libsqlite3.dylib",
 	"libsqlite3.0.dylib",
-	"sqlite3.dll",
 	"winsqlite3.dll",
+	"sqlite3.dll",
 }
 
 @(private)
@@ -136,6 +146,16 @@ g_loaded: bool
 
 // Opens the library and takes its symbols. Idempotent; false means no SQLite on this machine, which is
 // a real answer rather than a crash.
+//
+// **`sqlite3_initialize` is called and it is not a formality.** SQLite normally initialises itself on
+// the first API call, but a build compiled with `SQLITE_OMIT_AUTOINIT` does not, and then the first
+// `sqlite3_open_v2` dereferences a null - measured, as an access violation with no diagnostic, on
+// `C:\Program Files\Amazon\AWSCLIV2\sqlite3.dll` version 3.49.1. The identical sequence against the
+// same DLL succeeds with one `sqlite3_initialize()` in front of it. On a build that does auto-init the
+// call is a reference-counted no-op, so it costs nothing to always make it.
+//
+// This is the failure that makes the candidate list's order matter: without it, which SQLite a Windows
+// machine happens to have first on `PATH` decides whether this example runs or crashes.
 load_sqlite :: proc() -> bool {
 	if g_loaded {
 		return true
@@ -143,6 +163,9 @@ load_sqlite :: proc() -> bool {
 	for name in SQLITE_LIBRARY_NAMES {
 		count, ok := dynlib.initialize_symbols(&g_sqlite, name, "", "_handle")
 		if ok && count > 0 && g_sqlite.sqlite3_open_v2 != nil {
+			if g_sqlite.sqlite3_initialize != nil {
+				g_sqlite.sqlite3_initialize()
+			}
 			g_loaded = true
 			return true
 		}
@@ -919,10 +942,17 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 	// which reads like a segfault and is not one. Routing diagnostics to a callback avoids the API
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
-	if os.get_env("DISPLAY", context.temp_allocator) == "" &&
-	   os.get_env("WAYLAND_DISPLAY", context.temp_allocator) == "" {
-		fmt.println("no DISPLAY - skipping; a windowless view still needs one")
-		return
+	// `DISPLAY` and `WAYLAND_DISPLAY` are X11/Wayland variables that do not exist on Windows or macOS,
+	// so testing for them directly - as this did - skips the test there **silently and forever**, which
+	// is the worst way for a test not to run. Every other example in this directory gates on a
+	// `have_display` that answers true off Linux; this one had grown its own copy without the `when`.
+	// Measured: this test printed "no DISPLAY - skipping" on the first Windows run.
+	when ODIN_OS != .Windows && ODIN_OS != .Darwin {
+		if os.get_env("DISPLAY", context.temp_allocator) == "" &&
+		   os.get_env("WAYLAND_DISPLAY", context.temp_allocator) == "" {
+			fmt.println("no DISPLAY - skipping; a windowless view still needs one")
+			return
+		}
 	}
 	// Pinned before anything allocates: the view and the assets the library makes outlive this test,
 	// and the runner's per-test tracking allocator would reclaim them underneath the engine.
@@ -930,7 +960,18 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 
 	directory := filepath.dir(os.args[0])
 	defer delete(directory)
-	library := fmt.tprintf("%s/odin-sqlite.so", directory)
+	// `.so` was hardcoded here, so on Windows this looked for `odin-sqlite.so`, never found it, and
+	// skipped itself with a message that reads like the build step was forgotten. `loadLibrary` in the
+	// document below takes the name *without* a suffix and appends the platform's own - which is the
+	// reason the mistake is easy to make and easy to miss.
+	when ODIN_OS == .Windows {
+		SHARED_EXT :: ".dll"
+	} else when ODIN_OS == .Darwin {
+		SHARED_EXT :: ".dylib"
+	} else {
+		SHARED_EXT :: ".so"
+	}
+	library := fmt.tprintf("%s/odin-sqlite%s", directory, SHARED_EXT)
 	if !os.exists(library) {
 		fmt.printfln("no %s - run `just extension sqlite_extension odin-sqlite` first; skipping", library)
 		return

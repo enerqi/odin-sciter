@@ -1189,6 +1189,10 @@ collect_diagnostic :: proc "system" (
 // own `switch` already enumerates. Until then this is guarded rather than deleted, so the coverage loss
 // is visible and the guard can come off in one line. The behaviour it pins is not platform-specific;
 // it is simply unobservable here.
+//
+// **The guard covers all three diagnostics tests**, not just this one: each of them loads a document
+// whose script will not parse, because that is the only way to make the engine produce a diagnostic on
+// demand, and so each of them throws. Do not add a fourth outside the `when`.
 when ODIN_OS != .Windows {
 
 @(test)
@@ -1235,8 +1239,6 @@ test_a_script_error_in_a_document_reaches_the_installed_handler :: proc(t: ^test
 	)
 	testing.expect(t, strings.contains(thrown, "from a module"), thrown)
 }
-
-} // when ODIN_OS != .Windows - see above
 
 // The handler is per window when it is given one, and global when it is not - so an application can
 // route one window's diagnostics into that window's own log panel.
@@ -1285,6 +1287,8 @@ test_the_diagnostics_handler_can_be_detached :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
 	testing.expect_value(t, g_diagnostics.count, before)
 }
+
+} // when ODIN_OS != .Windows - see the comment above the first of these three
 
 // ---------------------------------------------------------------------------------------------------
 // The scoped forms

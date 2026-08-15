@@ -180,8 +180,16 @@ set_script_features :: proc(features: sciter.Script_Runtime_Features) -> Error {
 	return set_option(.SET_SCRIPT_RUNTIME_FEATURES, uintptr(transmute(u32)features))
 }
 
-// Lets the SDK's `inspector` attach to a window created with `.ENABLE_DEBUG`. Both halves are needed:
-// the flag makes the window inspectable, this makes the engine listen.
+// Lets the SDK's `inspector` attach to a window created with `.ENABLE_DEBUG`. The flag makes the window
+// inspectable, this makes the engine listen.
+//
+// **A third thing is needed and neither of these is it: `set_script_features` must include
+// `.SOCKET_IO`.** The inspector connects over a socket opened by the *document's* script runtime, so
+// without that permission the window is inspectable, the engine is listening, and the inspector waits
+// forever on "Waiting for a connection with Sciter's view" - which reads as one of the other two halves
+// being wrong. Measured on Windows; the inspector's own start screen says so if you read it.
+// `examples/inspector.odin` sets `{.FILE_IO, .SOCKET_IO, .EVAL, .SYSINFO}`, which is what its notice
+// asks for.
 set_debug_mode :: proc(enabled := true, window: Window = nil) -> Error {
 	return set_option(.SET_DEBUG_MODE, uintptr(1 if enabled else 0), window)
 }

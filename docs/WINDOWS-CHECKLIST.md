@@ -31,13 +31,14 @@ Engine: 6.0.4.9, `bin/windows/x64/sciter.dll`, 19 261 952 bytes,
 | 2 | `just api-map-verify` | **passes, and is now a gate** - 189 slots, ISciterAPI version 10 |
 | 3 | `just example hello_window` | window opens, HTML and CSS render. No XIM equivalent of the Linux segfault |
 | 4 | `just check` | 28 examples build |
-| 5 | `just example-tests` | runs; the windowed tests **run rather than skip**. Down from 11 failing examples to 7 - see below |
+| 5 | `just example-tests` | runs; the windowed tests **run rather than skip**. Down from 11 failing examples to 5, and three of those five pass every test and fail only on the exit code - see below |
 | 6 | core paths | `events` and `dom_walk` pass; `eval` has more behind a guard, `call_odin_from_js` passes its tests and faults at exit |
 | 7 | resource loading | `custom_loader`, `archive`, `graphics_gallery`, `input` pass; `request_loader` passes its tests and faults at exit |
 | 8 | `just example single_binary` | **done** - see below |
-| 9 | `just example inspector` | not yet run |
-| 10 | `just extension-run` | `just extension` builds `odin-ext.dll`; running it under scapp not yet done |
-| 11 | `just sanitize hello_window` | not yet run |
+| 9 | `just example inspector` | **passes, after a real fix** - the example was missing `.SOCKET_IO`; see below |
+| 10 | `just extension-run` | **passes** - `odin-ext.dll` builds, scapp loads it, the document gets its values |
+| 11 | `just sanitize hello_window` | **clean**, with the expected `interception_win: unhandled instruction` notice. Read the justfile's warning before trusting it: Windows ASan catches no heap errors at all |
+| — | `just pack` | works; packfolder found through `SCITER_SDK` |
 | — | `just leak-check` | **clean** - 10 resource kinds exercised and balanced. No Windows-only leak |
 | — | `just lint`, `check-ownership`, `parity --check`, `stats --check` | pass |
 
@@ -121,10 +122,21 @@ never taken.
 That one change took the suite from 11 failing examples to 7, and it is recorded on
 `set_default_debug_output` in `app.odin` because it is advice for applications too, not only for tests.
 
+### The state of the suite, as of the last full run
+
+```
+FAILED: call_odin_from_js(exit 1) eval(exit 124) request_loader(exit 1)
+        sqlite_extension(exit 1) task_list(exit 124)
+```
+
+Three of those five - `call_odin_from_js`, `request_loader`, `sqlite_extension` - **pass every test they
+contain** and fail only on the exit code, from the teardown fault in section 1. The two `exit 124`s are
+timeouts from section 1b. Everything else in the suite is green.
+
 ### 1. An access violation inside the engine at process teardown
 
-`call_odin_from_js` and `request_loader` pass **every** test and then fault, so the tests are green and
-the exit code is not. Located precisely:
+`call_odin_from_js`, `request_loader` and `sqlite_extension` pass **every** test and then fault, so the
+tests are green and the exit code is not. Located precisely:
 
 ```
 AV on thread <main> at sciter.dll+0x3db6b, reading 0x38
@@ -171,18 +183,22 @@ So loading a document whose script will not parse kills the test that did it and
 the binary. Nothing on this side can prevent it: `testing.expect_signal` only whitelists SIGILL, SIGSEGV
 and SIGFPE, and the handler cannot be removed without its registration handle.
 
-**This belongs upstream** - `stop_test_callback` should ignore codes outside the set its own `switch`
-already enumerates. Until then, `eval.test_a_script_error_in_a_document_reaches_the_installed_handler` is
-behind `when ODIN_OS != .Windows`, with the reasoning at the guard. `task_list` #4 is the same shape and
-is not guarded yet.
+It is worse than a failed test, because the binary usually **hangs** afterwards: the runner marks the
+test stopped and then waits for a thread that is still inside the engine. That is what the `exit 124`
+entries in the summary are. `EXAMPLE_TEST_TIMEOUT` is not optional on Windows.
 
-Guarding `eval` #7 exposed what its crash had been hiding: the tests after it in that file now run, and
-several fail (`test_every_scoped_value_producer_releases` - `INVALID_HANDLE` and `INCOMPATIBLE_TYPE`
-from the scoped Value producers; `test_the_diagnostics_handler_can_be_detached`), and one of them
-**hangs**. That is the next layer rather than a regression, but be aware that `just example-test eval`
-needs `EXAMPLE_TEST_TIMEOUT` set or it will not return.
+**This belongs upstream, and chasing it test by test is the wrong shape.** `stop_test_callback` should
+ignore codes outside the set its own `switch` already enumerates; until it does, *every* test that
+provokes an engine throw is affected, and the engine throws in ordinary operation - a document whose
+script will not parse, `value_parse` on text that will not parse, and more that have not been
+enumerated. Three of them are guarded, as a group, in `eval.odin` (the diagnostics tests, all of which
+load a deliberately broken script) with the reasoning at the guard. The rest are not, deliberately: 20
+scattered `when`s would hide the systemic problem rather than record it.
 
-`sqlite_extension` #0 is a genuine `Segmentation_Fault` and is a third, separate thing.
+Guarding those three exposed what their crash had been hiding - the tests after them in that file now
+run, and `test_every_scoped_value_producer_releases` fails with `INVALID_HANDLE` and
+`INCOMPATIBLE_TYPE` from the scoped Value producers. `eval` still hangs somewhere after that, most
+likely on one of the `value_parse` failure cases. Next layer, not a regression.
 
 ### 2. Window state is implemented on Windows and is not on Linux
 
@@ -227,13 +243,34 @@ would get wrong.
   `eval.test_a_value_scope_releases_the_whole_batch`. Worth checking any new "difference" that way
   before investigating it.
 
-### 4. Steps 9, 10 and 11
+### 4. Bugs the Windows run found that were not platform differences
 
-`just example inspector`, `SCITER_SDK=... just extension-run`, and `just sanitize hello_window`. The SDK
-is at `C:\Users\Enerqi\dev\sciter-js-sdk` on this machine and has all three tools in the layout the
-justfile expects. For step 11, read the justfile's own comment first: Windows ASan does not intercept
-Odin's `HeapAlloc`-based allocator and so catches no heap errors at all. A clean Windows ASan run rules
-out stack bugs and nothing else.
+Three of these had nothing to do with Windows except that Windows is where they became visible.
+
+**`examples/inspector.odin` never enabled `.SOCKET_IO`, so the inspector could not attach - on any
+platform.** The connection is a socket opened by the *document's* script runtime, and without that
+permission the window is inspectable, the engine is listening, and the inspector sits on "Waiting for a
+connection with Sciter's view" forever - which reads as one of the two documented halves being wrong.
+The example now sets `{.FILE_IO, .SOCKET_IO, .EVAL, .SYSINFO}`, which is what the inspector's own start
+screen asks for, and it attaches. Recorded on `set_debug_mode` in `app.odin`.
+
+**`examples/sqlite_extension.odin` crashed on `sqlite3_open_v2`, and it was two bugs stacked.**
+
+- It never called `sqlite3_initialize`. A SQLite built with `SQLITE_OMIT_AUTOINIT` does not initialise
+  itself on first use and dereferences a null instead - measured as a bare access violation with no
+  diagnostic. The identical sequence against the identical DLL succeeds with one `sqlite3_initialize()`
+  in front of it. On a build that does auto-init the call is a reference-counted no-op.
+- Loading `sqlite3.dll` by bare name lets the Windows loader pick whatever is first on `PATH`. On this
+  machine that was `C:\Program Files\Amazon\AWSCLIV2\sqlite3.dll` (3.49.1), with Sublime Text's (3.49.2)
+  and Zeal's (3.52.0) behind it - and the AWS one is the `OMIT_AUTOINIT` build. Which SQLite you get
+  was a property of the machine's `PATH`. `winsqlite3.dll` ships with Windows and is now tried first.
+
+**Two silent-skip bugs in the same file.** `test_script_can_load_the_library_and_query` gated on
+`DISPLAY`/`WAYLAND_DISPLAY` directly instead of the `have_display` every other example uses, so it
+skipped itself on Windows forever; and once that was fixed it looked for `odin-sqlite.so` with the
+extension hardcoded, so it skipped again with a message that reads like the build step was forgotten.
+`loadLibrary` takes the name *without* a suffix and appends the platform's own, which is exactly why
+that mistake is easy to make and hard to see. Both fixed.
 
 ## Notes for whoever runs this next
 
