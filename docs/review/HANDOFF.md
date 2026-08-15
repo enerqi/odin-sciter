@@ -9,38 +9,40 @@ findings, this is the state.
 ## Where things stand
 
 All of the review's findings are fixed and all four of its ownership recommendations are implemented.
-The work is thirteen commits on top of `2a08d41 ci fix`:
+The work is thirteen commits on top of `84c8405 ci fix`:
 
 | commit | what |
 | --- | --- |
-| `8fdd349` | the eight review findings, `scoped_*`, `just check-ownership` |
-| `41156b5` | the call family reports failures the way `eval` does |
-| `466facf` | over-releasing a borrowed element handle segfaults |
-| `9bf50fd` | run the ownership check in CI |
-| `2d3bf1e` | `http_request`'s temp-allocator arguments are safe, measured |
-| `97d2b67` | `distinct Owned_Request` |
-| `e4acfb0` | changelog and the documented counts |
-| `d562c61` | debug tracking for engine-side resources |
-| `a19208c` | `distinct Owned_Element` |
-| `4995925` | the three unmeasured ownership claims, measured |
-| `f6791d3` | the leak gate, and the two instrumentation gaps it found |
-| `76648d7` | `Value_Scope`, and Windows notes |
-| `c5e4fa2` | the examples pass `-vet`, and CI checks them |
+| `25b2a80` | the eight review findings, `scoped_*`, `just check-ownership` |
+| `def853e` | the call family reports failures the way `eval` does |
+| `e4e0ff1` | over-releasing a borrowed element handle segfaults |
+| `a5f7e52` | run the ownership check in CI |
+| `9a05a41` | `http_request`'s temp-allocator arguments are safe, measured |
+| `005bcc2` | `distinct Owned_Request` |
+| `a65531c` | changelog and the documented counts |
+| `b0664cd` | debug tracking for engine-side resources |
+| `d15e64b` | `distinct Owned_Element` |
+| `fd02abd` | the three unmeasured ownership claims, measured |
+| `024ab28` | the leak gate, and the two instrumentation gaps it found |
+| `edcece1` | `Value_Scope`, and Windows notes |
+| `7d988a0` | the examples pass `-vet`, and CI checks them |
 
-**These SHAs are post-rewrite.** The messages were rewritten to drop a `Co-Authored-By` trailer at the
-user's request; the trees are byte-identical to the pre-rewrite versions (verified: same tree hash,
-empty `git diff`). The force-push has since happened — `origin/master` is at `c5e4fa2`. A backup of the
-pre-rewrite branch is still at `refs/original/refs/heads/worktree-memory-safety-review` and can be
-deleted.
+**These SHAs have been rewritten twice and are current as of the second one.** First to drop a
+`Co-Authored-By` trailer from the messages, which left the trees byte-identical (verified: same tree
+hash, empty `git diff`); then by the `git filter-repo` run that removed the three engine binaries from
+history — see [`UPGRADING.md`](../UPGRADING.md). Both were force-pushed. If they ever need mapping
+again, `.git/filter-repo/commit-map` is old → new and this table was regenerated from it rather than by
+hand.
 
 ## Still open
 
-1. **Windows.** Two breaking changes (`Owned_Element`, `Owned_Request`) and the leak gate have never run
-   there. `docs/WINDOWS-CHECKLIST.md` has a section listing exactly what to check and why, including
-   which half of the new `set_option` test is expected to answer differently.
-2. **The repository-size decision** (review finding R7-03): the 24 MB engine is in git with no LFS, and
-   both ways out are cheap now and expensive after a second binary lands. Written up in
-   `docs/UPGRADING.md`; deliberately not actioned, because it rewrites history.
+1. ~~**Windows.**~~ **Done.** Both breaking changes and the leak gate have run on a real desktop, and
+   the leak sweep is clean there. `docs/WINDOWS-CHECKLIST.md` is now a measurement record.
+2. ~~**The repository-size decision**~~ (review finding R7-03): **done, and it went the other way.** No
+   engine is committed on any platform now, and the three that had been were removed from history with
+   `git filter-repo` — `.git` went 41 MB → ~2 MB. `docs/UPGRADING.md` has the decision, the arithmetic
+   and the runbook. The finding's own framing was right: it was cheap while there was one binary and it
+   cost a rewrite once there were three.
 3. **The worktree** `.claude/worktrees/memory-safety-review` has nothing unique left in it. Safe to
    remove.
 

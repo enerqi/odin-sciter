@@ -39,14 +39,14 @@ Every item this section used to list has landed, along with the rest of angles 1
 | **[R7-01]** CI never ran `just lint` | it does, over both packages *and* all 30 examples (`.github/workflows/ci.yml:63`) |
 | **[R1-02]** `load_embedded` reused a cached engine on a size match | the cached file's contents are hashed against the blob; the hash also names the directory (`sciter_app/embed.odin:53`) |
 
-## Still open
+## Still open — nothing from this review
 
-1. **Windows.** Two breaking changes (`Owned_Element`, `Owned_Request`) and the leak gate have never run
-   there. `docs/WINDOWS-CHECKLIST.md` lists what to check and why.
-2. **The repository-size decision** (R7-03): the 24 MB engine is in git with no LFS, and both ways out
-   — LFS, or a `just fetch-engine` recipe with a committed SHA-256 — are cheap now and expensive once a
-   second binary lands. Written up in `docs/UPGRADING.md` and deliberately not actioned, because it
-   rewrites history.
+1. ~~**Windows.**~~ Both breaking changes and the leak gate have run on a real desktop; the sweep is
+   clean and `docs/WINDOWS-CHECKLIST.md` is a measurement record now. macOS followed, in CI.
+2. ~~**The repository-size decision**~~ (R7-03): actioned, and further than the finding proposed. No
+   engine is committed on any platform, and the three that were are out of history —
+   `git filter-repo`, `.git` 41 MB → ~2 MB. `docs/UPGRADING.md` has the decision and the runbook. The
+   finding's timing argument was the correct one: cheap with one binary, a rewrite with three.
 
 Closed since: the five procedures no test reached — `set_option`, `data_ready_async`, the `set_state`
 group and the two `draw_rounded_rect_*` members — now have tests, and coverage is 383 of 383. Each of
