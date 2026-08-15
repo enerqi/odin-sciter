@@ -746,10 +746,36 @@ example-test name="eval" *args: mktarget_dirs
 example-tests: ensure-engine
 	import glob, os, sys
 	sys.path.insert(0, ".github/scripts")
-	import re
-	from justlib import X11_ONLY, run_with_timeout
+	import re, shutil
+	from justlib import X11_ONLY, is_windows, run_with_timeout
 
 	limit = int(os.environ.get("EXAMPLE_TEST_TIMEOUT", "0"))
+
+	# **Naming the test is half of it; the other half is where it died.** A test that aborts without a
+	# message - no malloc error, no C++ `terminating`, no assert - leaves nothing to read, and that is
+	# exactly the case this was written for. `ODIN_TEST_NAMES` is a *compile-time* define, so the binary
+	# the failing run just built is already filtered down to the one test: re-running it under a
+	# debugger costs no rebuild and prints the stack that the process took with it.
+	#
+	# Best-effort by design. No debugger, or a debugger that says nothing useful, changes nothing about
+	# the exit code above - this only ever adds evidence. Same tools as the two window canaries: lldb on
+	# macOS, gdb on Linux, neither on Windows (a crash dump there is a different exercise).
+	def trace(name, test, limit):
+		exe = os.path.join("target", "debug", f"{name}_test.exe")
+		# Windows is excluded rather than left to `shutil.which`: this machine turned out to have an
+		# MSYS gdb on PATH, which took the multi-word `-ex` arguments below as filenames ("apply: No
+		# such file or directory") and printed four lines of nothing at every failure. POSIX passes argv
+		# through untouched, so the same strings are fine on Linux and macOS.
+		if is_windows() or not os.path.exists(exe):
+			return
+		if shutil.which("lldb"):
+			cmd = ["lldb", "-b", "-o", "run", "-o", "thread backtrace all", "-o", "quit", "--", exe]
+		elif shutil.which("gdb"):
+			cmd = ["gdb", "-batch", "-ex", "run", "-ex", "thread apply all bt 25", exe]
+		else:
+			return
+		print(f"    --- where {test} died", flush=True)
+		run_with_timeout(cmd, limit)
 
 	# The name of the proc `@(test)` decorates. `\s*` spans the newline between them, and any other
 	# attributes stacked in between are `@(...)` lines that the name pattern will not match.
@@ -793,6 +819,8 @@ example-tests: ensure-engine
 				["just", "example-test", name, f"-define:ODIN_TEST_NAMES={test}"], limit
 			)
 			print(f"    {'ok  ' if code == 0 else f'EXIT {code}'}  {test}", flush=True)
+			if code != 0:
+				trace(name, test, limit)
 
 	print()
 	if skip:

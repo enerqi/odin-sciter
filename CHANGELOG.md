@@ -212,7 +212,9 @@ against.
   a *file*, naming no test. Any example that exits non-zero is now re-run one test per process, each
   with a single `ODIN_TEST_NAMES`, and the summary names the one that died — including the tests after
   it, which a crash would otherwise prevent from running at all. Costs a compile per test, and only on
-  a run that has already failed.
+  a run that has already failed. A test that dies is then re-run under a debugger for its stack, which
+  needs no rebuild because `ODIN_TEST_NAMES` is a compile-time define and the binary is already filtered
+  to it: lldb on macOS, gdb on Linux, neither on Windows.
 - **`.github/scripts/macos-canary.sh`** — the Darwin half of `window-canary.sh`. Same contract (exit
   124 means the window lived), entirely different evidence when it fails: `launchctl managername` for
   the session type, `lldb` for the trace, `codesign`/`lipo`/`xattr`/`otool` for the dylib.

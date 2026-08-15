@@ -271,11 +271,43 @@ buffering: skip messages land after the `Finished` lines they precede.
 
 So `example-tests` now **bisects its casualties**: any example that exits non-zero is re-run one test
 per process, each with a single `ODIN_TEST_NAMES`, and the summary names the test that died. It costs a
-compile per test and only happens on a run that has already failed. Verified against a deliberately
-crashing example, where it correctly named the killing test *and* showed that the test after it passes
-in isolation — the one that would otherwise never have run at all.
+compile per test and only happens on a run that has already failed.
 
-The next macOS run answers this by itself.
+**It named it on the first try: `test_script_can_load_the_library_and_query`.** The other six pass in
+isolation, including the two that do strictly more engine work. What that test does before dying is
+almost nothing:
+
+```
+load_sqlite()               -> true
+load_engine()               -> true
+set_default_debug_output()
+context.allocator = runtime.default_allocator()
+directory := filepath.dir(os.args[0])   ; defer delete(directory)
+os.exists(".../odin-sqlite.dylib")      -> false
+println("no ... - skipping")            ; return       <- prints, then SIGABRT
+```
+
+Three facts constrain it:
+
+- **it dies on the skip path**, after its own message, on the way out of a test that created nothing
+- **it prints nothing while dying.** Every other abort in this bring-up announced itself — the
+  NSExceptions printed `libc++abi: terminating`, and macOS malloc errors print too. A silent SIGABRT is
+  none of those
+- **`test_the_three_classes_publish_the_expected_members` and `test_a_query_runs_through_the_som_layer`
+  both load sqlite *and* the engine and pass**, so it is not the two libraries coexisting
+
+What is left that is unique to it is the pair `context.allocator = runtime.default_allocator()` and the
+deferred `delete(directory)` — an allocation made and freed across a context the test runner also owns.
+That is a hypothesis, not a finding.
+
+Rather than guess at it, the bisect now **re-runs the dead test under a debugger** and prints the stack:
+`ODIN_TEST_NAMES` is a compile-time define, so the binary from the failing run is already filtered to
+that one test and needs no rebuild. lldb on macOS, gdb on Linux, neither on Windows — where testing this
+found a stray MSYS gdb that took the multi-word `-ex` arguments as filenames.
+
+**Deliberately not changed yet: the missing `odin-sqlite.dylib`.** Building the extension in CI would
+send this test down its real path instead of the skip, which might make the abort disappear without
+anyone learning what it was. One variable at a time: get the stack first.
 
 ### 3. Quarantine — **MEASURED: not an issue**
 
