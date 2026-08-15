@@ -34,20 +34,28 @@ The Odin ecosystem has no package manager to satisfy, so the tag is for humans a
 
 ## Cutting a release
 
-## The vendored engine: decided - fetch, from the next version on
+## The vendored engine: decided - fetch. macOS already, the other two at the next version
 
-`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. Measured today: it is **one
-blob**, committed once at the initial spike and never changed, and it packs to ~19 MB of the
-repository's 20 MB `.git`. So there is nothing to clean up yet - which is exactly why the decision was
-worth making now rather than after it costs a history rewrite.
+**macOS is fetched now**, ahead of the schedule the rest of this section describes, and the reason is
+size rather than principle: the macOS build is a *universal* binary, x86_64 and arm64 in one file, so it
+is 50 MB where Linux is 24 and Windows 19 - and roughly half of it is dead weight on whichever machine
+is reading it. Committing it took `.git` from ~11 MB to 41 MB in a single blob. It is gitignored,
+`just fetch-engine` installs it, and CI's macOS job fetches rather than checks. Everything below applies
+unchanged to Linux and Windows.
+
+`lib/linux/x64/libsciter.so` is 24 MB, tracked in git, and not under LFS. Measured when this was
+written: it is **one blob**, committed once at the initial spike and never changed, and it packs to
+~19 MB of the repository's 20 MB `.git`. So there is nothing to clean up yet - which is exactly why the
+decision was worth making then rather than after it costs a history rewrite.
 
 It does not stay fine:
 
 - a binary does not delta against its predecessor, so **every upgrade adds another ~19 MB to history,
   permanently**. This document treats upgrades as routine and `canary.yml` surfaces upstream tags
   weekly, so the intended cadence is "regularly"
-- Windows and macOS are both meant to be vendored, at which point every clone carries three engines for
-  whichever platform the reader is on
+- Windows and macOS were both meant to be vendored, at which point every clone carries three engines for
+  whichever platform the reader is on. Windows landed and macOS was reversed out for the size reason
+  above; the general point stands for whatever is still committed
 - `docs/PLAN.md` already records that a full-history clone of the *upstream* SDK is ~4 GB because "800+
   commits, each carrying every platform's binaries" - the same failure mode, one scale down
 
@@ -55,8 +63,9 @@ It does not stay fine:
 pinned binary and verifies it against the SHA-256 in
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md); `ensure-engine` runs it automatically
 and is a dependency of every recipe that builds or runs anything, so a checkout needs no ceremony beyond
-the first build. Both exist and work **now**, against the still-committed binary, which makes the switch
-a gitignore line rather than a project.
+the first build. Both exist and work **now**: macOS has already made the switch and it cost exactly what
+was predicted here - one gitignore line, one CI step changed from `--check` to a fetch, and the doc
+edits. Nothing in the build needed touching.
 
 git-lfs was the alternative and was rejected: it keeps the offline-clone property but trades a size
 problem you understand for a tooling one your contributors meet on their first `git clone` - a pointer
@@ -232,11 +241,16 @@ Measured, not guessed:
 | `libsciter.dylib` (macOS) | 47.7 MB | ~20 MB |
 | all three, per engine version | 90 MB | **~40 MB** |
 
-This repository's `.git` is 11 MB today, with one platform and one engine version.
-
 So the trajectory is roughly **40 MB of permanent history per engine bump** once all three platforms
 are vendored. Ten bumps is 400 MB. That is survivable but not comfortable, and it is worth deciding
 how to handle it before the second and third binaries land rather than after.
+
+**And then two of them landed, which is how the table above stopped being a projection.** `.git` was
+11 MB with Linux alone; Windows took it to ~11 MB packed plus the DLL, and committing the macOS dylib
+took it to **41 MB** - the single largest jump, from the single largest file, for the platform nobody
+here can even run. That is what settled it: macOS is fetched (see the decision above), Linux and
+Windows stay committed until the next bump. The projection was right; it just arrived faster than the
+next engine version did.
 
 ### What we do about it
 

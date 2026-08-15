@@ -31,7 +31,8 @@ was Windows, and **Windows x64 has now been vendored and run on a real machine**
 suite, the ISciterAPI table (gated in CI), the inspector, native extensions, ASan and the leak sweep.
 What that run found, what it fixed, and the two things still open are in
 [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md), which is a measurement record rather than a to-do list
-now. macOS was the remaining platform: the engine is vendored (universal, x86_64 + arm64) and the
+now. macOS was the remaining platform: the engine is pinned by hash and *fetched* rather than committed
+(it is universal, x86_64 + arm64, and 50 MB for it) and the
 `macos-14` job in CI is what brings it up, because nobody here owns a Mac. That is a real ceiling rather
 than a formality - CI can prove the table matches and the suite passes, and cannot see that a window
 renders blank - so the platform table in `README.md` has a column for it and
@@ -504,7 +505,7 @@ types that are already right, or the same conversions get written twice.
    written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
    written against the headers.
 10. **Cross-platform** — ~~vendor the Windows binary and verify there~~ **done**, on a real desktop;
-    macOS is vendored and brought up in CI, because there is no Mac here and `macos-14` is the closest
+    macOS is fetched by hash and brought up in CI, because there is no Mac here and `macos-14` is the closest
     thing to one. Prepared without either machine: everything type checks for `windows_amd64`,
     `darwin_amd64` and `darwin_arm64` (`odin check -target:`), `examples/api_map.odin` was rewritten
     to build on all three (it used `dladdr`, which does not exist on Windows, so the one tool the
@@ -650,11 +651,13 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
 
 ## 12. Open questions
 
-- ~~**Repo size.**~~ **decided: vendor.** Offline `git clone && just example hello_window` is worth the
-  bytes. Measured cost is ~38 MB of permanent history per engine bump now that all three platforms are
-  vendored: 11 MB Linux, 8 MB Windows and 18.9 MB macOS compressed, against 11 MB of `.git` before any
-  of them. The macOS figure is the one that was estimated rather than measured, and the estimate (20 MB)
-  held - it is the biggest of the three because that file is universal and carries two architectures. The
+- ~~**Repo size.**~~ **decided: vendor Linux and Windows, fetch macOS.** Offline `git clone && just
+  example hello_window` is worth the bytes for the two engines that cost 8-11 MB of history each. It is
+  not worth it for macOS: that file is universal, carries two architectures, and cost **30 MB** - `.git`
+  went from 11 MB to 41 MB on the one commit that added it, for the one platform nobody here can run.
+  So it is gitignored and `just fetch-engine` installs it, verified against the same SHA-256 that would
+  have pinned it in the tree. Per-bump history is ~19 MB rather than ~38. The estimate that made this
+  call (20 MB compressed for macOS) was the only one of the three not measured beforehand, and it held. The
   mitigations — upgrade deliberately, tell users to `--depth 1`, never keep two engine versions in the
   tree, record SHA-256s so a fetch-based fallback stays possible, and squash history onto an orphan
   branch if `.git` passes ~500 MB — are in [`UPGRADING.md`](./UPGRADING.md), along with why Git LFS and

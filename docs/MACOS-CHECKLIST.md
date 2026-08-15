@@ -1,6 +1,6 @@
 # macOS bring-up
 
-Status: **vendored, and the first CI run has happened.** The engine loads, the ISciterAPI table verifies,
+Status: **pinned, and the first CI run has happened.** The engine loads, the ISciterAPI table verifies,
 everything builds, and **a `macos-14` runner can open a Sciter window** — the canary passed, which is
 what the suite steps below it running at all proves. What fails is the test *runner*, on the thread
 this file predicted it would, for the reason it predicted.
@@ -16,6 +16,13 @@ Engine: 6.0.4.9, `bin/macosx/libsciter.dylib`, 50 029 168 bytes,
 `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c`, recorded in
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md).
 
+**It is fetched, not committed — the only platform that is.** 50 MB of universal binary, roughly half of
+it dead weight on any given machine, took `.git` from 11 MB to 41 MB in one commit, for the platform
+nobody here can run. `just fetch-engine` installs it against the hash above, `ensure-engine` runs before
+every recipe that builds or runs anything, and the CI job fetches as its first step. The reasoning is in
+[`UPGRADING.md`](./UPGRADING.md). Nothing else in this file changes: the file lands in `lib/macosx/`
+either way, and every measurement below was made against exactly that binary.
+
 ## There is no Mac
 
 Nobody working on this repository owns one, and that is the constraint everything here is shaped by.
@@ -26,7 +33,7 @@ So the honest end state has three parts rather than two, and `README.md`'s platf
 
 | | What it means | Who can establish it |
 | --- | --- | --- |
-| **Vendored** | the pinned engine is in the tree and hash-verified | done, from any machine |
+| **Pinned** | the engine is fetched by hash and verified | done, from any machine |
 | **CI** | it loads, the ISciterAPI table matches, the suite passes, no leaks | the `macos` job |
 | **Eyeballed** | a window opens and *renders what it should* | nobody, yet |
 
@@ -57,9 +64,9 @@ Every row runs in the `macos` job of `.github/workflows/ci.yml` unless it says o
 
 | | Step | Predicted | Result |
 | --- | --- | --- | --- |
-| 1 | vendor the dylib, `just fetch-engine --check` | passes | **done** — verified from Windows, no Mac involved |
+| 1 | pin the dylib, `just fetch-engine` | passes | **done** — hash established from Windows, no Mac involved. Fetched rather than committed; the job downloads it |
 | 2 | `lipo` / `codesign` / `xattr` report | universal, ad-hoc signed, no quarantine | **done** — read from the file itself |
-| 3 | `just api-map-verify` | 189 slots, version 10, 0 mismatches; null list per §5 below | **passes** — the null list it printed still has to be transcribed into `MACOS_NULLS` |
+| 3 | `just api-map-verify` | 189 slots, version 10, 0 mismatches; null list per §5 below | **passes, and is now a gate** — `MACOS_NULLS` is pinned to the 16 it printed, which are the Linux 16 exactly (§5) |
 | 4 | `just check` | builds; nothing is X11- or Win32-shaped outside the two excluded examples | **passes** |
 | 5 | `just window-canary` | the open question — see §1 | **passes** — see §1, and it is the single most useful result so far |
 | 6 | `just example-tests` | the second open question — see §2 | **21 of 22 example files green.** First run: 18 of 22 aborted in AppKit. After the bootstrap and the windowed-test skip: only `sqlite_extension` fails. See §2 and §2a |

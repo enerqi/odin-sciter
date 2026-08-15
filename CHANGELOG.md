@@ -215,9 +215,16 @@ against.
 
 ### Added
 
-- **The macOS engine is vendored** — `lib/macosx/libsciter.dylib`, 50 029 168 bytes, universal
-  (x86_64 + arm64), hash-pinned in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) like
-  the other two. Nobody working on this repository owns a Mac, so **CI is the Mac**: the `macos-14` job
+- **The macOS engine is pinned and fetched, not committed** — `lib/macosx/libsciter.dylib`,
+  50 029 168 bytes, universal (x86_64 + arm64), hash-pinned in
+  [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md) like the other two, but gitignored and
+  installed by `just fetch-engine`. It is the one platform that is, and the reason is size: a universal
+  binary is 50 MB where Linux is 24 and Windows 19, roughly half of it dead weight on any given machine,
+  and committing it took `.git` from 11 MB to 41 MB in a single blob — for the platform nobody here can
+  run. `ensure-engine` already gated every recipe that builds or runs anything, so the switch cost one
+  gitignore line and one CI step; the rest of it is documentation.
+  [`docs/UPGRADING.md`](docs/UPGRADING.md) is the decision, and Linux and Windows follow at the next
+  engine bump. Nobody working on this repository owns a Mac, so **CI is the Mac**: the `macos-14` job
   now verifies the engine, reports what the dylib is, runs `api-map-verify`, `check`, a window canary,
   the example suite and the leak sweep. `README.md`'s platform table grew a column to say what that
   does and does not prove — CI cannot see that a window renders blank.

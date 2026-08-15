@@ -4,11 +4,13 @@
 # run it. Steps 2 (read the SDK changelog), 8 (look at a window) and 9 (docs) stay human - CI cannot
 # see that a window renders blank.
 #
-# All three engines are vendored now, so all three platform jobs run their runtime steps. The Windows
+# All three platform jobs run their runtime steps, but they do not all get their engine the same way:
+# Linux and Windows are committed to the tree, macOS is **fetched** by the job, because the macOS build
+# is a universal binary and 50 MB of it is more than the offline-clone property is worth. The Windows
 # job keeps its `is the engine vendored?` guard because that is how it was brought up and the guard
-# costs nothing; the macOS job dropped its equivalent, which had been globbing a path
-# (`lib/macosx/*/libsciter.dylib`) that nothing else in the repository uses and could therefore never
-# fire. docs/WINDOWS-CHECKLIST.md and docs/MACOS-CHECKLIST.md are the measurement records for those two.
+# costs nothing; the macOS job's equivalent had been globbing a path (`lib/macosx/*/libsciter.dylib`)
+# that nothing else in the repository uses and could therefore never fire, and is now the fetch step.
+# docs/WINDOWS-CHECKLIST.md and docs/MACOS-CHECKLIST.md are the measurement records for those two.
 name: CI
 
 on:
@@ -284,7 +286,7 @@ jobs:
   # Ordered like the Linux job, and for the same reasons: verify the engine, then ask whether a window
   # can exist at all, then spend the forty-five minutes.
   macos:
-    name: macos arm64 (engine vendored)
+    name: macos arm64 (engine fetched)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -293,15 +295,19 @@ jobs:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
 
-      # The gate that used to be here globbed `lib/macosx/*/libsciter.dylib` - an arch subdirectory
-      # that nothing else in the repository uses. `src/prelude.odin` searches `lib/macosx`, the
-      # justfile's `engine_rel` is `macosx/libsciter.dylib`, and the SDK's own layout is `bin/macosx/`,
-      # because the macOS build is a *universal* binary and there is nothing to split by arch. So a
-      # dylib vendored the way everything else expects left this job permanently skipped - a gate that
-      # can never fire, reporting success. It is vendored now and the steps below are unconditional;
-      # if the file is missing, `fetch-engine --check` fails and says so.
-      - name: Verify the pinned engine
-        run: just fetch-engine --check
+      # **The macOS engine is fetched, not committed** - the one platform where it is, because the file
+      # is universal (x86_64 + arm64) and therefore 50 MB, half of it dead weight on any given machine.
+      # So this is `fetch-engine` and not `fetch-engine --check`: the file is never in the checkout. It
+      # downloads once, verifies against `engine_sha256`, and fails loudly on a mismatch - the same
+      # verification `--check` performs, plus the download. `ensure-engine` would do it anyway before
+      # the first build; it is an explicit step so a bad pin fails here rather than inside `just check`.
+      #
+      # Note the path has no arch component. `src/prelude.odin` searches `lib/macosx`, `engine_rel` is
+      # `macosx/libsciter.dylib`, and the SDK's own layout is `bin/macosx/` - one universal file, so
+      # there is nothing to split by arch. An earlier gate here globbed `lib/macosx/*/libsciter.dylib`
+      # and could therefore never fire, which left this whole job silently skipped.
+      - name: Fetch and verify the pinned engine
+        run: just fetch-engine
 
       # Both slices, and the signature. One line of output that answers three questions the runtime
       # steps would otherwise answer with a SIGKILL: is the arm64 slice there, is it signed at all

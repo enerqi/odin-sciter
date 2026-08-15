@@ -3,8 +3,9 @@
 What to ship, where the engine has to be, what you owe Terra Informatica, and what to expect on each
 platform.
 
-> **Status.** Linux x64 and Windows x64 are both vendored and run on real machines. macOS is vendored
-> and exercised in CI only — nobody here owns a Mac. Its packaging rows below are instructions rather
+> **Status.** Linux x64 and Windows x64 are both vendored and run on real machines. macOS is fetched
+> rather than vendored — `just fetch-engine`, verified against its SHA-256 — and exercised in CI only;
+> nobody here owns a Mac. Its packaging rows below are instructions rather
 > than verified results, with one exception: everything said about the *dylib itself* (universal,
 > ad-hoc signed, absolute install name, system frameworks only) was read out of the file's Mach-O
 > headers and is measurement. See [`MACOS-CHECKLIST.md`](MACOS-CHECKLIST.md).
@@ -47,8 +48,10 @@ Linux and Windows. Pick one build and pin it — and re-run `just example api_ma
 the check that catches a header/binary mismatch.
 
 macOS needs no such pick: `bin/macosx/libsciter.dylib` is a single universal file with an x86_64 and an
-arm64 slice, 50 MB because of it. `lipo -thin arm64` halves that in your own build; the copy vendored
-here is deliberately whole, so that what is pinned is what upstream shipped.
+arm64 slice, 50 MB because of it. `lipo -thin arm64` halves that in your own build, and that is worth
+doing if you ship Apple-silicon-only; ship the whole file if your bundle is universal. The copy
+`just fetch-engine` puts in `lib/macosx/` is deliberately whole, so that what is pinned is what upstream
+shipped — and its size is why that one is fetched rather than committed to this repository.
 
 ### Runtime dependencies
 

@@ -7,7 +7,18 @@
 | `external/sciter/include/` | The SDK's C/C++ headers, unmodified |
 | `lib/linux/x64/libsciter.so` | The Linux x64 engine |
 | `lib/windows/x64/sciter.dll` | The Windows x64 engine |
-| `lib/macosx/libsciter.dylib` | The macOS engine - one universal file, x86_64 and arm64 |
+| `lib/macosx/libsciter.dylib` | The macOS engine - **fetched, not committed**; see below |
+
+**macOS is the exception and the exception has a reason.** The macOS build is one *universal* file,
+x86_64 and arm64, so it is 50 MB against Linux's 24 and Windows' 19 - and roughly half of it is dead
+weight on whichever machine is reading it. That is more than the "clone it and run an example" property
+is worth for one platform, so `lib/macosx/libsciter.dylib` is gitignored and `just fetch-engine`
+downloads it, verified against the hash below. `ensure-engine` runs before every recipe that builds or
+runs anything, so a Mac checkout still needs no step a reader has to remember. The hash table below is
+unchanged by this: the pin is on the *file*, and it is what the fetch verifies against.
+
+The other two stay committed until the next engine bump, at which point they follow - see
+[`docs/UPGRADING.md`](../../docs/UPGRADING.md).
 
 ## Version
 
@@ -24,11 +35,11 @@ Verified against the shipped library rather than assumed - `just example api_map
 
 ### Binaries
 
-| File | Size | SHA-256 |
-| --- | --- | --- |
-| `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
-| `lib/windows/x64/sciter.dll` | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
-| `lib/macosx/libsciter.dylib` | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
+| File | In git | Size | SHA-256 |
+| --- | --- | --- | --- |
+| `lib/linux/x64/libsciter.so` | yes | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
+| `lib/windows/x64/sciter.dll` | yes | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
+| `lib/macosx/libsciter.dylib` | **no - fetched** | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
 
 The Windows entry is the plain `bin/windows/x64/` build, **not** `bin/windows.d2d/` (a Direct2D variant)
 or `bin/windows.xp/`.
@@ -59,7 +70,10 @@ Three of those have consequences:
   otherwise.
 - **One file, two architectures.** ~24 MB of it is dead weight on any given machine, which is what makes
   the macOS engine 50 MB against Windows' 19 MB. `lipo -thin arm64` is the fix in an application's own
-  build; it is deliberately not done here, so that what is pinned is what upstream shipped.
+  build; it is deliberately not done here, so that what is pinned is what upstream shipped. It is also
+  the whole reason this one platform is fetched rather than committed - thinning it in the tree would
+  have meant a hash per architecture and a Mac to produce them, for a file this repository would then
+  be shipping rather than pinning.
 
 Recorded so a binary obtained out of band can be checked against the one these bindings were verified
 against, and because the download-instead-of-vendor step now exists and verifies against exactly this:

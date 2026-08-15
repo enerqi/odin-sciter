@@ -66,6 +66,16 @@ target
 !lib/**/*.dll
 !lib/**/*.dylib
 
+# ...except the macOS engine, which is fetched rather than committed. It is a *universal* binary -
+# x86_64 and arm64 in one file - so it is 50 MB against Linux's 24 and Windows' 19, and roughly half of
+# that is dead weight on any given machine. That is the whole reason for the asymmetry: the other two
+# are worth the offline-clone property at their size and this one is not. `just fetch-engine` downloads
+# it and verifies it against `engine_sha256`, and `ensure-engine` runs before every recipe that builds
+# or runs anything, so a Mac checkout still needs no ceremony beyond the first build.
+#
+# docs/UPGRADING.md is the decision, and it applies to the other two from the next engine bump.
+lib/macosx/libsciter.dylib
+
 # Bytecode from the justfile's `[script]` recipes, which import .github/scripts/justlib.py.
 __pycache__/
 *.pyc
