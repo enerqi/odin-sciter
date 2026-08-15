@@ -192,6 +192,25 @@ layout and released unconditionally. A null check, or eager creation, closes it.
 `exit_group` syscall — no DLL detach, no static destructors, nothing runs. Windows `ExitProcess` runs
 the engine's detach path. A Linux application that exits normally may well hit the same code.
 
+## 12. macOS: the clipboard accepts a `json` flavour and does not hold it
+
+**Severity:** silent data loss on one platform. **Workaround:** carry structure as text on macOS —
+`JSON.stringify` on the way in, `JSON.parse` on the way out.
+
+Measured on macos-14/arm64, engine 6.0.4.9, in `examples/script_bridge.odin`. Writing a Value to the
+clipboard under the `json` flavour succeeds — the write is not rejected and answers true — and the very
+next read reports that the clipboard holds no json at all. The object is gone with no error anywhere.
+
+**It is that flavour and not the clipboard.** In the same file and the same windowless view, on the same
+run: `text` round trips exactly, and `html` round trips with the usual CF_HTML wrapper *and* its
+trailing NUL, which macOS produces the way Linux does. So clipboard access works, the session is not
+the problem, and no permission is involved.
+
+Linux and Windows both carry the object through unchanged, which is what the example was written to
+demonstrate — so this is a platform-specific regression in one build, like defect 5 in the other
+direction. The test pins the macOS behaviour with a `when` rather than skipping, so a build that fixes
+it fails the test and says so.
+
 ## Not defects — corrections this repository had to make to itself
 
 Kept here so nobody files them by mistake. Each was written up as an engine defect and each turned out

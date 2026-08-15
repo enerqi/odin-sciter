@@ -303,6 +303,26 @@ two that has no export of its own.
 and all three were wrong** — twice for Windows (the D2D slots, the export count), once here. That is the
 argument for `api-map-verify` being a gate rather than a document.
 
+### 5a. Behavioural differences — one so far
+
+With the aborts out of the way, the suite started producing *test failures*, which is the interesting
+kind. Exactly one behavioural difference has surfaced:
+
+**The clipboard accepts a `json` flavour and does not hold it.** `script_bridge` writes a Value to the
+clipboard under the `json` flavour, the write answers true, and the next read reports no json at all —
+so the object is gone with no error. On Linux and Windows it round trips exactly, which is the thing
+that example exists to demonstrate.
+
+It is the flavour rather than the clipboard, and the same run proves it: in the same windowless view,
+`text` round trips exactly and `html` round trips with the CF_HTML wrapper **and its trailing NUL**,
+which macOS answers the way Linux does — that assertion is a `when ODIN_OS == .Windows { … } else { … }`
+that had never run on a Mac, and macOS took the `else` correctly. So clipboard access works, the session
+is not headless-broken, and no permission is involved.
+
+Pinned with a `when` rather than skipped, so an engine that fixes it fails the test and says so.
+Written up as defect 12 in [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md), and the workaround for a host
+carrying structure through the clipboard is `JSON.stringify` / `JSON.parse` around the text flavour.
+
 ### 6. No JIT entitlement is needed
 
 Sciter 6's script engine is QuickJS, an interpreter. Nothing here needs

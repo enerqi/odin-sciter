@@ -127,6 +127,12 @@ against.
   vendoring the dylib the way everything else expects would have left the job skipping every runtime
   step while reporting success. The gate is gone; the steps are unconditional and `fetch-engine
   --check` is what fails if the file is missing.
+- **macOS: the clipboard accepts a `json` flavour and does not hold it** — engine defect 12, measured
+  on macos-14/arm64. The write answers true and the next read reports no json, with no error anywhere;
+  Linux and Windows both carry the object through. It is that flavour rather than clipboard access:
+  `text` and `html` round trip on the same view in the same run, the latter including the trailing NUL
+  that macOS produces the way Linux does. `script_bridge` pins the difference with a `when` instead of
+  skipping, so a build that fixes it fails the test. Carry structure as text on macOS.
 - **The macOS null list is measured and pinned, and it is the Linux list.** 189 slots, ISciterAPI
   version 10, 0 mismatches on `macos-14`/arm64 — and 16 nulls, not the 15 predicted. **`SciterCreateNSView`
   is null on macOS**, the platform it is named for, exactly as `SciterCreateWidget` is null on Linux and

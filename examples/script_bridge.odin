@@ -36,9 +36,15 @@
 // engine's own clipboard code. A host that compares what it wrote with what it read gets a surprise;
 // `unwrap_clipboard_html` below is the four lines that deal with it.
 //
+// **"JSON survives a round trip exactly" is true on Linux and Windows and false on macOS**, measured on
+// macos-14/arm64. There the write is accepted and the object is simply not there afterwards, while text
+// and html round trip normally - so a host that carries structure through the clipboard needs a text
+// fallback on macOS. The test below pins the difference rather than skipping it.
+//
 // Everything here runs in a **windowless view** - no window, no pump, no `init`. The clipboard is a
 // process-wide service and does not need one, which is worth knowing if you were expecting the
-// opposite.
+// opposite. (On macOS a windowless view still stands up AppKit - see the bootstrap below - but that is
+// a threading matter, not a clipboard one.)
 package main
 
 import sciter ".."
@@ -464,21 +470,43 @@ test_json_survives_the_round_trip_exactly :: proc(t: ^testing.T) {
 	contents, cerr := read_clipboard(window, context.temp_allocator)
 	testing.expect_value(t, cerr, nil)
 	defer sciter_app.value_clear(&contents.json)
-	testing.expect(t, contents.has_json, "the clipboard reports it holds json")
 
-	// Read the structure, rather than comparing rendered text - the point of carrying a Value.
-	name, nerr := sciter_app.value_get(&contents.json, "name")
-	testing.expect_value(t, nerr, nil)
-	defer sciter_app.value_clear(&name)
-	name_text, _ := sciter_app.value_to_string(&name, context.temp_allocator)
-	testing.expect_value(t, name_text, "odin")
+	// **macOS accepts the object and then does not hold it.** Measured on macos-14/arm64, engine
+	// 6.0.4.9: `put_flavour(..., "json", ...)` answers true - the write is not rejected - and the very
+	// next `read_clipboard` reports no json flavour at all. There is then nothing to read a structure
+	// out of, so every assertion in the `else` below fails against an undefined Value with
+	// `INCOMPATIBLE_TYPE`, which reads like a Value bug and is not one.
+	//
+	// It is the `json` flavour specifically, not the clipboard: `test_text_round_trips_through_the
+	// _document` passes here, and the html test below passes including its NUL assertion, which macOS
+	// answers the way Linux does. So this is neither clipboard access, nor a headless session, nor a
+	// permission - the other flavours use the same two calls and survive.
+	//
+	// Pinned rather than skipped. If a later engine starts carrying the object on macOS, this test
+	// failing is the right way to hear about it. See docs/MACOS-CHECKLIST.md.
+	when ODIN_OS == .Darwin {
+		testing.expect(
+			t,
+			!contents.has_json,
+			"the json flavour does not survive the round trip on macOS - if it does now, this rule changed",
+		)
+	} else {
+		testing.expect(t, contents.has_json, "the clipboard reports it holds json")
 
-	counts, cerr2 := sciter_app.value_get(&contents.json, "counts")
-	testing.expect_value(t, cerr2, nil)
-	defer sciter_app.value_clear(&counts)
-	length, lerr := sciter_app.value_len(&counts)
-	testing.expect_value(t, lerr, nil)
-	testing.expect_value(t, length, 3)
+		// Read the structure, rather than comparing rendered text - the point of carrying a Value.
+		name, nerr := sciter_app.value_get(&contents.json, "name")
+		testing.expect_value(t, nerr, nil)
+		defer sciter_app.value_clear(&name)
+		name_text, _ := sciter_app.value_to_string(&name, context.temp_allocator)
+		testing.expect_value(t, name_text, "odin")
+
+		counts, cerr2 := sciter_app.value_get(&contents.json, "counts")
+		testing.expect_value(t, cerr2, nil)
+		defer sciter_app.value_clear(&counts)
+		length, lerr := sciter_app.value_len(&counts)
+		testing.expect_value(t, lerr, nil)
+		testing.expect_value(t, length, 3)
+	}
 }
 
 // **HTML does not survive unchanged**, and this is the test that says exactly how it differs - which is
