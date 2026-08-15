@@ -127,6 +127,20 @@ against.
   vendoring the dylib the way everything else expects would have left the job skipping every runtime
   step while reporting success. The gate is gone; the steps are unconditional and `fetch-engine
   --check` is what fails if the file is missing.
+- **The macOS null list is measured and pinned, and it is the Linux list.** 189 slots, ISciterAPI
+  version 10, 0 mismatches on `macos-14`/arm64 — and 16 nulls, not the 15 predicted. **`SciterCreateNSView`
+  is null on macOS**, the platform it is named for, exactly as `SciterCreateWidget` is null on Linux and
+  the D2D entries are null on Windows. All of them are Sciter 4 API for putting a view inside a host
+  widget or renderer, and Sciter 6 implements none of them anywhere: **there is no supported way to hand
+  the engine an existing `NSView`.** `SciterCreateWindow` or a windowless view are the two doors on every
+  platform. `MACOS_NULLS` is now a gate rather than a notice.
+- **Windowed tests skip themselves on macOS, and the skip messages stopped lying.** `NSWindow` can only
+  be instantiated on the main thread and a test never runs there, so `have_display()` answers false
+  under `ODIN_TEST` on Darwin in the 14 examples that create a window — `windowless`, `script_bridge`
+  and `sqlite_extension` keep it true, because they need no window and their tests pass. Separately, 28
+  call sites announced "no DISPLAY or WAYLAND_DISPLAY - skipping…", which is false on Windows and macOS
+  where those variables do not exist; `have_display` now prints the platform's real reason and the call
+  site says only what it skipped.
 - **`just cross-check` now checks `darwin_arm64`** as well as `darwin_amd64` and `windows_amd64` — the
   architecture CI's macOS runner actually builds on, previously unchecked. `single_binary` is no longer
   excluded from it: its `#load` covers Darwin now that the dylib is vendored.
@@ -189,6 +203,14 @@ against.
 - **`.github/scripts/macos-canary.sh`** — the Darwin half of `window-canary.sh`. Same contract (exit
   124 means the window lived), entirely different evidence when it fails: `launchctl managername` for
   the session type, `lldb` for the trace, `codesign`/`lipo`/`xattr`/`otool` for the dylib.
+- **A macOS main-thread bootstrap in every example whose tests touch the engine.** AppKit builds
+  `NSApplication` and its menu bar the first time anything reaches the engine, and refuses to do it off
+  the main thread; Odin's test runner always runs tests on a `thread.Pool` worker, at any
+  `ODIN_TEST_THREADS` count. So the first engine call from a test aborted the process. An `@(init)`
+  procedure — which *does* run on the main thread, before the runner starts — now builds the singleton
+  there, and every later `sciter_app.init()` is a no-op. `when ODIN_OS == .Darwin && ODIN_TEST`, so a
+  normal build is untouched: `main` is the main thread and windows are created correctly by
+  construction. This brought `windowless` back from aborting to 12 passing tests.
 - **`sciter_app/value_scope.odin`** — a `Value_Scope` holds a batch of engine references with one
   lifetime and releases them together, which is what `scoped_` cannot do for a pile produced in a loop
   (`@(deferred_out)` fires at the end of the calling scope, which there is one iteration). The same

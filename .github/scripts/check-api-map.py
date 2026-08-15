@@ -92,26 +92,28 @@ LINUX_NULLS = """
 #   SciterDWFactory                      which renders through Skia; those live in `bin/windows.d2d/`.
 #   the three DirectX entries            same reason.
 #   SciterCreateWidget                   Linux/GTK, gone in Sciter 6 there too.
-#   SciterCreateNSView                   macOS.
+#   SciterCreateNSView                   macOS - and null *there* too, measured. See MACOS_NULLS below.
 #
 # So an application must not reach for SciterProc/SciterTranslateMessage on Windows: nothing in this
 # repository does, and the null list is why.
 WINDOWS_NULLS = [n for n in LINUX_NULLS if n != "SciterProcND"]
 
-# Not yet measured - the first run on `macos-14` is what fills this in, and until then the macOS null
-# list is *reported* rather than enforced (see `expected` in main()).
+# Measured on `macos-14` (arm64), 2026-08-15: engine 6.0.4.9, `bin/macosx/libsciter.dylib`.
 #
-# **The prediction, written down before the run so it can be wrong in public.** 15 nulls: the Linux list
-# minus `SciterCreateNSView`, which is the one slot macOS should be the platform to fill. `SciterProcND`
-# stays null (it is a Windows-only entry point), `SciterCreateWidget` stays null (Linux/GTK, gone in
-# Sciter 6 anyway), and the D2D/DirectX entries stay null (Windows). That would make the macOS list
-# identical in *shape* to the Windows one - one slot different from Linux, a different slot.
+# **It is the Linux list, exactly - and the prediction recorded here was wrong.** The guess was 15 nulls,
+# the Linux list *minus* `SciterCreateNSView`, on the reasoning that macOS should be the one platform to
+# fill the slot named after its own view class. It does not fill it. `SciterCreateNSView` is NULL on all
+# three platforms, which makes it a twin of `SciterCreateWidget`: both are Sciter 4 entry points for
+# putting a view inside a host widget, and Sciter 6 creates its own window on every platform instead.
 #
-# Treat that prediction as weak. The equivalent one for Windows was recorded here and was wrong twice
-# over: it predicted the D2D slots would be filled (they are not - this build renders through Skia) and
-# that sciter.dll would export one symbol (it exports 276). The vendored dylib links AppKit, Cocoa,
-# Carbon *and* Metal, so what the engine actually publishes on macOS is a question for the runner.
-MACOS_NULLS: list[str] = []
+# The consequence is an API one, and it is worth stating because the slot's existence implies otherwise:
+# **there is no supported way to hand this engine an existing NSView.** `SciterCreateWindow` or a
+# windowless view (`SciterProcX`) are the two doors, on macOS as everywhere else.
+#
+# So the three lists are: Linux 16, macOS 16 (the same 16), Windows 15 (the same minus `SciterProcND`).
+# Every platform-specific prediction made in this file before its machine existed has now been wrong -
+# twice for Windows, once here - which is the argument for measuring rather than reasoning about it.
+MACOS_NULLS = list(LINUX_NULLS)
 
 # The two Windows slots whose implementation is not in sciter.dll's export table - see the header. They
 # get the module-containment check instead of the name check.

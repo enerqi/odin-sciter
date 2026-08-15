@@ -355,6 +355,25 @@ main :: proc() {
 // ---------------------------------------------------------------------------------------------------
 // Tests
 
+// **macOS: the engine's AppKit singleton has to be built on the main thread.** Odin's test runner runs
+// every test on a `thread.Pool` worker, at any `ODIN_TEST_THREADS` count, and the first engine call
+// from one aborts the process in `-[NSApplication setMainMenu:]`. `@(init)` procedures do run on the
+// main thread, before the runner starts, so the singleton is built there and every later
+// `sciter_app.init()` is a no-op (`g_initialized` in sciter_app/app.odin). Test binaries only: a normal
+// build reaches the engine from `main`, which is the main thread by definition. See
+// docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
+
 @(private = "file")
 have_display :: proc() -> bool {
 	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
@@ -374,7 +393,7 @@ g_view: sciter_app.Windowless_View
 @(private = "file")
 test_view :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; a windowless view still needs one")
+		fmt.println("skipping - a windowless view still needs a display here")
 		return nil, false
 	}
 	if !sciter_app.load_engine() {
@@ -554,7 +573,7 @@ test_eval_cannot_import_but_the_stash_can :: proc(t: ^testing.T) {
 @(test)
 test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(t: ^testing.T) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; a windowless view still needs one")
+		fmt.println("skipping - a windowless view still needs a display here")
 		return
 	}
 	if !sciter_app.load_engine() {

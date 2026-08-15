@@ -451,7 +451,7 @@ g_view: sciter_app.Windowless_View
 @(private = "file")
 test_pane :: proc(t: ^testing.T) -> (view: ^sciter_app.Windowless_View, root: sciter_app.Element, ok: bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; a windowless view still needs one")
+		fmt.println("skipping - a windowless view still needs a display here")
 		return {}, nil, false
 	}
 	if !sciter_app.load_engine() {

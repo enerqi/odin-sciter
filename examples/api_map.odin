@@ -22,6 +22,11 @@
 // list is part of what this tool reports, and it is expected to change across platforms while the
 // offsets do not.
 //
+// All three are measured now, and the platform differences are far smaller than the slot names suggest:
+// **Linux and macOS null the same 16, Windows nulls 15 of those** (all but `SciterProcND`). Every slot
+// named after a platform - `SciterCreateNSView`, `SciterCreateWidget`, the D2D and DirectX entries - is
+// null on the platform it is named for. They are Sciter 4 API that Sciter 6 does not implement anywhere.
+//
 //   Linux    16 null, measured: SciterProc, SciterProcND, SciterTranslateMessage,
 //            SciterGetViewExpando, SciterRenderD2D, SciterD2DFactory, SciterDWFactory,
 //            SciterCreateNSView, SciterCreateWidget, reserved1..4, and the three DirectX entries.
@@ -36,14 +41,14 @@
 //            must not reach for them. The D2D/DirectWrite and DirectX slots are null because this is
 //            the plain `bin/windows/` build, which renders through Skia - they belong to
 //            `bin/windows.d2d/`, which is deliberately not the one vendored.
-//   macOS    15 null predicted, unverified: the Linux list minus SciterCreateNSView, which is the one
-//            slot macOS should be the platform to fill. That would make it the same shape as the
-//            Windows list - one slot different from Linux, a different slot. Treat the prediction as
-//            weak: the equivalent one for Windows was wrong in both directions, and the vendored dylib
-//            links AppKit, Cocoa, Carbon *and* Metal, so what it publishes is a question for the
-//            runner. The engine is vendored and CI's macos-14 job runs this tool; what it prints
-//            replaces this paragraph and fills MACOS_NULLS in .github/scripts/check-api-map.py, which
-//            reports rather than enforces until then. See docs/MACOS-CHECKLIST.md.
+//   macOS    16 null, measured 2026-08-15 on macos-14/arm64: **the Linux list, exactly.** The
+//            prediction written here beforehand was 15 - the Linux list minus SciterCreateNSView, on
+//            the reasoning that macOS would be the platform to fill the slot named after its own view
+//            class. It does not. SciterCreateNSView is null everywhere, which makes it a twin of
+//            SciterCreateWidget: both are Sciter 4 entry points for putting a view inside a host
+//            widget, and Sciter 6 creates its own window on every platform instead. So **there is no
+//            supported way to hand this engine an existing NSView** - SciterCreateWindow or a
+//            windowless view are the two doors, on macOS as everywhere else.
 //
 // `SciterGetViewExpando` and the four `reserved` slots are null on every platform: leftovers from the
 // removed script-VM API. The first of those is why `sciter_app.set_global` evaluates an assignment

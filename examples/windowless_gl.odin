@@ -413,7 +413,7 @@ test_gl_view :: proc(t: ^testing.T) -> (^Context, ^sciter_app.Windowless_View, b
 		return nil, nil, false
 	} else {
 		if !have_display() {
-			fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping")
+			fmt.println("skipping - this test needs a display")
 			return nil, nil, false
 		}
 		if !sciter_app.load_engine() {

@@ -294,7 +294,7 @@ g_host: ^Host
 @(private = "file")
 test_view :: proc(t: ^testing.T) -> (^sciter_app.Windowless_View, ^Host, bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		fmt.println("skipping - a windowless view still needs a display here, see the header")
 		return nil, nil, false
 	}
 	if !sciter_app.load_engine() {
@@ -524,7 +524,7 @@ test_the_mouse_reaches_the_document :: proc(t: ^testing.T) {
 @(test)
 test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		fmt.println("skipping - a windowless view still needs a display here, see the header")
 		return
 	}
 	if !sciter_app.load_engine() {
@@ -644,7 +644,7 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 @(test)
 test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		fmt.println("skipping - a windowless view still needs a display here, see the header")
 		return
 	}
 	if !sciter_app.load_engine() {
@@ -793,7 +793,7 @@ test_resizing_a_view_reflows_the_document_into_the_new_surface :: proc(t: ^testi
 @(test)
 test_a_view_renders_into_a_sub_rectangle_of_a_larger_image :: proc(t: ^testing.T) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		fmt.println("skipping - a windowless view still needs a display here, see the header")
 		return
 	}
 	if !sciter_app.load_engine() {
@@ -881,7 +881,7 @@ test_a_view_renders_into_a_sub_rectangle_of_a_larger_image :: proc(t: ^testing.T
 @(test)
 test_two_views_render_independently :: proc(t: ^testing.T) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping; windowless still needs one, see the header")
+		fmt.println("skipping - a windowless view still needs a display here, see the header")
 		return
 	}
 	if !sciter_app.load_engine() {

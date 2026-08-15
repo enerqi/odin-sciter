@@ -22,6 +22,11 @@ package main
 
 import sciter ".."
 import "../sciter_app"
+// Used only by the macOS test bootstrap below, which lives inside a `when`. `-vet` sees an unused
+// import on every other platform and `odin check -target:darwin_arm64` sees an undeclared name
+// without it, so neither gate alone is enough - `@(require)` is what says "keep it". Same trap as
+// `core:unicode/utf16` in api_map.odin.
+@(require) import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -298,6 +303,25 @@ BLUE :: [4]u8{255, 0, 0, 255} // pure blue, as RAW delivers it
 RED :: [4]u8{0, 0, 255, 255}
 @(private = "file")
 GREEN :: [4]u8{0, 255, 0, 255}
+
+// **macOS: the engine's AppKit singleton has to be built on the main thread.** Odin's test runner runs
+// every test on a `thread.Pool` worker, at any `ODIN_TEST_THREADS` count, and the first engine call
+// from one aborts the process in `-[NSApplication setMainMenu:]`. `@(init)` procedures do run on the
+// main thread, before the runner starts, so the singleton is built there and every later
+// `sciter_app.init()` is a no-op (`g_initialized` in sciter_app/app.odin). Test binaries only: a normal
+// build reaches the engine from `main`, which is the main thread by definition. See
+// docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
 
 @(test)
 test_graphics_api_table_resolves :: proc(t: ^testing.T) {

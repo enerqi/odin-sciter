@@ -224,19 +224,57 @@ by_length :: proc(a, b: sciter_app.Element, user_data: rawptr) -> int {
 // A DOM also needs a window, and a window needs a display, so they skip themselves when there is
 // neither. The window is created once and reloaded per test; it is never shown.
 
+// **macOS: the engine's AppKit singleton has to be built on the main thread.** Odin's test runner runs
+// every test on a `thread.Pool` worker, at any `ODIN_TEST_THREADS` count, and the first engine call
+// from one aborts the process in `-[NSApplication setMainMenu:]`. `@(init)` procedures do run on the
+// main thread, before the runner starts, so the singleton is built there and every later
+// `sciter_app.init()` is a no-op (`g_initialized` in sciter_app/app.odin). Test binaries only: a normal
+// build reaches the engine from `main`, which is the main thread by definition. See
+// docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
+
 @(private = "file")
 have_display :: proc() -> bool {
-	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+	when ODIN_OS == .Windows {
 		// DISPLAY and WAYLAND_DISPLAY are X11/Wayland variables and are simply absent here, so testing
-		// for them would skip every windowed test on those platforms forever - silently, which is the
-		// worst way for a test to not run. A desktop session is the normal case on both, and a session
-		// that genuinely cannot open a window fails visibly at create_window instead.
+		// for them would skip every windowed test on this platform forever - silently, which is the
+		// worst way for a test to not run. A desktop session is the normal case, and one that genuinely
+		// cannot open a window fails visibly at create_window instead.
 		return true
+	} else when ODIN_OS == .Darwin {
+		// **macOS has a display, and a test still cannot use it.** AppKit refuses to instantiate an
+		// NSWindow anywhere but the main thread, and Odin's test runner always runs tests on a pool
+		// worker - so create_window from a test aborts the whole process with
+		//
+		//	'NSWindow should only be instantiated on the main thread!'
+		//
+		// Nothing moves a test onto the main thread, so the windowed tests skip here and this example is
+		// covered by being run as a *program* instead. Tests needing no window are unaffected - see
+		// docs/MACOS-CHECKLIST.md section 2. `ODIN_TEST` keeps this out of a normal build, where `main`
+		// is the main thread and windows are created correctly by construction.
+		when ODIN_TEST {
+			fmt.println("macOS: a test thread cannot create a window - see docs/MACOS-CHECKLIST.md")
+			return false
+		} else {
+			return true
+		}
 	} else {
-		return(
-			os.get_env("DISPLAY", context.temp_allocator) != "" ||
-			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
-		)
+		if os.get_env("DISPLAY", context.temp_allocator) != "" ||
+		   os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" {
+			return true
+		}
+		fmt.println("no DISPLAY or WAYLAND_DISPLAY")
+		return false
 	}
 }
 
@@ -250,7 +288,7 @@ g_window: sciter_app.Window
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		fmt.println("skipping - this test needs a window")
 		return nil, false
 	}
 	if !sciter_app.load_engine() {
@@ -2179,7 +2217,7 @@ STYLED :: `<html><head><style>
 @(private = "file")
 styled_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, target: sciter_app.Element, ok: bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		fmt.println("skipping - this test needs a window")
 		return nil, nil, false
 	}
 	if !sciter_app.load_engine() {

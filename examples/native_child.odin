@@ -271,7 +271,7 @@ g_window: sciter_app.Window
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
 	if !have_display() {
-		fmt.println("no DISPLAY or WAYLAND_DISPLAY - skipping, this test needs a window")
+		fmt.println("skipping - this test needs a window")
 		return nil, nil, false
 	}
 	if !sciter_app.load_engine() {

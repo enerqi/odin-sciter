@@ -753,6 +753,25 @@ SciterLibraryInit :: proc "system" (psapi: ^sciter.Isciter_Api, plibobject: ^sci
 // The SQL layer needs no engine, so most of this runs anywhere. The SOM layer needs the engine's Value
 // implementation but still no window, which is why these are the cheapest tests in the repository.
 
+// **macOS: the engine's AppKit singleton has to be built on the main thread.** Odin's test runner runs
+// every test on a `thread.Pool` worker, at any `ODIN_TEST_THREADS` count, and the first engine call
+// from one aborts the process in `-[NSApplication setMainMenu:]`. `@(init)` procedures do run on the
+// main thread, before the runner starts, so the singleton is built there and every later
+// `sciter_app.init()` is a no-op (`g_initialized` in sciter_app/app.odin). Test binaries only: a normal
+// build reaches the engine from `main`, which is the main thread by definition. See
+// docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+	}
+}
+
 @(test)
 test_the_library_loads_and_reports_a_version :: proc(t: ^testing.T) {
 	if !load_sqlite() {

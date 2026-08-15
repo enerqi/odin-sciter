@@ -114,14 +114,23 @@ rather than `#ifdef`-ing them out:
 ```
 
 The same pattern covers `SciterTranslateMessage`, `SciterRenderD2D` / `SciterD2DFactory` /
-`SciterDWFactory`, the three DirectX entry points, `SciterCreateNSView` (macOS) and
-`SciterCreateWidget` (Linux). Every padded slot is pointer-sized, so **one Odin struct definition serves
+`SciterDWFactory`, the three DirectX entry points, `SciterCreateNSView` (named for macOS) and
+`SciterCreateWidget` (named for Linux) — and the parentheses are about where the *name* comes from, not
+where the slot is filled: see below, none of them is implemented anywhere. Every padded slot is pointer-sized, so **one Odin struct definition serves
 Windows, Linux and macOS**, and the bindings can be generated on whichever platform is most convenient.
 16 of the 189 slots are NULL on Linux — 12 platform-padded plus 4 `reserved` left from the removed
-script-VM API. **Windows nulls 15 — the same list minus `SciterProcND`**, measured. That one slot is the
-entire difference between the platforms, and it is not the difference anyone predicted: `SciterProc`,
-`SciterTranslateMessage` and the D2D/DirectX entries are null on Windows too, because Sciter 6 owns its
-own window procedure and the vendored build renders through Skia rather than Direct2D.
+script-VM API. All three platforms are measured now, and they barely differ: **macOS nulls the same 16,
+Windows nulls 15 — that list minus `SciterProcND`.** One slot is the entire difference between the three
+of them.
+
+That is not the difference anyone predicted, twice over. `SciterProc`, `SciterTranslateMessage` and the
+D2D/DirectX entries are null on Windows too, because Sciter 6 owns its own window procedure and the
+vendored build renders through Skia rather than Direct2D. And **`SciterCreateNSView` is null on macOS** —
+the platform it is named for. Every platform-named slot is null on its own platform: they are Sciter 4
+entry points for putting a view inside a host widget or renderer, and Sciter 6 implements none of them
+anywhere. The practical consequence is that **there is no supported way to hand the engine an existing
+`NSView`, GTK widget or D2D surface**; `SciterCreateWindow` and windowless mode are the two doors on
+every platform.
 
 ### Verified, not assumed
 

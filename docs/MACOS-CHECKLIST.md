@@ -146,19 +146,80 @@ singleton there puts `InitCocoa` on the right thread, and every later `sciter_ap
 (`g_initialized`, `sciter_app/app.odin:72`). It is scoped `when ODIN_OS == .Darwin && ODIN_TEST`, so it
 touches test binaries only.
 
-It is in two examples so far, deliberately chosen to answer two different questions in one run:
+It went into two examples, chosen to answer two different questions in one run: `windowless` (needs no
+window — the best case) and `behavior` (needs a real one — the worst).
 
-- **`windowless`** — the best case. Nothing here needs a window, so if the *thread* is the entire
-  problem, these tests come back
-- **`behavior`** — the worst case. These need a real window, created from a worker thread after the
-  bootstrap. AppKit is documented to want `NSWindow` on the main thread too, so this may well still fail
-  — and that answer is the one that decides whether the remaining 16 examples get the same treatment
+**`behavior` answered first, and the answer is that the bootstrap works and is not enough.** The
+`initMenuBar` abort is gone. The test now gets all the way past `sciter_app.init()` to
+`create_window`, and dies at the *next* main-thread rule:
 
-If `behavior` also comes back, roll the bootstrap out to every example with tests. If only `windowless`
-does, the shape of the answer is: **display-free tests under `odin test`, windowed examples driven as
-programs** — the split `have_display()` already expresses, with the canary harness generalised to run
-them. A runner patch, as on Windows, is the last resort: this is an AppKit rule rather than an Odin bug,
-so patching Odin to run tests on the main thread would be fixing it in the wrong place.
+```
+*** 'NSInternalInconsistencyException', reason: 'NSWindow should only be instantiated
+    on the main thread!'
+
+  3  AppKit         -[NSWindow _initContent:styleMask:backing:defer:contentView:]
+  4  AppKit         -[NSWindow initWithContentRect:styleMask:backing:defer:]
+  5  libsciter      wing::internal::CreateWindowCocoa
+  6  libsciter      wing::window::create
+  7  libsciter      xwing::application::create_frame
+  8  libsciter      SciterCreateWindowImp
+  9  <example>      sciter_app::create_window
+ 10  libsystem_pthread  thread_start        <- still a worker, and nothing can change that
+```
+
+Two conclusions, and the first is what makes the second safe to act on:
+
+1. **The bootstrap does what it was built to do.** A different, later, more specific abort is the proof:
+   the singleton now exists, constructed on the right thread, before any test runs
+2. **Windowed tests cannot run under `odin test` on macOS. At all.** `NSWindow` requires the main
+   thread, the runner has no way to put a test there, and no amount of earlier initialisation moves a
+   test onto a thread it is not on. This is not a bindings bug, not an engine bug, and not an Odin bug —
+   it is an AppKit rule meeting a parallel test runner
+
+So the shape of the answer is the fallback this file listed second: **display-free tests under
+`odin test` with the bootstrap; windowed examples driven as programs.** A runner patch, as on Windows,
+is the wrong tool here — patching Odin to run tests on the main thread would be fixing an AppKit rule in
+someone else's code.
+
+**`windowless` answered second: 12 tests, all passing.** Before the bootstrap it aborted before its
+first assertion. Nothing on that path creates an `NSWindow`, so the singleton was the entire problem
+there — which makes the split real rather than theoretical:
+
+| | Under `odin test` on macOS | Covered by |
+| --- | --- | --- |
+| windowless views, images, Values, DOM over a windowless view | **run** | the bootstrap |
+| anything calling `create_window` | **skip** | running the example as a program |
+
+### What was rolled out
+
+- the bootstrap is in all 17 examples whose tests touch the engine. `archive`, `drag_and_drop` and
+  `single_binary` do not get it: their `create_window` is in `main`, their tests never reach the
+  singleton, and they were green from the first run. `single_binary` especially must not have it — it
+  would load the on-disk engine and quietly stop testing the embedded one
+- `have_display()` gained a Darwin branch in the 14 window-creating examples: true normally, **false
+  under `ODIN_TEST`**, with the reason printed. `windowless`, `script_bridge` and `sqlite_extension`
+  keep it true — they need no window, and skipping them would throw away the coverage that just came
+  back
+- the skip messages stopped claiming `DISPLAY`. 28 call sites said "no DISPLAY or WAYLAND_DISPLAY -
+  skipping…", which is false on macOS and was about to become the repository's own version of the
+  silent-skip bug `sqlite_extension`'s comment warns about. `have_display` now prints *why* and the call
+  site prints *what* it skipped, so both lines are true on every platform
+- `graphics.odin` needed `base:runtime` for the bootstrap, used only inside a `when` - so it is
+  `@(require) import`, the same trap `api_map.odin` documents for `core:unicode/utf16`
+
+Verified before pushing: `just lint`, `just check`, `just cross-check` (all three targets), and the
+Darwin-only blocks compiled *for real* by pointing their `when` at Windows in one file and running
+`odin test` — `odin check` does not enter `when ODIN_TEST`, so nothing else would have compiled them.
+`events`, `behavior` and `graphics` still pass 24, 14 and 12 tests on Windows.
+
+Still open: with the windowed tests skipping rather than aborting, the macOS suite should go green — and
+green will then mean *less* than it does on the other two platforms. That is what the "Looked at by a
+human" column in `README.md` is for, and running the windowed examples as programs is the next piece of
+work rather than something this bring-up finished.
+
+Note for applications, since the trace invites the wrong conclusion: none of this affects a real macOS
+app. `main` runs on the main thread, so `create_window` from `main` is correct by construction. Only a
+test binary has this problem.
 
 ### 2a. What passed, and what it proves
 
@@ -171,11 +232,19 @@ Four examples came back green, and they are not a random four:
 | `single_binary` | 8 | **`#load` of the 50 MB universal dylib works**, and the extracted copy loads — so the embedded engine keeps its ad-hoc signature through extraction, which §7 predicted and had no way to check |
 | `windowless_gl` | 5 | skips itself off Linux, as designed (its GL context is EGL) |
 
-One failure is not the AppKit one and should not be counted with them: **`sqlite_extension` fails
-because `target/debug/odin-sqlite.dylib` was never built** — CI runs `just example-tests` but never
-`just extension`, so this example has nothing to load. It is a gap in the job, not a macOS finding, and
-it exists on every platform where the extension is not built first. Its exit 134 is a second abort after
-the skip message, so it needs a look rather than an assumption.
+**`sqlite_extension` is two problems wearing one exit code**, and the skip message on top hides the
+second:
+
+- `target/debug/odin-sqlite.dylib` was never built — CI runs `just example-tests` but never
+  `just extension`, so `test_the_extension_loads_and_runs` skips itself with "run `just extension
+  sqlite_extension odin-sqlite` first". That is a gap in the *job*, not a macOS finding: it is true on
+  every platform, and it means the one test that exercises `SciterLibraryInit` has never run in CI
+  anywhere. Fixing it is one step (`just extension sqlite_extension odin-sqlite`) before the suite, in
+  all three jobs — deliberately not done during this bring-up, because it starts a
+  previously-skipping test on Linux and Windows too and that is a separate thing to land
+- the exit 134 comes *after* that skip, from a later test in the same file, and is the same AppKit
+  abort as everywhere else. So this example needs the bootstrap like the rest; the missing `.dylib` is
+  not what killed it
 
 ### 3. Quarantine — **MEASURED: not an issue**
 
@@ -197,21 +266,42 @@ very relevant to someone running `just example hello_window` on their own desk, 
 Prediction: **the examples run and the window may not come forward.** Nobody should read that as a
 failure, and nobody can confirm it from CI either.
 
-### 5. The null list
+### 5. The null list — **MEASURED: 16, and the prediction was wrong**
 
-Predicted: **15 nulls — the Linux list minus `SciterCreateNSView`**, which is the one slot macOS should
-be the platform to fill. `SciterProcND` stays null (Windows-only), `SciterCreateWidget` stays null
-(Linux/GTK, and gone in Sciter 6 there too), the D2D and DirectX entries stay null. That would make the
-macOS list the same *shape* as the Windows one: one slot different from Linux, a different slot.
+Predicted 15: the Linux list minus `SciterCreateNSView`, on the reasoning that macOS would be the one
+platform to fill the slot named after its own view class.
 
-Confidence: low, and deliberately so. The identical prediction for Windows was wrong in both directions.
-The prediction and its reasoning live next to `MACOS_NULLS` in `.github/scripts/check-api-map.py`, which
-**reports rather than enforces** until the first run fills it in. Whatever the job prints goes into that
-list in a follow-up commit — and only then does it become a gate.
+Measured: **16 — the Linux list, exactly.** 189 slots, ISciterAPI version 10, 0 mismatches.
+`SciterCreateNSView` is null *on macOS*, which is the finding:
 
-Secondary prediction, of the kind that was wrong last time: `dladdr` resolves every non-null slot to its
-own `…Imp` name, as on Linux. The dylib is not stripped of its exports, or `SciterAPI` itself could not
-be found.
+| | Nulls | |
+| --- | --- | --- |
+| Linux x64 | 16 | |
+| macOS arm64 | 16 | the same 16 |
+| Windows x64 | 15 | the same, minus `SciterProcND` |
+
+Every slot named after a platform — `SciterCreateNSView`, `SciterCreateWidget`, `SciterRenderD2D` and
+friends — is null **on the platform it is named for**. They are Sciter 4 API for putting a view inside a
+host widget or renderer, and Sciter 6 does not implement any of them anywhere; it creates its own
+window on every platform instead.
+
+The consequence is worth stating because the slot's existence implies the opposite: **there is no
+supported way to hand this engine an existing `NSView`.** `SciterCreateWindow` or a windowless view via
+`SciterProcX` are the two doors, on macOS as everywhere else. Anyone porting Sciter 4 code that embedded
+a view in a host hierarchy has to change approach, not just recompile.
+
+`MACOS_NULLS` in `.github/scripts/check-api-map.py` is now `list(LINUX_NULLS)`, so this is a gate rather
+than a notice.
+
+Secondary prediction — that `dladdr` resolves every non-null slot to its own `…Imp` name, as on Linux —
+**held**: 173 of 173 resolve, 0 mismatches. One is spelled differently and still passes:
+`SciterEGLGetProcAddress` resolves to the C++-mangled `_Z26SciterEGLGetProcAddressImpPKc`, which the
+check's substring rule accepts without needing a special case. On Windows that same slot is one of the
+two that has no export of its own.
+
+**Three platform-specific predictions have now been made in this repository before the machine existed,
+and all three were wrong** — twice for Windows (the D2D slots, the export count), once here. That is the
+argument for `api-map-verify` being a gate rather than a document.
 
 ### 6. No JIT entitlement is needed
 
