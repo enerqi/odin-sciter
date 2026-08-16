@@ -2464,7 +2464,18 @@ test_show_popup_at_and_placement :: proc(t: ^testing.T) {
 	testing.expect(t, above.y < below.y, "`.Top` must place it higher than `.Bottom`")
 	testing.expect_value(t, sciter_app.hide_popup(menu), nil)
 
-	for placement in ([]sciter_app.Popup_Placement{.Bottom_Left, .Bottom, .Bottom_Right, .Left, .Center, .Right, .Top_Left, .Top, .Top_Right}) {
+	placements := []sciter_app.Popup_Placement {
+		.Bottom_Left,
+		.Bottom,
+		.Bottom_Right,
+		.Left,
+		.Center,
+		.Right,
+		.Top_Left,
+		.Top,
+		.Top_Right,
+	}
+	for placement in placements {
 		testing.expect_value(t, sciter_app.show_popup(menu, anchor, placement), nil)
 		testing.expect_value(t, sciter_app.hide_popup(menu), nil)
 	}

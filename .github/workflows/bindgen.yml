@@ -33,10 +33,15 @@ permissions:
 env:
   ODIN_VERSION: dev-2026-08
   JUST_VERSION: 1.55.1
-  # Pinned deliberately: the generator's output is the artifact under test, so an unpinned generator
-  # would turn "the bindings changed" and "the generator changed" into the same red build. Bump this
-  # on purpose, and read the resulting sciter.odin diff as the generator's release notes.
-  BINDGEN_COMMIT: 12f4e7a
+  # The generator's pin is NOT here. It is `bindgen_commit` in the justfile, and the step below reads
+  # it with `just --evaluate`.
+  #
+  # It used to be a `BINDGEN_COMMIT` env var right here, which meant this workflow pinned the generator
+  # and `just bindgen` on a developer machine did not - so the two could be different programs, and the
+  # way that surfaced was this job reporting that sciter.odin had been hand-edited when it had not. One
+  # value, read by both sides; `just bindgen` now checks the local checkout against it before running.
+  # Bump it in the justfile on purpose, and read the resulting sciter.odin diff as the generator's
+  # release notes.
 
 jobs:
   regenerate:
@@ -48,8 +53,10 @@ jobs:
         with:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
-          odinfmt: 'true'
           uv: 'true'
+          # No odinfmt input any more: `just bindgen` depends on `ensure-odinfmt`, which fetches the
+          # version pinned in the justfile. That is the same binary a developer gets, which it was not
+          # while this action carried its own `ols-version` default.
 
       # `-lclang` does not resolve on Debian/Ubuntu without help: LLVM opts out of the usual shared
       # library policy so that several majors can coexist, so the undecorated libclang.so lives inside
@@ -61,6 +68,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends llvm-dev libclang-dev clang
+          BINDGEN_COMMIT="$(just --evaluate bindgen_commit)"
+          echo "pinned generator: $BINDGEN_COMMIT"
           git clone https://github.com/karl-zylinski/odin-c-bindgen.git "$RUNNER_TEMP/odin-c-bindgen"
           git -C "$RUNNER_TEMP/odin-c-bindgen" checkout "$BINDGEN_COMMIT"
           cd "$RUNNER_TEMP/odin-c-bindgen"
@@ -79,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! git diff --exit-code --stat sciter.odin; then
-            echo "::error::regenerating sciter.odin from the vendored headers produced a different file than the one committed. Either the generator moved (bump BINDGEN_COMMIT deliberately) or sciter.odin was edited by hand (it is generated - change bindgen.sjson or src/ instead)."
+            echo "::error::regenerating sciter.odin from the vendored headers produced a different file than the one committed. Either the generator moved (bump bindgen_commit in the justfile deliberately) or sciter.odin was edited by hand (it is generated - change bindgen.sjson or src/ instead)."
             git diff sciter.odin | head -200
             exit 1
           fi

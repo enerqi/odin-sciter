@@ -80,6 +80,35 @@ engine_path := "lib/" + engine_rel
 exe_ext := if os() == "windows" { ".exe" } else { "" }
 test_main_name := "test-main.exe"
 
+# The pinned formatter. odinfmt ships inside an ols release and has no `--version` flag, so nothing
+# about a binary on PATH says which one it is - and different releases disagree about the same source.
+# Measured here: ols master at 51578d51 leaves a 164-character composite literal on one line where the
+# pin below wraps it, correctly, since odinfmt.json sets `character_width: 120`. So `just format` on a
+# machine with a newer ols produced a clean local tree and four CI failures.
+#
+# **This pin used to live in `.github/actions/toolchain/action.yml` as an input default**, where only
+# CI could see it, which is exactly how the two drifted apart. It lives here now and the workflows read
+# it with `just --evaluate ols_tag`. `bindgen_commit` further down is the same lesson.
+ols_tag := "dev-2026-06"
+
+# The release ships one archive per platform and the digests are published per asset, so the pin is a
+# hash and not just a tag - the same reasoning as `engine_sha256`, and cheap insurance against a tag
+# being re-cut. macOS and Linux each have two, because unlike the engine's universal dylib these are
+# per-architecture files.
+ols_plat := if os() == "windows" { "x86_64-pc-windows-msvc" } else if os() == "macos" { if arch() == "aarch64" { "arm64-darwin" } else { "x86_64-darwin" } } else { if arch() == "aarch64" { "arm64-unknown-linux-gnu" } else { "x86_64-unknown-linux-gnu" } }
+ols_sha256 := if ols_plat == "x86_64-pc-windows-msvc" { "08785a8ae2ef5073b9d2e27abae83a7a8000cc6503711d0a92a61e2900bddf9e" } else if ols_plat == "arm64-darwin" { "931bca3776491e7809fc5054fad1c95459c25e62af5492294b84c5950c1a5e36" } else if ols_plat == "x86_64-darwin" { "2e2d3c168ae8dc56d76574a95ebd998f7764b21d5da4dc1f4a66b1e880acbc9b" } else if ols_plat == "arm64-unknown-linux-gnu" { "423c28323223d229dea3b69bc49679dbadd6e4559dc5d6b50eb10ac708f9c9eb" } else { "d0b232947a258032979321626a54c3dba54e44ebd23be255a34eb254dfc679a3" }
+
+# Where versioned tool installs live, and the resolved formatter under it. The tag is *in the path*, so
+# the existence test is the version test: there is no state where the right path holds the wrong
+# binary. Outside the repository because it is shared by every checkout and worktree, survives `just
+# clean`, and needs no gitignore line. `$ODIN_TOOLS` overrides the root.
+#
+# `USERPROFILE` before `HOME` on Windows deliberately: a Git-bash parent sets `HOME=/c/Users/you`, an
+# MSYS path, and every Windows recipe here runs under cmd.exe, which cannot use one.
+home_dir := if os() == "windows" { env_var_or_default("USERPROFILE", env_var_or_default("HOME", ".")) } else { env_var_or_default("HOME", ".") }
+odin_tools := env_var_or_default("ODIN_TOOLS", join(home_dir, ".odin-tools"))
+odinfmt_bin := join(odin_tools, "ols", ols_tag, "odinfmt" + exe_ext)
+
 # `join`, not the `/` operator: `/` always emits a forward slash, and cmd.exe rejects a forward-slash
 # path in *command* position ("'target' is not recognized") even quoted. Odin takes either in an
 # `-out:` argument, but the `rerun_*` recipes invoke the binary directly, so they need the native
@@ -140,13 +169,18 @@ collection_path := env_var_or_default("XYZ_HOME", "")
 # one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it and fails the whole run.
 #
 # The same roots are in `FORMAT_ROOTS` in justlib, which is what `format-check` reads. Change both.
+#
+# **`{{odinfmt_bin}}`, never a bare `odinfmt`.** The pin is only worth having if the pinned binary is
+# the one that runs, and a developer with ols on PATH has a different formatter sitting in front of it.
+# See `ols_tag` at the top of this file for the four-file CI failure that argument is not hypothetical
+# about.
 # ---
 # odinfmt every odin file in the project
-format:
-	odinfmt -w sciter.odin
-	odinfmt -w sciter_app
-	odinfmt -w examples
-	odinfmt -w docs/snippets
+format: ensure-odinfmt
+	{{odinfmt_bin}} -w sciter.odin
+	{{odinfmt_bin}} -w sciter_app
+	{{odinfmt_bin}} -w examples
+	{{odinfmt_bin}} -w docs/snippets
 
 # The gate for the above, and it exists now because the two things that blocked it stopped being true.
 # The note kept in CHANGELOG.md and PLAN-TESTING-AND-EXAMPLES.md was:
@@ -166,13 +200,15 @@ format:
 # ---
 # fail if anything is not odinfmt-clean, without writing to it
 [script]
-format-check:
+format-check: ensure-odinfmt
 	import subprocess, sys
 	sys.path.insert(0, ".github/scripts")
 	from justlib import format_sources, parallel
 
+	odinfmt = r"{{odinfmt_bin}}"
+
 	def unformatted(path):
-		want = subprocess.run(["odinfmt", path], capture_output=True).stdout
+		want = subprocess.run([odinfmt, path], capture_output=True).stdout
 		with open(path, "rb") as fh:
 			have = fh.read()
 		return path if want != have else None
@@ -298,6 +334,26 @@ fetch-engine *args: require-uv
 [windows]
 @ensure-engine:
 	if not exist {{engine_path}} just fetch-engine
+
+# The formatter half of the same arrangement. `--check` verifies presence, `--force` re-installs over
+# what is there, and the pin comes from `ols_*` at the top of this file so CI and a developer machine
+# read one value - see the comment there for the drift that made this necessary.
+# ---
+# download the pinned odinfmt into ~/.odin-tools, verified against its SHA-256
+fetch-odinfmt *args: require-uv
+	{{py}} .github/scripts/fetch-odinfmt.py {{ols_tag}} {{ols_plat}} {{ols_sha256}} {{args}}
+
+# A stat, not a hash: this gates every `format` and `format-check`, and the version is in the path, so
+# the file being there is the pin being satisfied. `just fetch-odinfmt --force` is the repair.
+# ---
+# make sure the pinned odinfmt is installed before formatting with it
+[unix]
+@ensure-odinfmt:
+	test -f "{{odinfmt_bin}}" || just fetch-odinfmt
+
+[windows]
+@ensure-odinfmt:
+	if not exist "{{odinfmt_bin}}" just fetch-odinfmt
 
 # Every `run_*`, `test*` and `diagnose` recipe depends on this, so it runs before every build - which
 # makes its cost a tax on every iteration, and worth keeping small. odin does not create the output
@@ -654,7 +710,26 @@ ols-config:
 # ---------------------------------------------------------------------------------------------------
 
 # Path to a built odin-c-bindgen. Override with `just bindgen_bin=/path/to/bindgen.bin bindgen`.
-bindgen_bin := env_var_or_default("ODIN_C_BINDGEN", join(justfile_directory(), "..", "odin-c-bindgen", "bindgen.bin"))
+#
+# Two names, because the generator's own build does not agree with CI's. `bindgen.yml` builds it with
+# `-out:bindgen.bin`, which is what this used to assume unconditionally - but odin-c-bindgen's README
+# builds `bindgen.exe` on Windows, so a developer who followed upstream's instructions had a working
+# generator that this file could not see, and got "not found" pointing at a path they had no reason to
+# create. `bindgen.bin` first, since that is what CI produces and what the message below tells you to
+# build; `bindgen{{exe_ext}}` second, since that is what you get by following upstream.
+bindgen_dir := join(justfile_directory(), "..", "odin-c-bindgen")
+bindgen_bin := env_var_or_default("ODIN_C_BINDGEN", if path_exists(join(bindgen_dir, "bindgen.bin")) == "true" { join(bindgen_dir, "bindgen.bin") } else { join(bindgen_dir, "bindgen" + exe_ext) })
+
+# The generator's pinned commit. `bindgen.yml` regenerates with exactly this and asserts the result is
+# byte-identical to the committed `sciter.odin`, which is what lets that file be treated as an artifact
+# that happens to be tracked.
+#
+# **It used to live only in `bindgen.yml`**, so `just bindgen` here ran whatever the sibling checkout
+# was at and the two could silently be different programs - the failure mode being a CI error saying
+# `sciter.odin` had been hand-edited when it had not. Same shape as the odinfmt pin above, same fix:
+# one value, read by both. odin-c-bindgen publishes no releases, so this is a commit rather than a tag
+# and `require-bindgen-pin` can only verify it, not install it.
+bindgen_commit := "12f4e7a"
 
 # Regenerate sciter.odin from the vendored headers. Four steps, each explained in the file it runs:
 #   1. src/flatten_headers.py  - concatenate the C ABI headers into one self-contained build/sciter.h,
@@ -674,13 +749,21 @@ bindgen_bin := env_var_or_default("ODIN_C_BINDGEN", join(justfile_directory(), "
 # quietly "changes" a file nobody edited.
 # ---
 # regenerate the bindings from external/sciter/include
-bindgen:
+bindgen: require-bindgen-pin ensure-odinfmt
 	{{py}} src/flatten_headers.py
 	{{bindgen_bin}} .
 	{{py}} src/postprocess_bindings.py sciter.odin
 	odin check . -no-entry-point
-	odinfmt -w sciter.odin
+	{{odinfmt_bin}} -w sciter.odin
 	odin check . -no-entry-point
+
+# Both halves of "regenerating here produces what CI asserts" are version pins, and this checks the one
+# that cannot be fetched. `BINDGEN_PIN_SKIP=1` opts out; a generator whose commit cannot be read warns
+# rather than failing, because `$ODIN_C_BINDGEN` may legitimately point outside a git checkout.
+# ---
+# fail if the local odin-c-bindgen is not at the commit bindgen.yml verifies against
+@require-bindgen-pin: require-uv
+	{{py}} .github/scripts/check-bindgen-pin.py "{{bindgen_bin}}" {{bindgen_commit}}
 
 # **`check` type checks and does not build.** It used to build and link all 28 examples, which is what
 # `build-examples` below does now. The split is because the name was a lie and the reasons given for it

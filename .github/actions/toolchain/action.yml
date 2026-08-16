@@ -10,7 +10,7 @@
 # `odin-linux-amd64-nightly+2026-08-06/`), while just's has its binary at the root. `unpack_into`
 # below handles both by looking at what came out rather than assuming.
 name: toolchain
-description: Install Odin, just, and optionally odinfmt and uv - pinned, cached, no marketplace actions.
+description: Install Odin, just and uv - pinned, cached, no marketplace actions. odinfmt comes from `just fetch-odinfmt`.
 
 inputs:
   odin-version:
@@ -21,14 +21,11 @@ inputs:
     description: just release version, e.g. 1.55.1
     required: false
     default: 1.55.1
-  ols-version:
-    description: ols release tag - odinfmt ships inside it
-    required: false
-    default: dev-2026-06
-  odinfmt:
-    description: also install odinfmt (only `just bindgen` needs it)
-    required: false
-    default: 'false'
+  # No odinfmt here. It used to be an `odinfmt` boolean plus an `ols-version` default of `dev-2026-06`,
+  # and that default was the only place the formatter version was written down - so CI formatted with
+  # one odinfmt and developers with whatever ols they had built, which diverged and failed four files.
+  # The pin is `ols_tag` in the justfile now, and `just format` / `format-check` / `bindgen` fetch it
+  # through `ensure-odinfmt`. Nothing here installs it, so nothing here can disagree with it.
   uv:
     description: install uv - every `[script]` recipe runs Python through it, so this is on by default
     required: false
@@ -43,17 +40,16 @@ runs:
       run: |
         set -euo pipefail
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
-          Linux-X64)   odin=odin-linux-amd64  ; odin_ext=tar.gz ; just=x86_64-unknown-linux-musl ; ols=x86_64-unknown-linux-gnu ;;
-          macOS-ARM64) odin=odin-macos-arm64  ; odin_ext=tar.gz ; just=aarch64-apple-darwin     ; ols=arm64-darwin ;;
-          macOS-X64)   odin=odin-macos-amd64  ; odin_ext=tar.gz ; just=x86_64-apple-darwin      ; ols=x86_64-darwin ;;
-          Windows-X64) odin=odin-windows-amd64; odin_ext=zip    ; just=x86_64-pc-windows-msvc   ; ols=x86_64-pc-windows-msvc ;;
+          Linux-X64)   odin=odin-linux-amd64  ; odin_ext=tar.gz ; just=x86_64-unknown-linux-musl ;;
+          macOS-ARM64) odin=odin-macos-arm64  ; odin_ext=tar.gz ; just=aarch64-apple-darwin     ;;
+          macOS-X64)   odin=odin-macos-amd64  ; odin_ext=tar.gz ; just=x86_64-apple-darwin      ;;
+          Windows-X64) odin=odin-windows-amd64; odin_ext=zip    ; just=x86_64-pc-windows-msvc   ;;
           *) echo "::error::unsupported runner ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
         esac
         {
           echo "odin=$odin"
           echo "odin_ext=$odin_ext"
           echo "just=$just"
-          echo "ols=$ols"
           echo "tools=$HOME/.odin-sciter-tools"
         } >> "$GITHUB_OUTPUT"
 
@@ -62,7 +58,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.odin-sciter-tools
-        key: tools-${{ runner.os }}-${{ runner.arch }}-odin${{ inputs.odin-version }}-just${{ inputs.just-version }}-ols${{ inputs.ols-version }}-fmt${{ inputs.odinfmt }}
+        key: tools-${{ runner.os }}-${{ runner.arch }}-odin${{ inputs.odin-version }}-just${{ inputs.just-version }}
 
     - name: Download and unpack
       if: steps.cache.outputs.cache-hit != 'true'
@@ -107,24 +103,8 @@ runs:
         unpack_into "$just_asset" "$TOOLS/just"
         chmod +x "$TOOLS/just/just" 2>/dev/null || true
 
-        if [ '${{ inputs.odinfmt }}' = 'true' ]; then
-          ols_asset='ols-${{ steps.plat.outputs.ols }}.zip'
-          curl -fsSL -o "$ols_asset" \
-            "https://github.com/DanielGavin/ols/releases/download/${{ inputs.ols-version }}/$ols_asset"
-          unpack_into "$ols_asset" "$TOOLS/ols"
-          # The release ships platform-suffixed names (`odinfmt-x86_64-unknown-linux-gnu`); `just
-          # bindgen` calls plain `odinfmt`. Skip a file that is already correctly named, or the copy
-          # is source-and-destination-identical and fails the step.
-          for f in "$TOOLS/ols"/odinfmt*; do
-            [ -e "$f" ] || continue
-            base="$(basename "$f")"
-            case "$base" in
-              odinfmt | odinfmt.exe) continue ;;
-              *.exe) cp "$f" "$TOOLS/ols/odinfmt.exe" ;;
-              *)     cp "$f" "$TOOLS/ols/odinfmt" ; chmod +x "$TOOLS/ols/odinfmt" ;;
-            esac
-          done
-        fi
+        # odinfmt is deliberately absent - `just fetch-odinfmt` installs the version the justfile pins,
+        # into ~/.odin-tools/ols/<tag>/. See the note beside the inputs above.
 
     # **Every path written to GITHUB_PATH has to be native, and this step runs in bash.** On a Windows
     # runner `$HOME` in Git bash is the MSYS spelling - `/c/Users/runneradmin` - so a bare
@@ -150,7 +130,6 @@ runs:
         }
         add_path "$TOOLS/odin"
         add_path "$TOOLS/just"
-        if [ '${{ inputs.odinfmt }}' = 'true' ]; then add_path "$TOOLS/ols"; fi
 
     # uv is what `set script-interpreter` in the justfile runs, so every `[script]` recipe - `check`,
     # `lint`, `cross-check`, `example-tests` and the rest - needs it. It used to be opt-in for `bindgen`
@@ -189,7 +168,6 @@ runs:
         set -euo pipefail
         odin version
         just --version
-        if [ '${{ inputs.odinfmt }}' = 'true' ]; then command -v odinfmt; fi
         if [ '${{ inputs.uv }}' = 'true' ]; then uv --version; fi
 
     # **The step above proves nothing about the Windows jobs, and that is why this one exists.** It runs

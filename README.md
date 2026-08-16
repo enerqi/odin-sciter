@@ -375,7 +375,10 @@ Tasks run with [just](https://just.systems/).
 - `just check` — type check both packages, the guides' snippets and every example
 - `just build-examples` — build and link every example; the coverage `odin check` cannot give you
 - `just bindgen` — regenerate `sciter.odin` from `external/sciter/include`
-- `just format` — `odinfmt -w .`
+- `just format` — odinfmt over the four source roots. The formatter is *pinned* (`ols_tag` in the
+  justfile) and fetched into `~/.odin-tools` by `just fetch-odinfmt`, because odinfmt versions disagree
+  about the same source and CI's verdict is the one that counts. A different odinfmt on your `PATH` is
+  not used.
 
 The root package is a library with no `main`, so the usual build-profile recipes are pointed at
 examples instead. Each takes an example name:

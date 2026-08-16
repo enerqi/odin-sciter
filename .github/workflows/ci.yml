@@ -51,9 +51,6 @@ jobs:
         with:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
-          # for `just format-check`. Only this job formats; the other two would be checking the same
-          # bytes on the same commit.
-          odinfmt: 'true'
 
       # The engine's identity, established rather than assumed. No engine is committed any more, so this
       # downloads it and verifies the download against the SHA-256 in `external/sciter/VENDORED.md` -

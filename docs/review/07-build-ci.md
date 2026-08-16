@@ -162,6 +162,15 @@ poll upstream weekly, open an issue on a new tag — and the generator has none.
 default branch head and mentions the gap in the same weekly issue. Ten lines, and it reuses machinery
 that already exists.
 
+**Done, and the pin moved while doing it.** The `bindgen-pin` job in `canary.yml` is the drift check.
+`BINDGEN_COMMIT` itself no longer exists: it was declared in `bindgen.yml` *and* `canary.yml` and
+nowhere a developer could see, so `just bindgen` locally used whatever the sibling checkout happened to
+be at while CI asserted byte-identical output against `12f4e7a`. It is `bindgen_commit` in the justfile
+now, read by both workflows, and `just bindgen` verifies the local checkout against it — plus that the
+binary is not older than the commit, and that the host is Linux, since regenerating on Windows emits a
+`sciter.odin` that does not compile. The same one-place-for-the-pin fix landed for odinfmt (`ols_tag`),
+whose version had lived only in `.github/actions/toolchain/action.yml` and had already drifted.
+
 ### R7-07 — `spike/` and `docs/snippets/` are built by CI but are not part of the deliverable  [severity: minor]
 
 **Where:** `justfile:120` (`odinfmt -w spike`), `justfile:512` (`odin check docs/snippets`), `spike/`

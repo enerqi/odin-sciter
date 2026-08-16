@@ -36,7 +36,8 @@ permissions:
 env:
   ODIN_VERSION: dev-2026-08
   JUST_VERSION: 1.55.1
-  BINDGEN_COMMIT: 12f4e7a
+  # `BINDGEN_COMMIT` used to be here too, a third copy alongside bindgen.yml's and nothing on a
+  # developer machine. It is `bindgen_commit` in the justfile now and read from there below.
   SDK_REPO: https://gitlab.com/sciter-engine/sciter-js-sdk.git
 
 jobs:
@@ -84,7 +85,6 @@ jobs:
         with:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
-          odinfmt: 'true'
           uv: 'true'
 
       - name: Install dependencies and build odin-c-bindgen
@@ -94,6 +94,7 @@ jobs:
           .github/scripts/install-linux-deps.sh
           # libclang on top, for odin-c-bindgen only - see docs/BINDGEN-LIBCLANG.md.
           sudo apt-get install -y --no-install-recommends llvm-dev libclang-dev clang
+          BINDGEN_COMMIT="$(just --evaluate bindgen_commit)"
           git clone https://github.com/karl-zylinski/odin-c-bindgen.git "$RUNNER_TEMP/odin-c-bindgen"
           git -C "$RUNNER_TEMP/odin-c-bindgen" checkout "$BINDGEN_COMMIT"
           cd "$RUNNER_TEMP/odin-c-bindgen"
@@ -253,7 +254,7 @@ jobs:
           echo "::error::the new engine did not pass cleanly - see the job summary and the tracking issue"
           exit 1
 
-  # The generator is pinned to a commit (`BINDGEN_COMMIT`, in this file and in bindgen.yml) and nothing
+  # The generator is pinned to a commit (`bindgen_commit` in the justfile) and nothing
   # otherwise says when that pin has gone stale. `sciter.odin` is ~2800 lines of generated code whose
   # quality is entirely a function of that tool, so six months of upstream fixes is worth hearing about
   # - and this is the same "poll weekly, open one issue" machinery the engine probe above already uses.
@@ -270,7 +271,9 @@ jobs:
         id: pin
         run: |
           set -euo pipefail
-          pinned="$BINDGEN_COMMIT"
+          # Read straight out of the justfile rather than installing just for a two-line job.
+          pinned=$(sed -n 's/^bindgen_commit := "\(.*\)"$/\1/p' justfile)
+          [ -n "$pinned" ] || { echo "::error::no bindgen_commit in the justfile"; exit 1; }
           head=$(git ls-remote https://github.com/karl-zylinski/odin-c-bindgen HEAD | cut -f1)
           short_head=${head:0:7}
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
@@ -292,12 +295,12 @@ jobs:
           title="canary: odin-c-bindgen has moved past ${{ steps.pin.outputs.pinned }}"
           existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
             --jq ".[] | select(.title == \"$title\") | .number" | head -1)
-          body="\`BINDGEN_COMMIT\` is \`${{ steps.pin.outputs.pinned }}\`; upstream HEAD is \`${{ steps.pin.outputs.head }}\`.
+          body="\`bindgen_commit\` is \`${{ steps.pin.outputs.pinned }}\`; upstream HEAD is \`${{ steps.pin.outputs.head }}\`.
 
           Nothing is broken by this - the pin is what makes \`bindgen.yml\`'s byte-identical check
-          meaningful. It is worth a look when convenient: bump the pin in \`.github/workflows/bindgen.yml\`
-          and \`.github/workflows/canary.yml\`, run \`just bindgen\`, and read the \`sciter.odin\` diffstat
-          before committing."
+          meaningful. It is worth a look when convenient: bump \`bindgen_commit\` in the \`justfile\`
+          (the one place it lives), check the local odin-c-bindgen out at the new commit and rebuild it,
+          run \`just bindgen\`, and read the \`sciter.odin\` diffstat before committing."
           if [ -z "$existing" ]; then
             gh issue create --title "$title" --body "$body"
           fi

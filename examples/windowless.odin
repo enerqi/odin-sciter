@@ -856,7 +856,15 @@ test_a_view_renders_into_a_sub_rectangle_of_a_larger_image :: proc(t: ^testing.T
 	testing.expect_value(t, ig, 0xff)
 	testing.expect_value(t, ib, 0x00)
 
-	for point in ([][2]int{{0, 0}, {AT_X - 1, AT_Y + 10}, {AT_X + VIEW_W, AT_Y + 10}, {AT_X + 10, AT_Y - 1}, {AT_X + 10, AT_Y + VIEW_H}, {IMAGE_W - 1, IMAGE_H - 1}}) {
+	outside := [][2]int {
+		{0, 0},
+		{AT_X - 1, AT_Y + 10},
+		{AT_X + VIEW_W, AT_Y + 10},
+		{AT_X + 10, AT_Y - 1},
+		{AT_X + 10, AT_Y + VIEW_H},
+		{IMAGE_W - 1, IMAGE_H - 1},
+	}
+	for point in outside {
 		r, g, b := pixel(image, point.x, point.y)
 		testing.expectf(
 			t,

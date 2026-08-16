@@ -684,7 +684,14 @@ test_which_options_this_engine_takes_and_which_it_refuses :: proc(t: ^testing.T)
 	)
 
 	// The genuinely process-wide ones, all accepted with no window.
-	for option in ([]sciter.Sciter_Rt_Options{.SET_SCRIPT_RUNTIME_FEATURES, .SET_DEBUG_MODE, .SET_UX_THEMING, .SET_MAX_HTTP_DATA_LENGTH, .USE_INTERNAL_HTTP_CLIENT}) {
+	process_wide := []sciter.Sciter_Rt_Options {
+		.SET_SCRIPT_RUNTIME_FEATURES,
+		.SET_DEBUG_MODE,
+		.SET_UX_THEMING,
+		.SET_MAX_HTTP_DATA_LENGTH,
+		.USE_INTERNAL_HTTP_CLIENT,
+	}
+	for option in process_wide {
 		testing.expectf(t, sciter_app.set_option(option, 1) == nil, "%v should be accepted", option)
 	}
 

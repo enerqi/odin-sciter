@@ -191,6 +191,17 @@ The formatting pass belongs to generation, not to `just format`: bindgen's line 
 odinfmt's, so leaving it out means every regeneration carries a few thousand lines of formatting noise
 alongside the API change that actually matters.
 
+**Regenerate on Linux.** bindgen resolves the headers' `#if` blocks through libclang for the machine it
+runs on, so a Windows host takes the Win32 branch and emits a `sciter.odin` referring to `Hwnd`,
+`Wparam`, `Lparam` and `Lresult` — types the generated file never declares, so it does not compile.
+`bindgen.yml` regenerates on ubuntu-24.04 and asserts the result is byte-identical to the committed
+file, which makes Linux the only host that reproduces it. `just bindgen` refuses elsewhere rather than
+overwriting `sciter.odin` on its way to finding out. Two other things it checks first: that the local
+odin-c-bindgen is at `bindgen_commit` from the justfile — the same value CI reads, so both sides run
+one generator — and that the binary beside it is not older than that commit, which is the "checked out,
+forgot to rebuild" case. At the pinned commit the sources are under `src/`, so it is
+`odin build src -out:bindgen.bin`; upstream's README describes a later layout.
+
 **The flatten step exists because odin-c-bindgen only emits declarations physically located in the
 input file.** Feeding it `sciter-x-api.h` alone yields `ISciterAPI` and none of the types it refers
 to; feeding it all ten headers yields ten `.odin` files that re-emit inline copies of each other's

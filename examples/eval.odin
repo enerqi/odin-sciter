@@ -365,10 +365,18 @@ test_value_wrong_type_is_an_error :: proc(t: ^testing.T) {
 	sciter_app.value_clear(&one)
 	defer sciter_app.value_clear(&map_value)
 
-	for entry in ([?]struct {
-			name:  string,
-			value: ^sciter_app.Value,
-		}{{"undefined", &undefined}, {"float", &f}, {"bool", &b}, {"array", &array}, {"map", &map_value}, {"bytes", &bytes}}) {
+	incompatible := [?]struct {
+		name:  string,
+		value: ^sciter_app.Value,
+	} {
+		{"undefined", &undefined},
+		{"float", &f},
+		{"bool", &b},
+		{"array", &array},
+		{"map", &map_value},
+		{"bytes", &bytes},
+	}
+	for entry in incompatible {
 		s, e := sciter_app.value_to_string(entry.value, context.temp_allocator)
 		testing.expectf(
 			t,
