@@ -35,6 +35,24 @@ repository's packaging detail and do not change the engine's API version.
 The Odin ecosystem has no package manager to satisfy, so the tag is for humans and for
 `git checkout`. No `latest` tag, no moving tags.
 
+**There is a second tag namespace, and it says nothing about the source.** `engine-<upstream tag>`
+exists only to hold the mirrored engine binaries as release assets, because GitHub cannot publish an
+asset without a tag. It points at whatever commit `master` was on when it was created, it blesses no
+state of this repository, and a checkout of it is not a release of anything. `vX.Y.Z.W` is the only
+tag that means "these bindings, released".
+
+### Which engine each release speaks to
+
+The mapping is many-to-one and stays that way: the source can be tagged repeatedly against one engine
+(that is what the `-N` suffix is for), while the mirror release is published once per *pin*. A tag
+still answers "which engine" on its own — the table is the record of what exists, not a decoder ring.
+
+| Bindings tag | Engine | Mirror release |
+| --- | --- | --- |
+| *none yet — the bindings are unreleased* | `6.0.4.9-bis`, engine 6.0.4.9, API 10 | [`engine-6.0.4.9-bis`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.4.9-bis) |
+
+Add a row when a bindings tag is cut; add a *mirror* row only when the pin moves, per step 8 below.
+
 ## The engine: decided - fetch, on every platform, and history was rewritten to match
 
 **Done, 2026-08-15.** No engine is committed to this repository. All three are gitignored, pinned by

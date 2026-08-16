@@ -28,6 +28,11 @@ below is what the fetch verifies against.
 | Commit | `561185714dcd7f18f0db57b494d083437da8123f` (2026-08-02) |
 | Engine version | 6.0.4.9 (as reported by `SciterVersion(0..3)`) |
 | `SCITER_API_VERSION` | 10 |
+| Mirror release | [`engine-6.0.4.9-bis`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.4.9-bis) - these three binaries, republished here so upstream cannot take them away |
+
+Which bindings tags speak to which engine is a separate table, in
+[`docs/UPGRADING.md`](../../docs/UPGRADING.md#which-engine-each-release-speaks-to) - several of the
+former can share one of the latter.
 
 Verified against the shipped library rather than assumed - `just example api_map` walks all 189
 `ISciterAPI` slots and resolves each function pointer back to its symbol name.
