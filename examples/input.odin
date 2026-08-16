@@ -396,16 +396,12 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 // Input needs a laid-out document to aim at, so unlike the other examples' helpers this one shows the
 // window and lets a few frames happen before handing it over.
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -419,27 +415,34 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_a
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
 
-	if g_window == nil {
+	if g_view.window == nil {
 		// The engine keeps the argv and the window for the life of the process; allocating them outside
 		// the test runner's tracking allocator keeps them from being reported as leaks.
 		context.allocator = runtime.default_allocator()
 
-		sciter_app.init()
 
-		w, err := sciter_app.create_window({width = 500, height = 460})
+		v, err := sciter_app.create_windowless({width = 500, height = 460})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, nil, false
 		}
-		g_window = w
-		sciter_app.show(w)
+		g_view = v
+		// No `show`: a windowless view has no window to put on screen.
 	}
 
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
+	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
 	pump(20)
-	r, rerr := sciter_app.root(g_window)
+	r, rerr := sciter_app.root(g_view.window)
 	testing.expect_value(t, rerr, nil)
-	return g_window, r, true
+	return g_view.window, r, true
 }
 
 @(test)
@@ -737,16 +740,16 @@ test_call_function_finds_what_call_method_cannot :: proc(t: ^testing.T) {
 
 @(test)
 test_combine_url_resolves_against_the_document :: proc(t: ^testing.T) {
-	window, ok := g_window, true
+	window, ok := g_view.window, true
 	_, root, ok2 := test_window(t)
 	if !ok2 {return}
 	_, _ = window, ok
 
 	// A base is needed for a relative reference to resolve to anything, and `load_html` above was
 	// given none - so this test loads its own document with one.
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC, "file:///base/dir/"), nil)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "file:///base/dir/"), nil)
 	pump(10)
-	root, _ = sciter_app.root(g_window)
+	root, _ = sciter_app.root(g_view.window)
 	el, _ := sciter_app.select_first(root, "#scroller")
 
 	// **`file:` URLs come back with two slashes on Windows and three on Linux**, and the engine is

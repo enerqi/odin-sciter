@@ -378,16 +378,12 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 // A fresh App per test, with the document loaded under it. The App is deliberately *not* freed: the
 // engine holds its address as the callback parameter for the life of the window.
 @(private = "file")
 test_app :: proc(t: ^testing.T, doc := DOC) -> (app: ^App, root: sciter_app.Element, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -403,23 +399,22 @@ test_app :: proc(t: ^testing.T, doc := DOC) -> (app: ^App, root: sciter_app.Elem
 
 	context.allocator = runtime.default_allocator()
 
-	if g_window == nil {
-		sciter_app.init()
-		w, err := sciter_app.create_window({width = 500, height = 400})
+	if g_view.window == nil {
+		v, err := sciter_app.create_windowless({width = 500, height = 400})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, nil, false
 		}
-		g_window = w
+		g_view = v
 	}
 
 	app = new(App)
 	app.allocator = context.allocator
 	app.on_attach_behavior = on_attach_behavior
-	sciter_app.set_host_handler(g_window, app)
+	sciter_app.set_host_handler(g_view.window, app)
 
-	testing.expect_value(t, sciter_app.load_html(g_window, doc), nil)
-	r, rerr := sciter_app.root(g_window)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, doc), nil)
+	r, rerr := sciter_app.root(g_view.window)
 	testing.expect_value(t, rerr, nil)
 	return app, r, true
 }
@@ -562,7 +557,7 @@ test_replacing_the_document_detaches_everything :: proc(t: ^testing.T) {
 	testing.expect_value(t, app.live, 5)
 
 	// A second document with no behaviors at all, so nothing new attaches to confuse the count.
-	testing.expect_value(t, sciter_app.load_html(g_window, `<html><body><p>nothing here</p></body></html>`), nil)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, `<html><body><p>nothing here</p></body></html>`), nil)
 	sciter_app.heartbeat()
 
 	testing.expect_value(t, app.live, 0)

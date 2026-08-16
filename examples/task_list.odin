@@ -29,6 +29,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // ---------------------------------------------------------------------------------------------------
 // The document
@@ -805,37 +806,41 @@ engine_loaded :: proc(t: ^testing.T) -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, false
-	}
 	engine_loaded(t)
 
-	if g_window == nil {
+	if g_view.window == nil {
 		// The engine keeps the argv and the window for the life of the process; allocating them outside
 		// the test runner's tracking allocator keeps them from being reported as leaks.
 		context.allocator = runtime.default_allocator()
 
-		sciter_app.init()
 
-		w, err := sciter_app.create_window({width = 480, height = 520})
+		v, err := sciter_app.create_windowless({width = 480, height = 520})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, false
 		}
-		g_window = w
-		sciter_app.show(w)
+		g_view = v
+		// No `show`: a windowless view has no window to put on screen, and these tests read the
+		// document rather than look at it.
 	}
 
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
+	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
 	for _ in 0 ..< 20 {
 		sciter_app.run_once()
 	}
-	return g_window, true
+	return g_view.window, true
 }
 
 @(test)

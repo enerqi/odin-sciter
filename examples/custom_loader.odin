@@ -26,6 +26,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // The whole UI, compiled in. The base URL passed to `load_html` is what makes the relative references
 // below resolve to `res://app/...`, which is what the engine then asks the host for.
@@ -277,14 +278,10 @@ g_loader: Loader
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 @(private = "file")
 test_loader :: proc(t: ^testing.T, policy := Miss_Policy.Pass_Through) -> (ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -299,18 +296,17 @@ test_loader :: proc(t: ^testing.T, policy := Miss_Policy.Pass_Through) -> (ok: b
 	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
-	if g_window == nil {
-		sciter_app.init()
-		w, err := sciter_app.create_window({width = 400, height = 300})
+	if g_view.window == nil {
+		v, err := sciter_app.create_windowless({width = 400, height = 300})
 		testing.expect_value(t, err, nil)
-		if w == nil {return false}
-		g_window = w
+		if v.window == nil {return false}
+		g_view = v
 
 		g_loader.handler = sciter_app.Host_Handler {
 			on_load_data = test_load_data,
 			user_data    = &g_loader,
 		}
-		sciter_app.set_host_handler(g_window, &g_loader.handler)
+		sciter_app.set_host_handler(g_view.window, &g_loader.handler)
 	}
 
 	for uri in g_loader.seen {delete(uri)}
@@ -319,14 +315,22 @@ test_loader :: proc(t: ^testing.T, policy := Miss_Policy.Pass_Through) -> (ok: b
 	g_loader.served = 0
 	g_loader.missed = 0
 	g_loader.policy = policy
-	g_loader.window = g_window
+	g_loader.window = g_view.window
 	g_loader.push_result = nil
 	delete(g_loader.delayed_uri)
 	g_loader.delayed_uri = ""
 	g_loader.delayed_id = nil
 
 	// Before the load, always: the document's own resources go through this callback.
-	testing.expect_value(t, sciter_app.load_html(g_window, TEST_DOC, BASE_URL), nil)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, TEST_DOC, BASE_URL), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured reads zeroes
+	// without this. Eight beats is what `examples/windowless.odin` settles in, and the paint is
+	// what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
 	return true
 }
 
@@ -389,7 +393,7 @@ requested :: proc(uri: string) -> bool {
 
 @(private = "file")
 element_style :: proc(selector: string, property: string) -> string {
-	root, _ := sciter_app.root(g_window)
+	root, _ := sciter_app.root(g_view.window)
 	el, err := sciter_app.select_first(root, selector)
 	if err != nil {return ""}
 	s, _ := sciter_app.style(el, property, context.temp_allocator)
@@ -416,7 +420,7 @@ test_an_image_served_from_memory_is_decoded_and_laid_out :: proc(t: ^testing.T) 
 
 	testing.expect(t, requested(BASE_URL + "logo.svg"))
 
-	root, _ := sciter_app.root(g_window)
+	root, _ := sciter_app.root(g_view.window)
 	logo, err := sciter_app.select_first(root, "#logo")
 	testing.expect_value(t, err, nil)
 
@@ -480,7 +484,7 @@ test_discarding_a_resource_sends_the_engine_looking_for_its_placeholder :: proc(
 	testing.expect(t, requested("sciter:no-image.png"), "and refusing it sent the engine to its placeholder")
 
 	// The element is still laid out - at the placeholder's size, not at nothing.
-	root, _ := sciter_app.root(g_window)
+	root, _ := sciter_app.root(g_view.window)
 	gone, _ := sciter_app.select_first(root, "#gone")
 	box, err := sciter_app.location(gone, .Border, .View)
 	testing.expect_value(t, err, nil)
@@ -573,14 +577,14 @@ test_the_copying_push_fails_outside_a_load_callback :: proc(t: ^testing.T) {
 	// A URL nothing has asked for.
 	testing.expect_value(
 		t,
-		sciter_app.data_ready(g_window, BASE_URL + "never-requested.css", transmute([]u8)string(STYLE)),
+		sciter_app.data_ready(g_view.window, BASE_URL + "never-requested.css", transmute([]u8)string(STYLE)),
 		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
 	)
 
 	// And one the document really did ask for, moments ago.
 	testing.expect_value(
 		t,
-		sciter_app.data_ready(g_window, BASE_URL + "style.css", transmute([]u8)string(STYLE)),
+		sciter_app.data_ready(g_view.window, BASE_URL + "style.css", transmute([]u8)string(STYLE)),
 		sciter_app.Error(sciter_app.Api_Error.Load_Failed),
 	)
 }
@@ -620,7 +624,12 @@ test_a_delayed_request_is_answered_after_the_fact_with_data_ready_async :: proc(
 
 	testing.expect_value(
 		t,
-		sciter_app.data_ready_async(g_window, g_loader.delayed_uri, transmute([]u8)string(STYLE), g_loader.delayed_id),
+		sciter_app.data_ready_async(
+			g_view.window,
+			g_loader.delayed_uri,
+			transmute([]u8)string(STYLE),
+			g_loader.delayed_id,
+		),
 		nil,
 	)
 	sciter_app.heartbeat()

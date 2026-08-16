@@ -59,6 +59,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:testing"
+import "core:time"
 
 // Every panel is a `<div class="cell">` whose `data-demo` picks the painter. The behavior name is what
 // wires them to Odin - see `named_behavior.odin` for that mechanism on its own.
@@ -2007,7 +2008,7 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 TEXT_DOC :: `<html><head><style>
   body { font: 16px system; color: #cdd6f4; }
@@ -2016,10 +2017,6 @@ TEXT_DOC :: `<html><head><style>
 
 @(private = "file")
 styled_element :: proc(t: ^testing.T) -> (element: sciter_app.Element, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -2036,18 +2033,25 @@ styled_element :: proc(t: ^testing.T) -> (element: sciter_app.Element, ok: bool)
 	// Anything the engine keeps has to outlive the test runner's per-test arena.
 	context.allocator = runtime.default_allocator()
 
-	if g_window == nil {
-		sciter_app.init()
-		w, err := sciter_app.create_window({width = 400, height = 300})
+	if g_view.window == nil {
+		v, err := sciter_app.create_windowless({width = 400, height = 300})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, false
 		}
-		g_window = w
+		g_view = v
 	}
 
-	testing.expect_value(t, sciter_app.load_html(g_window, TEXT_DOC), nil)
-	root, rerr := sciter_app.root(g_window)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, TEXT_DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
+	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
+	root, rerr := sciter_app.root(g_view.window)
 	testing.expect_value(t, rerr, nil)
 	el, eerr := sciter_app.select_first(root, "#p")
 	testing.expect_value(t, eerr, nil)

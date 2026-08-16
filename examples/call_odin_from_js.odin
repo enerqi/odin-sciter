@@ -407,7 +407,7 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 @(private = "file")
 g_app: App
 @(private = "file")
@@ -418,10 +418,6 @@ g_asset: ^sciter_app.Asset
 // engine outlives every one of them.
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -436,8 +432,7 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	sciter_app.set_default_debug_output()
 	context.allocator = runtime.default_allocator()
 
-	if g_window == nil {
-		sciter_app.init()
+	if g_view.window == nil {
 
 		g_app = App {
 			started  = time.now(),
@@ -458,12 +453,12 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 		}
 		g_asset = sciter_app.make_asset(class, &g_app)
 
-		w, werr := sciter_app.create_window({width = 400, height = 300})
+		v, werr := sciter_app.create_windowless({width = 400, height = 300})
 		testing.expect_value(t, werr, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, false
 		}
-		g_window = w
+		g_view = v
 
 		// Before the first load. This is the ordering rule, and it is tested from the other side by
 		// `test_a_global_asset_outlives_a_reload_where_a_functor_does_not`.
@@ -471,8 +466,16 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	}
 
 	g_app.calls = 0
-	testing.expect_value(t, sciter_app.load_html(g_window, TEST_DOC), nil)
-	return g_window, true
+	testing.expect_value(t, sciter_app.load_html(g_view.window, TEST_DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
+	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
+	return g_view.window, true
 }
 
 // A document with no script of its own: everything reachable in these tests was put there from Odin.

@@ -24,6 +24,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:testing"
+import "core:time"
 
 DOC :: `<html>
 <head><style>
@@ -361,14 +362,46 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
+
+// The one test here that needs a **real** window rather than a document, kept separate so the other
+// thirteen do not pay for it. `test_window_metrics` reads `ppi`, `min_width` and `min_height`, all of
+// which are questions about a window; measured on a windowless view the content/root relationship it
+// asserts does not hold. So this is the only test in the file that still skips on macOS, and the skip
+// is now a statement about that test rather than about the whole file.
+@(private = "file")
+g_real_window: sciter_app.Window
+
+@(private = "file")
+test_real_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
+	if !have_display() {
+		fmt.println("skipping - this test needs a real window, not a windowless view")
+		return nil, nil, false
+	}
+	if !sciter_app.load_engine() {
+		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
+	}
+	sciter_app.set_default_debug_output()
+
+	if g_real_window == nil {
+		context.allocator = runtime.default_allocator()
+		sciter_app.init()
+		w, err := sciter_app.create_window({width = 500, height = 400})
+		testing.expect_value(t, err, nil)
+		if w == nil {
+			return nil, nil, false
+		}
+		g_real_window = w
+	}
+
+	testing.expect_value(t, sciter_app.load_html(g_real_window, DOC), nil)
+	r, rerr := sciter_app.root(g_real_window)
+	testing.expect_value(t, rerr, nil)
+	return g_real_window, r, true
+}
 
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -382,27 +415,34 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_a
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
 
-	if g_window == nil {
+	if g_view.window == nil {
 		// The engine holds the argv and the window for the life of the process, so both are allocated
 		// outside the test runner's tracking allocator - otherwise every test reports them as a leak.
 		context.allocator = runtime.default_allocator()
 
-		sciter_app.init()
 
-		w, err := sciter_app.create_window({width = 500, height = 400})
+		v, err := sciter_app.create_windowless({width = 500, height = 400})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, nil, false
 		}
-		g_window = w
+		g_view = v
 	}
 
 	// Reload, so each test sees the document unmodified by the one before it. That also drops every
 	// handler attached to an element, which is what keeps the METHOD_CALL tests independent.
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
-	r, rerr := sciter_app.root(g_window)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so geometry - `location`,
+	// `scroll_info`, anything measured - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
+	r, rerr := sciter_app.root(g_view.window)
 	testing.expect_value(t, rerr, nil)
-	return g_window, r, true
+	return g_view.window, r, true
 }
 
 // The events a behavior raises are queued, not delivered inside the call that caused them, so a test
@@ -706,7 +746,7 @@ test_element_at_hit_tests_a_point :: proc(t: ^testing.T) {
 
 @(test)
 test_window_metrics :: proc(t: ^testing.T) {
-	window, root, ok := test_window(t)
+	window, root, ok := test_real_window(t)
 	if !ok {return}
 
 	// Let layout settle: these read the result of it, and are unstable before it has run.

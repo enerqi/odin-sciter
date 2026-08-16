@@ -179,6 +179,34 @@ open — but nothing in the type says the set is partial, and a `switch` that lo
 
 ---
 
+## 11. A windowless view and a windowed application do not share a process
+
+Both work. Both work in the same *program*, one after the other, as long as only one of them is what the
+process is. What does not work is standing up the windowed application subsystem in a process that
+already has a windowless view alive.
+
+Measured on 6.0.4.9, converting `examples/workbench.odin`'s tests to a windowless view: its
+second-window test creates another window with `create_window` and drives it with `sciter_app.heartbeat`.
+Run on its own — nothing windowless in the process — it passes. Run after any other test in the file has
+created a windowless view, the same test reports **zero** behavior attachments and its posted messages
+never arrive. Not a crash, not an error code: the pump simply is not turning anything.
+
+Which half is at fault was not chased down; `init` after `create_windowless` and `create_window`
+alongside a live view are both candidates, and the useful rule is the same either way:
+
+**Pick one per process.** A windowless embedding uses `create_windowless` and
+`windowless_heartbeat`/`paint_windowless` and never calls `init`. An application uses `init`,
+`create_window` and `run`/`heartbeat`. A test binary is a process too, which is why `workbench` and
+`request_loader` keep windowed harnesses while eleven other examples moved to windowless ones.
+
+The second half of that conversion is a smaller trap with the same shape: **a windowless view has no
+pump of its own**, so anything asynchronous — a `.DELAYED` load, a request answered later — completes
+only while you are calling `windowless_heartbeat`. `request_loader`'s tests became flaky (one run in
+three) with a windowless harness for exactly that reason: the request had not finished by the time the
+assertion read it. Beat the view until the thing you are waiting for has happened, or use a window.
+
+---
+
 ## Where the knowledge actually lives
 
 - **`external/sciter/include/*.h`** — the C ABI. Comments are the only C-API documentation there is, and

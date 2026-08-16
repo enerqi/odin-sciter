@@ -17,6 +17,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 DOC :: `<html>
 <head><style>
@@ -288,18 +289,24 @@ have_display :: proc() -> bool {
 }
 
 @(private = "file")
-// Shared by every test in this file, and created on first use. That is deliberate - a window per test
-// would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
-// makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
-// reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+// Shared by every test in this file, and created on first use. That is deliberate - a view per test
+// would be slow - but it makes the tests here order-coupled: **a test that changes the document must
+// put it back**, usually by reloading `DOC`, or it breaks a later test and the failure points at the
+// wrong one.
+//
+// **A windowless view, not a window, and that is what makes this file run on macOS.** Nothing in these
+// tests needs a *window*; they need a laid-out *document*, and `sciter_app/windowless.odin` says the
+// difference plainly - four procedures are windowless-specific "and everything else in the package
+// works unchanged". A window is the one thing an Odin test on Darwin cannot have, because AppKit
+// refuses `NSWindow` off the main thread and the runner never runs a test there. Measured: this file
+// skipped 72 of its 74 tests on macOS and now skips none.
+//
+// It is not free on the other two platforms either - a windowless view needs no display server, so
+// these tests no longer depend on `DISPLAY` under Xvfb, and they are faster.
+g_view: sciter_app.Windowless_View
 
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -313,25 +320,38 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
 
-	if g_window == nil {
-		// The engine holds onto the argv it is given and the window for the life of the process, so
-		// both are allocated outside the test runner's tracking allocator - otherwise every test
-		// reports them as a leak.
+	if g_view.window == nil {
+		// The view and its pixel buffer live for the whole process, so they are allocated outside the
+		// test runner's tracking allocator - otherwise whichever test happened to create them reports
+		// them as a leak. **No `destroy_windowless`** to match: one `SXM_DESTROY` ends windowless mode
+		// for the entire process (defect 2 in docs/UPSTREAM-DEFECTS.md), so tearing this down would
+		// break every test after it.
 		context.allocator = runtime.default_allocator()
 
-		sciter_app.init()
-
-		w, err := sciter_app.create_window({width = 400, height = 300})
+		// No `sciter_app.init()`: that stands up the windowed application subsystem, which is exactly
+		// what this file no longer needs. On macOS the `@(init)` bootstrap above has already built the
+		// engine's singleton on the main thread, which is the one part that cannot be skipped there.
+		v, err := sciter_app.create_windowless({width = 400, height = 300})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, false
 		}
-		g_window = w
+		g_view = v
 	}
 
-	// Reload, so each test sees the document unmodified by the one before it.
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
-	return g_window, true
+	// Reload, so each test sees the document unmodified by the one before it. `about:blank` for the
+	// reason windowless.odin gives: relative references need something to resolve against.
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
+
+	// **Layout happens on the heartbeat, not on the load.** `location`, `scroll_info` and the popup
+	// tests all read geometry, and without this they read zeroes from a document that has never been
+	// through a frame. Eight is what `examples/windowless.odin` settles in; a paint per beat is what
+	// actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
+	return g_view.window, true
 }
 
 @(test)

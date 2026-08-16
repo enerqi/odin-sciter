@@ -91,6 +91,13 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   test binary** (`&& !ODIN_TEST`): Odin's runner keeps the main thread for its own loop and submits every
   test to a pool, so no macOS test binary can satisfy the rule — a default no test can satisfy is a
   broken build rather than a strict check, which is what one CI run said.
+- **Eleven examples test against a windowless view instead of a window**, which is what makes them run
+  on macOS: a test there can never own an `NSWindow`, and almost none of these tests wanted a window —
+  they wanted a laid-out document. The macOS suite was reporting ~389 passing while exercising **165**;
+  the same tests, unchanged, should now leave 28 skipped rather than 224. `behavior`'s window-metrics
+  test, `workbench` and `request_loader` keep real windows, for reasons that became gotcha 11:
+  **a windowless view and a windowed application do not share a process**, and a windowless view has no
+  pump, so anything asynchronous finishes only while you beat it.
 - **Every exported wrapper procedure is now reached by a test.**
 - `released_resources()`, `app_event(n)`, and twelve further `scoped_` constructors.
 

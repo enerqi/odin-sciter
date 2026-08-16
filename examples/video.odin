@@ -318,14 +318,10 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_window: sciter_app.Window
+g_view: sciter_app.Windowless_View
 
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_app.Element, ok: bool) {
-	if !have_display() {
-		fmt.println("skipping - this test needs a window")
-		return nil, nil, false
-	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -339,25 +335,32 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_a
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
 
-	if g_window == nil {
+	if g_view.window == nil {
 		// The engine holds the window for the life of the process, so it is allocated outside the test
 		// runner's tracking allocator - otherwise every test reports it as a leak.
 		context.allocator = runtime.default_allocator()
 
-		sciter_app.init()
 
-		w, err := sciter_app.create_window({width = 500, height = 400})
+		v, err := sciter_app.create_windowless({width = 500, height = 400})
 		testing.expect_value(t, err, nil)
-		if w == nil {
+		if v.window == nil {
 			return nil, nil, false
 		}
-		g_window = w
+		g_view = v
 	}
 
-	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
-	r, rerr := sciter_app.root(g_window)
+	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
+
+	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
+	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
+	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
+	for i in 0 ..< 8 {
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
+	}
+	r, rerr := sciter_app.root(g_view.window)
 	testing.expect_value(t, rerr, nil)
-	return g_window, r, true
+	return g_view.window, r, true
 }
 
 @(private = "file")

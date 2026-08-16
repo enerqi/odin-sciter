@@ -318,6 +318,47 @@ how many of those returned early — so this file no longer has to warn in prose
 itself. Measured on Windows the day it was written: 384 of 396 ran, 5 skipped. On macOS the skipped
 number is the one to read.
 
+It read **224 skipped of 389, with 165 actually exercising anything.**
+
+### Recovering that, 2026-08-16
+
+The skips were not really about windows. Almost every one of them wanted a laid-out *document*, and a
+window was just how the harness got one — so eleven examples now build a **windowless view** instead,
+which needs no `NSWindow` and therefore no main thread. `sciter_app/windowless.odin` says why this is
+cheap: four procedures are windowless-specific and "everything else in the package works unchanged".
+
+| converted | skips it was carrying on macOS |
+| --- | ---: |
+| `dom_walk` | 72 |
+| `call_odin_from_js` | 17 |
+| `events` | 15 |
+| `input` | 14 |
+| `behavior` | 14 → 1 |
+| `video` | 13 |
+| `eval` | 11 |
+| `graphics_gallery` | 10 |
+| `custom_loader` | 9 |
+| `named_behavior` | 9 |
+| `worker_thread` | 9 |
+| `task_list` | 4 |
+
+All of them still pass on Windows, which is the point: the same tests, one less requirement. **Predicted
+macOS skips: 28 rather than 224** — `workbench` 13, `request_loader` 9, `windowless_gl` 5 and
+`behavior`'s one genuine window test. Predicted, not measured: this file's own ledger says predictions
+about the environment hold and predictions about engine behaviour do not, and "does the engine lay out
+the same way windowless on Darwin" is the second kind. CI is the verifier.
+
+Three did not convert, and each says something:
+
+- **`behavior`'s `test_window_metrics`** reads `ppi`, `min_width` and `min_height` — questions about a
+  window, not a document. It keeps a real one, and its skip is now a statement about that test rather
+  than about all fourteen.
+- **`workbench`** creates a *second* window and drives it with the application pump. Converted, two of
+  its tests failed with zero behavior attachments — and passed when run alone. A windowless view and a
+  windowed application do not share a process; gotcha 11 has the measurement.
+- **`request_loader`** went flaky, one run in three: a windowless view has no pump, so a request answered
+  asynchronously had not finished by the time the assertion read it. Same gotcha, second half.
+
 Note for applications, since the trace invites the wrong conclusion: none of this affects a real macOS
 app. `main` runs on the main thread, so `create_window` from `main` is correct by construction. Only a
 test binary has this problem.
