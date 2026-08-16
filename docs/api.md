@@ -592,7 +592,7 @@ Drawing: `set_fill_color` / `set_line_color` / `set_line_width` / `set_line_join
 is the top row - which is not what reading order suggests.
 
 Five of these do not work on the vendored engine and are documented at their definitions and in
-`CHANGELOG.md`'s known issues: `draw_star` paints fragments, `set_fill_mode` is `.NOTSUPPORTED` (the
+[`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md): `draw_star` paints fragments, `set_fill_mode` is `.NOTSUPPORTED` (the
 renderer is always even-odd), `world_to_screen` / `screen_to_world` ignore the transform, and
 `set_text_box` never wraps. **An unbalanced `save_state` aborts the process** when the painter returns.
 

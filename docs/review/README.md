@@ -103,7 +103,8 @@ produced them is why so few real defects turned up.
 29 files, and zero `sciter_app.X` names in the prose that are not real declarations — both checked
 mechanically. But 27 files with no index mix user guides, maintainer notes, two 40 KB+ planning
 documents and an 84 KB ecosystem essay, and `CHANGELOG.md` is 38 KB describing one unreleased version.
-→ [`05`](05-docs.md)
+→ [`05`](05-docs.md) — the index landed as [`docs/README.md`](../README.md), and `CHANGELOG.md` is now
+167 lines that record changes only.
 
 **Cross-cutting contracts live in source comments, not in the docs.** Thread affinity, `Value`
 ownership, element/node handle lifetime, allocator conventions — each is written well, at the top of the

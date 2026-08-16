@@ -214,7 +214,7 @@ All three answered, and all three work:
   .Bottom)` gives the menu `:popup` and the anchor `:owns-popup`, the menu gets a real box (81 × 71
   here) and `element_at` on its centre hit-tests to the `<li>` inside it; `hide_popup` clears both
   states, and `show_popup_at` places it at a point instead. (The half-working case is a window that has
-  never been shown — already a known issue in `CHANGELOG.md`.)
+  never been shown — recorded on `show_popup` and in [`dom.md`](./dom.md).)
 - **`global-events`** — **the two do meet in the middle.** `fire_event` with a `.CUSTOM` code and a
   name reaches script's own handlers: an element's `.on("odin-says")`, then `document.on`, then
   `Window.this.on`, in that order, carrying the payload as `e.data`. Posting rather than sending
@@ -442,11 +442,11 @@ Per stage, matching the house checklist in
 
 - [ ] the stage's opening probe was run, and its result is recorded even when it cancelled the stage
 - [ ] anything measured that contradicts the headers is in the example header, the wrapper doc comment,
-      and `CHANGELOG.md`'s known-issues list
+      and — where it is an engine defect — [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md)
 - [ ] `just check` passes — both packages, `docs/snippets`, every example
 - [ ] `just example-tests` green in one run on a quiet machine
 - [ ] new examples run headless-ish: `XMODIFIERS=@im=none timeout 15 ./target/debug/NAME.exe`, exit 124
-- [ ] counts updated in `CHANGELOG.md` and `README.md`, and **this document's tables updated** — a
+- [ ] counts updated where `just stats --check` gates them, and **this document's tables updated** — a
       parity document that goes stale is worse than none
 - [ ] `just format`, then `git checkout -- examples/custom_loader.odin examples/extension.odin`
 - [ ] **nothing committed** — report the dirty tree

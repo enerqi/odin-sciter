@@ -100,10 +100,11 @@ This is what makes the work useful to somebody who has not used Sciter. Match th
 - **Each test's comment says what rule it pins and why anyone cares**, not what the code does. "Rule 3:
   the engine keeps its own names. This is the one that decides whether a `behavior:` name of your own
   can shadow a built-in — it cannot."
-- **Write down engine behaviour that is surprising, wrong, or undocumented** in the example header, in
-  the wrapper's doc comment, and in `CHANGELOG.md`'s known-issues list. Where the engine is defective
-  rather than merely surprising, keep a characterization test that fails loudly if a future engine
-  fixes it.
+- **Write down engine behaviour that is surprising, wrong, or undocumented** in the example header and
+  in the wrapper's doc comment; where it is an engine defect, add it to
+  [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md) — and keep a characterization test that fails loudly
+  if a future engine fixes it. Not in `CHANGELOG.md`: that file records what changed, not what is true,
+  and a fact kept in two places is a fact that will disagree with itself.
 
 ---
 

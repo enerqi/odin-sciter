@@ -98,6 +98,21 @@ preamble (it is already there and already short). Move the feature inventory to 
 as a duplicate of `PLAN.md`. Adopt Keep a Changelog headings (`### Added` / `### Fixed` / `### Known
 issues`) so the next entry has a shape to follow.
 
+**Done — and it had got worse first.** The Keep a Changelog headings landed early and the rest did not,
+so the file went 455 → 839 lines and 38K → 71K while still describing nothing anyone could install. It
+is 167 lines now. What was actually unique in it was the breaking-change list — `Breaking` appeared ten
+times in `CHANGELOG.md` and nowhere else in the tree, while every engine fact it carried was already
+written on the wrapper concerned, in `UPSTREAM-DEFECTS.md`, or in the guides. So the rewrite keeps a
+`### Breaking` section as the top item of `## Unreleased`, summarises Fixed/Added/Changed in a line
+each with links out, and cuts the first-release entry to a dozen bullets. Hand-maintained counts are
+gone from it too, since `just stats --check` does not gate this file.
+
+The duplication had already produced the failure mode the finding predicted: four documents
+(`api.md`, `ENGINE.md`, and `PLAN-TESTING-AND-EXAMPLES.md` twice) cited `CHANGELOG.md`'s known-issues
+list as the canonical home of facts that also lived in `UPSTREAM-DEFECTS.md` and on the wrappers. Those
+now point at the real home, and `PLAN-TESTING-AND-EXAMPLES.md`'s commenting standard says explicitly
+not to record engine behaviour in the changelog.
+
 ### R5-04 — the threading rule is load-bearing and lives only in prose asides  [severity: major]
 
 **Where:** referenced from `sciter_app/host.odin:107-109` as "see docs/architecture.md";
@@ -162,7 +177,7 @@ good and worth keeping; they are just not documentation. (Finding 08 in this rev
 | file | size | audience | verdict |
 |---|---:|---|---|
 | `README.md` | 22K | user | keep — fix counts (R5-01), add clone size + X11 note (R5-05) |
-| `CHANGELOG.md` | 38K | user | **rewrite** — one release entry, not a feature inventory (R5-03) |
+| `CHANGELOG.md` | 38K | user | ~~**rewrite** — one release entry, not a feature inventory (R5-03)~~ done |
 | `getting-started.md` | 6K | user | keep — make it the documented entry point |
 | `architecture.md` | 12K | user | keep — promote the threading section (R5-04) |
 | `api.md` | 51K | user | keep — the reference; move its dead-slot note to SDK-PARITY |

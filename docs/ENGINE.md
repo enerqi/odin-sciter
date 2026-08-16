@@ -258,8 +258,9 @@ are all gone; `document`, `Window.this`, `element.on(...)` and ES modules are wh
   into; `SciterSetVariable` is the route that works, and is what `set_global` uses.
 
 The window changes are described where they bite, in [`api.md`](./api.md#windows--windowodin); the
-`SciterGetViewExpando` one is a known issue in [`CHANGELOG.md`](../CHANGELOG.md), with what the wrapper
-does instead.
+`SciterGetViewExpando` one is in
+[`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md), with what the wrapper does
+instead.
 
 ## Direction the source hints at
 
