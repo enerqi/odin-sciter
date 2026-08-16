@@ -61,10 +61,10 @@ when ODIN_DEBUG {
 
 	@(private = "file")
 	Tracker :: struct {
-		on:        bool,
-		handles:   map[rawptr]Acquisition, // the identified kinds
-		counted:   [Resource_Kind]int, // outstanding, for every kind
-		sites:     map[runtime.Source_Code_Location]int, // where the counted ones came from
+		on:         bool,
+		handles:    map[rawptr]Acquisition, // the identified kinds
+		counted:    [Resource_Kind]int, // outstanding, for every kind
+		sites:      map[runtime.Source_Code_Location]int, // where the counted ones came from
 		released:   [Resource_Kind]int,
 		underflows: [Resource_Kind]int, // releases of something never acquired - see track_release
 		strict:     bool, // trap on the first under-flow rather than only counting it
@@ -76,7 +76,7 @@ when ODIN_DEBUG {
 		// grow the map. Pinning it to the default heap allocator keeps the tool from being reported as
 		// the problem it exists to find. The examples do the same thing for their process-lifetime
 		// window.
-		allocator: runtime.Allocator,
+		allocator:  runtime.Allocator,
 	}
 
 	@(private = "file")

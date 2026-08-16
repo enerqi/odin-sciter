@@ -504,28 +504,28 @@ test_value_parse_json :: proc(t: ^testing.T) {
 // With the patch applied, both run on Windows and pass.
 when ODIN_OS != .Windows {
 
-@(test)
-test_value_parse_reports_the_message :: proc(t: ^testing.T) {
-	if !engine_loaded(t) {return}
+	@(test)
+	test_value_parse_reports_the_message :: proc(t: ^testing.T) {
+		if !engine_loaded(t) {return}
 
-	// The engine reports a parse failure in the result rather than the return code, so the wrapper
-	// has to look at what came back to know it failed at all.
-	v, err := sciter_app.value_parse("[1,2")
-	defer sciter_app.value_clear(&v)
-	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
+		// The engine reports a parse failure in the result rather than the return code, so the wrapper
+		// has to look at what came back to know it failed at all.
+		v, err := sciter_app.value_parse("[1,2")
+		defer sciter_app.value_clear(&v)
+		testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Parse_Failed))
 
-	testing.expect(t, sciter_app.value_is_error(&v), "the failure Value is a string carrying .ERROR")
+		testing.expect(t, sciter_app.value_is_error(&v), "the failure Value is a string carrying .ERROR")
 
-	// And the Value that came back is the diagnosis, not a husk.
-	message, merr := sciter_app.value_to_string(&v, context.temp_allocator)
-	testing.expect_value(t, merr, nil)
-	testing.expect(t, strings.contains(message, "JSON parsing error"), message)
+		// And the Value that came back is the diagnosis, not a husk.
+		message, merr := sciter_app.value_to_string(&v, context.temp_allocator)
+		testing.expect_value(t, merr, nil)
+		testing.expect(t, strings.contains(message, "JSON parsing error"), message)
 
-	// An ordinary string is not an error string, so the check does not fire on everything.
-	plain := sciter_app.value_from("no problem here")
-	defer sciter_app.value_clear(&plain)
-	testing.expect(t, !sciter_app.value_is_error(&plain))
-}
+		// An ordinary string is not an error string, so the check does not fire on everything.
+		plain := sciter_app.value_from("no problem here")
+		defer sciter_app.value_clear(&plain)
+		testing.expect(t, !sciter_app.value_is_error(&plain))
+	}
 
 } // when ODIN_OS != .Windows - see above
 
@@ -1258,98 +1258,98 @@ collect_diagnostic :: proc "system" (
 // demand, and so each of them throws. Do not add a fourth outside the `when`.
 when ODIN_OS != .Windows {
 
-@(test)
-test_a_script_error_in_a_document_reaches_the_installed_handler :: proc(t: ^testing.T) {
-	window, ok := test_window(t)
-	if !ok {return}
+	@(test)
+	test_a_script_error_in_a_document_reaches_the_installed_handler :: proc(t: ^testing.T) {
+		window, ok := test_window(t)
+		if !ok {return}
 
-	marker := rawptr(uintptr(0xD1A6))
-	g_diagnostics = {}
-	sciter_app.set_debug_output(collect_diagnostic, marker, window)
-	// Detach before leaving: the engine keeps the pointer, and the tests after this one would go on
-	// filling in a record they know nothing about.
-	defer sciter_app.set_debug_output(nil, nil, window)
+		marker := rawptr(uintptr(0xD1A6))
+		g_diagnostics = {}
+		sciter_app.set_debug_output(collect_diagnostic, marker, window)
+		// Detach before leaving: the engine keeps the pointer, and the tests after this one would go on
+		// filling in a record they know nothing about.
+		defer sciter_app.set_debug_output(nil, nil, window)
 
-	BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
-	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil) // the *load* succeeds
+		BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
+		testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil) // the *load* succeeds
 
-	testing.expect(t, g_diagnostics.count > 0, "the engine had something to say about that script")
-	testing.expect_value(t, g_diagnostics.subsystem, sciter.Output_Subsytems.SCRIPT)
-	testing.expect_value(t, g_diagnostics.severity, sciter.Output_Severity.ERROR)
-	testing.expect_value(t, g_diagnostics.param, marker) // passed straight through
+		testing.expect(t, g_diagnostics.count > 0, "the engine had something to say about that script")
+		testing.expect_value(t, g_diagnostics.subsystem, sciter.Output_Subsytems.SCRIPT)
+		testing.expect_value(t, g_diagnostics.severity, sciter.Output_Severity.ERROR)
+		testing.expect_value(t, g_diagnostics.param, marker) // passed straight through
 
-	message := sciter_app.string_from_utf16(
-		raw_data(g_diagnostics.last[:]),
-		uint(g_diagnostics.last_len),
-		context.temp_allocator,
-	)
-	testing.expect(t, strings.contains(message, "SyntaxError"), message)
+		message := sciter_app.string_from_utf16(
+			raw_data(g_diagnostics.last[:]),
+			uint(g_diagnostics.last_len),
+			context.temp_allocator,
+		)
+		testing.expect(t, strings.contains(message, "SyntaxError"), message)
 
-	// An exception that nothing catches is the same channel at a lower severity - which matters,
-	// because a handler that only logs `.ERROR` drops every unhandled rejection on the floor.
-	g_diagnostics = {}
-	THROWS :: `<html><head><script type="module">throw new Error("from a module")</script></head><body></body></html>`
-	testing.expect_value(t, sciter_app.load_html(window, THROWS), nil)
+		// An exception that nothing catches is the same channel at a lower severity - which matters,
+		// because a handler that only logs `.ERROR` drops every unhandled rejection on the floor.
+		g_diagnostics = {}
+		THROWS :: `<html><head><script type="module">throw new Error("from a module")</script></head><body></body></html>`
+		testing.expect_value(t, sciter_app.load_html(window, THROWS), nil)
 
-	testing.expect(t, g_diagnostics.count > 0)
-	testing.expect_value(t, g_diagnostics.subsystem, sciter.Output_Subsytems.SCRIPT)
-	testing.expect_value(t, g_diagnostics.severity, sciter.Output_Severity.WARNING)
+		testing.expect(t, g_diagnostics.count > 0)
+		testing.expect_value(t, g_diagnostics.subsystem, sciter.Output_Subsytems.SCRIPT)
+		testing.expect_value(t, g_diagnostics.severity, sciter.Output_Severity.WARNING)
 
-	thrown := sciter_app.string_from_utf16(
-		raw_data(g_diagnostics.last[:]),
-		uint(g_diagnostics.last_len),
-		context.temp_allocator,
-	)
-	testing.expect(t, strings.contains(thrown, "from a module"), thrown)
-}
+		thrown := sciter_app.string_from_utf16(
+			raw_data(g_diagnostics.last[:]),
+			uint(g_diagnostics.last_len),
+			context.temp_allocator,
+		)
+		testing.expect(t, strings.contains(thrown, "from a module"), thrown)
+	}
 
-// The handler is per window when it is given one, and global when it is not - so an application can
-// route one window's diagnostics into that window's own log panel.
-@(test)
-test_a_windowed_handler_hears_only_that_windows_diagnostics :: proc(t: ^testing.T) {
-	window, ok := test_window(t)
-	if !ok {return}
+	// The handler is per window when it is given one, and global when it is not - so an application can
+	// route one window's diagnostics into that window's own log panel.
+	@(test)
+	test_a_windowed_handler_hears_only_that_windows_diagnostics :: proc(t: ^testing.T) {
+		window, ok := test_window(t)
+		if !ok {return}
 
-	BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
+		BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
 
-	g_diagnostics = {}
-	sciter_app.set_debug_output(collect_diagnostic, nil, window)
-	defer sciter_app.set_debug_output(nil, nil, window)
+		g_diagnostics = {}
+		sciter_app.set_debug_output(collect_diagnostic, nil, window)
+		defer sciter_app.set_debug_output(nil, nil, window)
 
-	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
-	testing.expect(t, g_diagnostics.count > 0, "its own window's error arrives")
+		testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
+		testing.expect(t, g_diagnostics.count > 0, "its own window's error arrives")
 
-	// A second window, with no handler of its own and none installed globally.
-	context.allocator = runtime.default_allocator()
-	other, oerr := sciter_app.create_window({width = 200, height = 150})
-	testing.expect_value(t, oerr, nil)
-	if other == nil {return}
+		// A second window, with no handler of its own and none installed globally.
+		context.allocator = runtime.default_allocator()
+		other, oerr := sciter_app.create_window({width = 200, height = 150})
+		testing.expect_value(t, oerr, nil)
+		if other == nil {return}
 
-	g_diagnostics = {}
-	testing.expect_value(t, sciter_app.load_html(other, BROKEN), nil)
-	testing.expect_value(t, g_diagnostics.count, 0)
-}
+		g_diagnostics = {}
+		testing.expect_value(t, sciter_app.load_html(other, BROKEN), nil)
+		testing.expect_value(t, g_diagnostics.count, 0)
+	}
 
-// Passing nil detaches it. Worth its own assertion because the alternative - a stale handler pointing
-// at memory that has gone - is a crash rather than a missed message.
-@(test)
-test_the_diagnostics_handler_can_be_detached :: proc(t: ^testing.T) {
-	window, ok := test_window(t)
-	if !ok {return}
+	// Passing nil detaches it. Worth its own assertion because the alternative - a stale handler pointing
+	// at memory that has gone - is a crash rather than a missed message.
+	@(test)
+	test_the_diagnostics_handler_can_be_detached :: proc(t: ^testing.T) {
+		window, ok := test_window(t)
+		if !ok {return}
 
-	BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
+		BROKEN :: `<html><head><script type="module">this is not valid (((</script></head><body></body></html>`
 
-	g_diagnostics = {}
-	sciter_app.set_debug_output(collect_diagnostic, nil, window)
-	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
-	testing.expect(t, g_diagnostics.count > 0)
+		g_diagnostics = {}
+		sciter_app.set_debug_output(collect_diagnostic, nil, window)
+		testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
+		testing.expect(t, g_diagnostics.count > 0)
 
-	before := g_diagnostics.count
-	sciter_app.set_debug_output(nil, nil, window)
+		before := g_diagnostics.count
+		sciter_app.set_debug_output(nil, nil, window)
 
-	testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
-	testing.expect_value(t, g_diagnostics.count, before)
-}
+		testing.expect_value(t, sciter_app.load_html(window, BROKEN), nil)
+		testing.expect_value(t, g_diagnostics.count, before)
+	}
 
 } // when ODIN_OS != .Windows - see the comment above the first of these three
 
@@ -1871,13 +1871,9 @@ test_the_scoped_constructors_give_back_what_they_took :: proc(t: ^testing.T) {
 		// the array still holds a live element afterwards.
 		testing.expect_value(t, sciter_app.value_set_at(&array, 0, &text), nil)
 
-		fn := sciter_app.scoped_value_from_function(
-			proc(args: []sciter_app.Value, user: rawptr) -> sciter_app.Value {
+		fn := sciter_app.scoped_value_from_function(proc(args: []sciter_app.Value, user: rawptr) -> sciter_app.Value {
 				return sciter_app.value_from_int(1)
-			},
-			nil,
-			runtime.default_allocator(),
-		)
+			}, nil, runtime.default_allocator())
 		// A native functor reports `.RESOURCE`, not `.FUNCTION` - measured; `.FUNCTION` is a script
 		// function. Either way it owns a reference, which is what this test is about.
 		kind, _ := sciter_app.value_type(&fn)

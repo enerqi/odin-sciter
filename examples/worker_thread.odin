@@ -629,7 +629,7 @@ test_a_worker_reports_a_failure_and_the_message_crosses_in_the_shared_struct :: 
 	defer sciter_app.set_host_handler(window, nil)
 
 	worker := thread.create_and_start_with_poly_data(job, job_worker)
-	defer {thread.join(worker);thread.destroy(worker)}
+	defer {thread.join(worker); thread.destroy(worker)}
 
 	testing.expect(t, pump_until(job_terminal, job), "the terminal message should arrive")
 
@@ -668,7 +668,7 @@ test_cancelling_stops_the_worker_between_steps_and_it_says_so :: proc(t: ^testin
 	defer sciter_app.set_host_handler(window, nil)
 
 	worker := thread.create_and_start_with_poly_data(job, job_worker)
-	defer {thread.join(worker);thread.destroy(worker)}
+	defer {thread.join(worker); thread.destroy(worker)}
 
 	// Let it get going, then ask it to stop. The UI thread never waits for the thread here: it waits
 	// for the message, so the pump keeps running while the job winds down.
@@ -725,8 +725,8 @@ test_two_workers_keep_their_own_order_and_nothing_orders_them_against_each_other
 	two := Poster{window, 200, PER_WORKER}
 	a := thread.create_and_start_with_poly_data(&one, post_many)
 	b := thread.create_and_start_with_poly_data(&two, post_many)
-	thread.join(a);thread.join(b)
-	thread.destroy(a);thread.destroy(b)
+	thread.join(a); thread.join(b)
+	thread.destroy(a); thread.destroy(b)
 
 	pump_until(proc(data: rawptr) -> bool {
 			return len((^Recorder)(data).got) >= 2 * PER_WORKER

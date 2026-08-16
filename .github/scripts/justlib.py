@@ -49,6 +49,23 @@ EXTENSIONS = ("extension", "sqlite_extension")
 PACKAGES = (".", "sciter_app", "docs/snippets")
 
 
+# The roots `just format` writes, and therefore the roots `just format-check` reads. One list, so the
+# check cannot drift from the fixer and pass a file nobody formats.
+#
+# `src/prelude.odin` is deliberately absent: it has no `package` line, because bindgen pastes it into
+# sciter.odin under that file's own one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it
+# and fails the whole run.
+FORMAT_ROOTS = ("sciter_app", "examples", "docs/snippets", "spike")
+
+
+def format_sources() -> list[str]:
+	"""Every Odin file the formatter owns: `sciter.odin` plus everything under `FORMAT_ROOTS`."""
+	files = ["sciter.odin"]
+	for d in FORMAT_ROOTS:
+		files += sorted(glob.glob(os.path.join(d, "**", "*.odin"), recursive=True))
+	return files
+
+
 def host_x11_skip() -> tuple[str, ...]:
 	"""`X11_ONLY` off Linux, nothing on it - for checks aimed at the machine they run on."""
 	return () if sys.platform.startswith("linux") else X11_ONLY

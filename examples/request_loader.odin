@@ -600,7 +600,11 @@ test_deferred_request_survives_the_callback :: proc(t: ^testing.T) {
 	testing.expect_value(t, state, sciter.Request_State.PENDING)
 	testing.expect_value(t, status, u32(0))
 
-	testing.expect_value(t, sciter_app.succeed_request(sciter_app.borrow_request(g_probe.deferred), transmute([]u8)string(LOGO)), nil)
+	testing.expect_value(
+		t,
+		sciter_app.succeed_request(sciter_app.borrow_request(g_probe.deferred), transmute([]u8)string(LOGO)),
+		nil,
+	)
 
 	state, status, _ = sciter_app.request_status(sciter_app.borrow_request(g_probe.deferred))
 	testing.expect_value(t, state, sciter.Request_State.SUCCESS)

@@ -372,10 +372,6 @@ has landed on top of it since.
 
 ### Known issues
 
-- `just format` exits 1 on `examples/dom_walk.odin` (a local named `inline`) and rewrites
-  `custom_loader.odin` and `extension.odin` on every run. Pre-existing; it is why there is no formatter
-  gate in CI yet.
-
 - The timer tests in `examples/events.odin` flake under load.
 
 ## v6.0.4.9 — the first release, unreleased

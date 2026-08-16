@@ -695,26 +695,26 @@ test_save_and_load_round_trip :: proc(t: ^testing.T) {
 // no guard, so this comes off in one line once the fix is in a released Odin.
 when ODIN_OS != .Windows {
 
-@(test)
-test_load_of_a_missing_or_broken_file :: proc(t: ^testing.T) {
-	if !engine_loaded(t) {return}
+	@(test)
+	test_load_of_a_missing_or_broken_file :: proc(t: ^testing.T) {
+		if !engine_loaded(t) {return}
 
-	missing: App
-	app_init(&missing, "target/task_list_no_such_file.json")
-	defer app_destroy(&missing)
-	testing.expect(t, !load(&missing), "a missing file is a first run, not a failure")
-	testing.expect_value(t, len(missing.tasks), 0)
+		missing: App
+		app_init(&missing, "target/task_list_no_such_file.json")
+		defer app_destroy(&missing)
+		testing.expect(t, !load(&missing), "a missing file is a first run, not a failure")
+		testing.expect_value(t, len(missing.tasks), 0)
 
-	path := "target/task_list_broken.json"
-	defer os.remove(path)
-	testing.expect_value(t, os.write_entire_file(path, transmute([]u8)string("{ this is not json")), nil)
+		path := "target/task_list_broken.json"
+		defer os.remove(path)
+		testing.expect_value(t, os.write_entire_file(path, transmute([]u8)string("{ this is not json")), nil)
 
-	broken: App
-	app_init(&broken, path)
-	defer app_destroy(&broken)
-	testing.expect(t, !load(&broken), "and neither is an unreadable one")
-	testing.expect_value(t, len(broken.tasks), 0)
-}
+		broken: App
+		app_init(&broken, path)
+		defer app_destroy(&broken)
+		testing.expect(t, !load(&broken), "and neither is an unreadable one")
+		testing.expect_value(t, len(broken.tasks), 0)
+	}
 
 } // when ODIN_OS != .Windows - see above
 

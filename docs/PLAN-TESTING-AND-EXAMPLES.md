@@ -28,10 +28,10 @@ House rules that will otherwise cost you time. All of these are load-bearing.
   changed.
 - **Windowed runs need `XMODIFIERS=@im=none`** on X11 — the engine segfaults in `XSetICFocus`
   otherwise. Treat `timeout N ./target/debug/x.exe` returning 124 as the pass.
-- **`just format` exits 1**, on `examples/dom_walk.odin` — a local variable named `inline`, which
-  odinfmt's parser rejects and the compiler does not. Pre-existing. It also rewrites
-  `examples/custom_loader.odin` and `examples/extension.odin` every time; `git checkout --` those two
-  afterwards and check `git status --short` shows only your work.
+- **`just format` is clean and gated.** It exits 0, and a second run against a formatted tree changes
+  nothing — the `inline` local that made it exit 1 and the churn on `custom_loader.odin` /
+  `extension.odin` are both gone. `just format-check` is the non-writing version and runs in CI, so
+  leaving something unformatted now fails the build rather than surfacing in someone else's diff.
 - **`events` timer tests flake under load.** Pre-existing at HEAD. Re-run on a quiet machine; don't chase.
 - **`just example-tests` uses `set -e`**, so one failure skips every suite after it. Run the remainder
   individually when hunting.

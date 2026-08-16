@@ -138,6 +138,8 @@ collection_path := env_var_or_default("XYZ_HOME", "")
 # Explicit paths rather than `odinfmt -w .`, because src/prelude.odin is deliberately not a standalone
 # Odin file - it has no `package` line, since bindgen pastes it into sciter.odin under that file's own
 # one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it and fails the whole run.
+#
+# The same roots are in `FORMAT_ROOTS` in justlib, which is what `format-check` reads. Change both.
 # ---
 # odinfmt every odin file in the project
 format:
@@ -146,6 +148,47 @@ format:
 	odinfmt -w examples
 	odinfmt -w docs/snippets
 	odinfmt -w spike
+
+# The gate for the above, and it exists now because the two things that blocked it stopped being true.
+# The note kept in CHANGELOG.md and PLAN-TESTING-AND-EXAMPLES.md was:
+#
+#   `just format` exits 1 on examples/dom_walk.odin (a local named `inline`) and rewrites
+#   custom_loader.odin and extension.odin on every run. Pre-existing; it is why there is no formatter
+#   gate in CI yet.
+#
+# Both were re-tested: `just format` exits 0, and a second run against an already-formatted tree changes
+# nothing. The `inline` local is gone from dom_walk.odin, and the churn on the other two has stopped.
+# **Idempotence is the whole precondition** - a formatter that rewrites a file every run can never be a
+# gate, because the gate fails on a clean checkout.
+#
+# `odinfmt <file>` with no `-w` prints the formatted source to stdout, so this compares that against
+# what is on disk and writes nothing. Bytes, not text: reading in binary keeps a line-ending difference
+# visible instead of letting Python's newline translation hide one on Windows.
+# ---
+# fail if anything is not odinfmt-clean, without writing to it
+[script]
+format-check:
+	import subprocess, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import format_sources, parallel
+
+	def unformatted(path):
+		want = subprocess.run(["odinfmt", path], capture_output=True).stdout
+		with open(path, "rb") as fh:
+			have = fh.read()
+		return path if want != have else None
+
+	files = format_sources()
+	bad = [p for p in parallel(files, unformatted) if p]
+
+	if bad:
+		print(f"not odinfmt-clean ({len(bad)} of {len(files)}):")
+		for p in bad:
+			print(f"    {p}")
+		print()
+		print("Run `just format`.")
+		raise SystemExit(1)
+	print(f"ok: all {len(files)} Odin files are odinfmt-clean")
 
 
 # `-vet-tabs` is the only compiler-side enforcement of .editorconfig's `indent_style = tab`; it is not

@@ -1085,14 +1085,7 @@ test_the_uniform_form_expands_to_the_pair_form_and_the_group_picks_both :: proc(
 	paint_xy :: proc(gfx: Gfx, w, h: u32, user: rawptr) {
 		sciter_app.set_fill_color(gfx, sciter_app.rgb(0, 255, 0))
 		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
-		sciter_app.draw_rounded_rect_xy(
-			gfx,
-			1,
-			1,
-			30,
-			30,
-			[4][2]f32{{10, 10}, {8, 8}, {6, 6}, {4, 4}},
-		)
+		sciter_app.draw_rounded_rect_xy(gfx, 1, 1, 30, 30, [4][2]f32{{10, 10}, {8, 8}, {6, 6}, {4, 4}})
 		sciter_app.flush(gfx)
 	}
 	paint_group :: proc(gfx: Gfx, w, h: u32, user: rawptr) {
@@ -2406,7 +2399,10 @@ test_the_scoped_graphics_wraps_give_back_the_values_reference_only :: proc(t: ^t
 test_a_graphics_can_be_wrapped_and_released_inside_the_painter :: proc(t: ^testing.T) {
 	if !engine_loaded(t) {return}
 
-	raw := render(16, nil, proc(gfx: Gfx, w, h: u32, user: rawptr) {
+	raw := render(
+	16,
+	nil,
+	proc(gfx: Gfx, w, h: u32, user: rawptr) {
 		{
 			wrapped, err := sciter_app.scoped_value_from_graphics(gfx)
 			if err != nil {
@@ -2422,7 +2418,8 @@ test_a_graphics_can_be_wrapped_and_released_inside_the_painter :: proc(t: ^testi
 		sciter_app.set_line_color(gfx, sciter_app.rgb(0, 255, 0))
 		sciter_app.draw_rect(gfx, 2, 2, 14, 14)
 		sciter_app.flush(gfx)
-	})
+	},
+	)
 	defer delete(raw)
 
 	testing.expect(t, lit(raw, 16, 8, 8), "the painter still worked after wrapping its Graphics")

@@ -848,11 +848,7 @@ test_publishing_a_nil_asset_is_refused :: proc(t: ^testing.T) {
 	sciter_app.set_default_debug_output()
 
 	testing.expect_value(t, sciter_app.set_global_asset(nil), sciter_app.Error(sciter_app.Api_Error.Asset_Failed))
-	testing.expect_value(
-		t,
-		sciter_app.release_global_asset(nil),
-		sciter_app.Error(sciter_app.Api_Error.Asset_Failed),
-	)
+	testing.expect_value(t, sciter_app.release_global_asset(nil), sciter_app.Error(sciter_app.Api_Error.Asset_Failed))
 }
 
 // A passport whose properties are constants rather than accessors, built by hand because
@@ -1144,11 +1140,7 @@ test_clearing_a_functor_argument_does_not_reach_the_script_that_passed_it :: pro
 	defer sciter_app.value_clear(&eater)
 
 	// The script keeps its own reference, hands a second to the functor, and reads it back afterwards.
-	testing.expect_value(
-		t,
-		eval_string(t, window, `let s = "x".repeat(1000); odin_eat(s); s.length`),
-		"1000",
-	)
+	testing.expect_value(t, eval_string(t, window, `let s = "x".repeat(1000); odin_eat(s); s.length`), "1000")
 
 	// And again after a megabyte of churn, which is what would expose a freed payload.
 	testing.expect_value(

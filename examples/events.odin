@@ -429,8 +429,8 @@ test_dragging_flag_is_split_off_the_code :: proc(t: ^testing.T) {
 	over := fake_element(0x3201)
 
 	params := sciter.Mouse_Params {
-		cmd = u32(sciter.Mouse_Events.MOUSE_MOVE) | u32(sciter.Mouse_Events.DRAGGING),
-		target = sciter.Helement(target),
+		cmd      = u32(sciter.Mouse_Events.MOUSE_MOVE) | u32(sciter.Mouse_Events.DRAGGING),
+		target   = sciter.Helement(target),
 		dragging = sciter.Helement(over),
 	}
 	me, ok := sciter_app.mouse_event({group = {.MOUSE}, params = &params})

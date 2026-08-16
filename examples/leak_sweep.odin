@@ -271,12 +271,12 @@ sweep_graphics :: proc(window: sciter_app.Window) {
 	surface, serr2 := sciter_app.create_image(32, 32)
 	check("create_image (state stack)", serr2)
 	check("paint_image", sciter_app.paint_image(surface, proc(gfx: sciter_app.Graphics, w, h: u32, user: rawptr) {
-		if sciter_app.save_state(gfx) != nil {
-			return
-		}
-		sciter_app.scale(gfx, 2, 2)
-		sciter_app.restore_state(gfx)
-	}, nil))
+				if sciter_app.save_state(gfx) != nil {
+					return
+				}
+				sciter_app.scale(gfx, 2, 2)
+				sciter_app.restore_state(gfx)
+			}, nil))
 	check("release_image (state stack)", sciter_app.release_image(surface))
 }
 

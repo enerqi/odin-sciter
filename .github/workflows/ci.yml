@@ -51,6 +51,9 @@ jobs:
         with:
           odin-version: ${{ env.ODIN_VERSION }}
           just-version: ${{ env.JUST_VERSION }}
+          # for `just format-check`. Only this job formats; the other two would be checking the same
+          # bytes on the same commit.
+          odinfmt: 'true'
 
       # The engine's identity, established rather than assumed. No engine is committed any more, so this
       # downloads it and verifies the download against the SHA-256 in `external/sciter/VENDORED.md` -
@@ -103,6 +106,13 @@ jobs:
       # that never runs. Headers and signatures only, so it needs no engine.
       - name: Check the ownership rule
         run: just check-ownership
+
+      # Formatting is maintained like the type check and the vet flags, not by hand. This needs no
+      # engine and writes nothing - `odinfmt` prints to stdout and the recipe compares bytes. It became
+      # gateable when the formatter stopped rewriting files on every run; the justfile comment on
+      # `format-check` has the detail.
+      - name: Check formatting
+        run: just format-check
 
       - name: Type check everything
         run: just check

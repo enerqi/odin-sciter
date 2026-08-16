@@ -70,7 +70,7 @@ LOGO :: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" 
 </svg>`
 
 App :: struct {
-	handler:  sciter_app.Host_Handler,
+	handler:   sciter_app.Host_Handler,
 	resources: map[string][]u8,
 	requested: [dynamic]string,
 	misses:    int,
@@ -133,10 +133,7 @@ main :: proc() {
 	sciter_app.shutdown()
 }
 
-on_load_data :: proc(
-	handler: ^sciter_app.Host_Handler,
-	request: ^sciter_app.Load_Request,
-) -> sciter_app.Load_Result {
+on_load_data :: proc(handler: ^sciter_app.Host_Handler, request: ^sciter_app.Load_Request) -> sciter_app.Load_Result {
 	app := (^App)(handler.user_data)
 
 	// `request.uri` lives in the temp allocator and is gone after this returns, so the log keeps a copy.
@@ -347,11 +344,7 @@ test_load_data :: proc(
 		}
 		if loader.push_inside {
 			// The copying push, from inside the callback - the only place it works.
-			loader.push_result = sciter_app.data_ready(
-				loader.window,
-				request.uri,
-				transmute([]u8)string(STYLE),
-			)
+			loader.push_result = sciter_app.data_ready(loader.window, request.uri, transmute([]u8)string(STYLE))
 			return .DELAYED
 		}
 		return sciter_app.serve(request, transmute([]u8)string(STYLE))
@@ -618,12 +611,7 @@ test_a_delayed_request_is_answered_after_the_fact_with_data_ready_async :: proc(
 
 	testing.expect_value(
 		t,
-		sciter_app.data_ready_async(
-			g_window,
-			g_loader.delayed_uri,
-			transmute([]u8)string(STYLE),
-			g_loader.delayed_id,
-		),
+		sciter_app.data_ready_async(g_window, g_loader.delayed_uri, transmute([]u8)string(STYLE), g_loader.delayed_id),
 		nil,
 	)
 	sciter_app.heartbeat()

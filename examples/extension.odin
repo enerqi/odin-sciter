@@ -41,10 +41,7 @@ g_state: struct {
 // `proc "system"` for the same reason as everything in `package sciter`: SCAPI is empty on Linux and
 // macOS and `__stdcall` on 32-bit Windows, which is what Odin spells "system".
 @(export)
-SciterLibraryInit :: proc "system" (
-	psapi: ^sciter.Isciter_Api,
-	plibobject: ^sciter.Value,
-) -> b32 {
+SciterLibraryInit :: proc "system" (psapi: ^sciter.Isciter_Api, plibobject: ^sciter.Value) -> b32 {
 	// The engine calls in with no Odin context - there is no runtime set up on this thread as far as
 	// Odin is concerned, so one has to be established before anything allocates.
 	context = runtime.default_context()
@@ -99,9 +96,7 @@ ext_version :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_app.V
 	g_state.calls += 1
 
 	v := sciter_app.version()
-	return sciter_app.value_from(
-		fmt.tprintf("%d.%d.%d.%d", v[0], v[1], v[2], v[3]),
-	)
+	return sciter_app.value_from(fmt.tprintf("%d.%d.%d.%d", v[0], v[1], v[2], v[3]))
 }
 
 // State survives across calls, which is most of the reason to write an extension at all.
