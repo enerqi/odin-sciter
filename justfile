@@ -1,28 +1,14 @@
-# `cmd.exe` for one reason: it starts in ~9ms. just launches a shell per recipe line, so startup is a
-# fixed tax on every build. Bare `<shell> exit` under hyperfine: cmd ~9ms, `nu -c` ~41ms (the original
-# default here), `powershell -NoLogo -NoProfile -Command` ~143ms (which replaced nu). Per recipe line
-# that was ~178ms under PowerShell against ~45ms under cmd - so `just rerun`, whose entire purpose is
-# skipping the compile, spent ~178ms of shell to launch a binary that prints one line.
-#
-# cmd also wins the portability argument that put PowerShell here over nu: it is on every Windows,
-# needs no install, and has no profile to make a recipe unreproducible. The cost is that it is a poor
-# language for a multi-line recipe - which does not bite, because every Windows body below is a single
-# command and anything with logic uses `[script]`.
+# `cmd.exe` starts in ~9ms and always available. just launches a shell per recipe line.
+#  - alternatives: `nu -c` ~41ms, `powershell -NoLogo -NoProfile -Command` ~143ms
+#  - cost: it is a poor language for a multi-line recipe, hence uv -> python preferred for more complex tasks
 set windows-shell := ["cmd.exe", "/c"]
 set shell := ["bash", "-c"]
 set unstable  # [script] feature - https://github.com/casey/just/issues/1479
 set lazy
 
-# `python` alone is not a reliable cross-platform lookup: scoop (Windows) installs whatever version was
-# last `scoop install`ed under the bare name `python`, with no version pin, and a bare `python3`/`python`
-# on Linux is whatever the distro shipped. `uv run -p 3.14 python` sidesteps both - uv resolves (and
-# downloads if missing) the newest 3.14 patch it knows of, the same on every platform, so uv becomes the
-# one tool these recipes depend on instead of a system python. `--no-project`: without it, `uv run` walks
-# up from cwd looking for a pyproject.toml/uv.toml to treat as the project root - none exists above this
-# repo today, but if one ever did (e.g. a stray python project two directories up), these recipes would
-# silently start syncing/using *that* project's venv and pinned version instead of the one below.
-# `--no-project` disables that discovery so the version here is the only one that applies. Recipes opt in
-# with the bare `[script]` attribute (no interpreter argument) to pick this up.
+# `python` alone is not a reliable cross-platform lookup (cf. python/python3/python3.x)
+# uv resolves/downloads on every platform and --no-project means no looking for pyproject.toml / local .venv
+# just recipes opt in with the bare `[script]` attribute (no interpreter argument)
 set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 
 # The same interpreter, for the recipes that run a *committed script file* rather than an inline
@@ -32,27 +18,11 @@ set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 # comment explaining a rule the others no longer followed. One spelling, one place to change it.
 py := "uv run --no-project -p 3.14 python"
 
-# Set by the newest just feature used below - currently user-defined functions (1.49), for
-# `target_path`. Older features it also needs: `join()` 1.37, f-strings 1.44, `set lazy` 1.47.
-# Without this an old just reports a plain syntax error at the offending line, which reads like a
-# corrupt justfile rather than an out-of-date tool. Keep the README and `odin-skel doctor` in step.
+# Newest just feature used below is user-defined functions (1.49). Keep the README and `odin-skel doctor` in step.
 set minimum-version := "1.49.0"
-
-main_name := "main.exe"
 
 # Shared-library extension, for `just extension`. Sciter's loadLibrary() takes a name without one.
 shared_ext := if os() == "windows" { ".dll" } else if os() == "macos" { ".dylib" } else { ".so" }
-
-# Where packfolder lives inside an SDK checkout, per platform (note: no x64 subfolder).
-packfolder_platform := if os() == "windows" { "windows" } else if os() == "macos" { "macosx" } else { "linux" }
-
-# Where scapp lives inside an SDK checkout, per platform.
-scapp_platform := if os() == "windows" { "windows/x64" } else if os() == "macos" { "macosx" } else { "linux/x64" }
-
-# Where the inspector lives inside an SDK checkout. It does NOT follow `scapp_platform`: on macOS the
-# inspector ships as an .app bundle, so the real executable sits under Contents/MacOS rather than next
-# to scapp.
-inspector_rel := if os() == "windows" { "windows/x64/inspector.exe" } else if os() == "macos" { "macosx/inspector.app/Contents/MacOS/inspector" } else { "linux/x64/inspector" }
 
 # The pinned engine, and where to fetch it when it is not on disk.
 #
@@ -75,10 +45,9 @@ engine_sha256 := if os() == "windows" { "b49ff94759951c4dd87f18a0edac466adb48a35
 engine_rel := if os() == "windows" { "windows/x64/sciter.dll" } else if os() == "macos" { "macosx/libsciter.dylib" } else { "linux/x64/libsciter.so" }
 engine_path := "lib/" + engine_rel
 
-# Suffix on the SDK's own tools. They are `packfolder`/`scapp` everywhere except Windows, where they
-# are `packfolder.exe`/`scapp.exe` - which is what `just pack` and `just extension-run` open.
+# Suffix on a native executable, for the tool paths built below (`odinfmt_bin`, `bindgen_bin`). The SDK's
+# own tools need the same suffix and resolve it in justlib's `sdk_tool`, which owns their layout.
 exe_ext := if os() == "windows" { ".exe" } else { "" }
-test_main_name := "test-main.exe"
 
 # The pinned formatter. odinfmt ships inside an ols release and has no `--version` flag, so nothing
 # about a binary on PATH says which one it is - and different releases disagree about the same source.
@@ -115,54 +84,20 @@ odinfmt_bin := join(odin_tools, "ols", ols_tag, "odinfmt" + exe_ext)
 # separator `join` gives. bash needs no `./` prefix - a path containing a slash is already a path.
 target_path(dir, name) := join("target", dir, name)
 
-# Which linker Odin hands the object files to. `odin build -linker:` accepts exactly four values:
+# Which linker Odin hands the object files to. `-linker:` takes exactly four values: `default` (Odin
+# picks - MSVC `link.exe` on Windows), `lld`, `radlink` (Windows only, bundled with Odin, hence the
+# Windows default here) and `mold` (Linux only, not bundled). Odin has no build cache and relinks on
+# every build, so this is a per-iteration cost. `odin-skel new --linker=VALUE` rewrites the default below.
 #
-#   default   let Odin choose - MSVC `link.exe` on Windows. The portable answer, and what every
-#             platform used before this line existed.
-#   lld       LLVM's linker. Windows and Linux. NOT available on a stock macOS: Odin drives the
-#             link through clang, and Apple's clang ships no lld, so it fails with
-#             "clang: error: invalid linker name in argument '-fuse-ld=lld'" unless you have
-#             installed LLVM yourself. Note this is clang rejecting it, not Odin - `-linker:` takes
-#             the value on every platform, so unlike mold there is no "not supported on this
-#             platform" message to tell you up front.
-#   radlink   RAD Debugger's linker. Windows only, and it ships *with* the Odin toolchain, so it
-#             needs no install - which is why it is the default here. Odin has no build cache and
-#             relinks on every `just run`, so the link step is a cost you pay on each iteration.
-#   mold      Linux only, and NOT bundled - `apt install mold` (or equivalent) first.
-#
-# When the default is the better pick: neither radlink nor mold is an *incremental* linker, while
-# MSVC `link.exe` is. Combined with `-use-separate-modules` (and `-lto`, which implies it), an
-# incremental relink of one changed module can beat a full link that is individually faster. That
-# combination is not the default shape of an Odin build - single-module builds have little for LTO
-# to chew on, and statically linked external C libraries do not get LTO regardless - so it is worth
-# measuring on your own project rather than assuming either way.
-#
-# `-lto` is also a hard conflict rather than a preference: on Windows it *requires* `-linker:lld`
-# and exits 1 with "-lto:thin on Windows requires -linker:lld" if anything else is pinned. Use the
-# env var below to get out of the way of it:
+# Override for one command without editing this file - for `-lto`, which on Windows *requires* lld, or
+# for a machine that has mold when the project default does not assume it:
 #
 #     ODIN_LINKER=lld just run_release -lto:thin
 #
-# Odin rejects a linker its platform does not support rather than quietly falling back: asking for
-# mold on Windows exits 1 with "'mold' linker is not supported on this platform" and produces no
-# binary. That is the behaviour you want from a per-machine setting, so nothing here second-guesses
-# it.
-#
-# The default below is what `odin-skel new --linker=<value>` rewrites. The env var overrides it for
-# a single command, without editing this file - for the LTO case above, or for a machine that has
-# mold when the project default does not assume it:
-#
-#     ODIN_LINKER=lld just run
-#
-# It is an env var rather than a recipe argument because `odin` errors on a repeated flag
-# ("Previous flag set: 'linker'"), so passing `-linker:` through a recipe's `*args` would collide
-# with the one added below.
+# An env var rather than a recipe argument because `odin` errors on a repeated flag ("Previous flag set:
+# 'linker'"), so a `-linker:` passed through a recipe's `*args` would collide with the one added below.
+# Which value to pick, and the lld-on-macOS and incremental-linking caveats: README, "Choosing a linker".
 linker := env_var_or_default("ODIN_LINKER", if os() == "windows" { "radlink" } else { "default" })
-
-# SKELETON: name your extra collection (the `xyz:` prefix in `import "xyz:pkg"`) and where it lives.
-# collection_path is read from an env var so the absolute path stays out of git; rename both to suit.
-collection_name := "xyz"
-collection_path := env_var_or_default("XYZ_HOME", "")
 
 # Explicit paths rather than `odinfmt -w .`, because src/prelude.odin is deliberately not a standalone
 # Odin file - it has no `package` line, since bindgen pastes it into sciter.odin under that file's own
@@ -355,15 +290,8 @@ fetch-odinfmt *args: require-uv
 @ensure-odinfmt:
 	if not exist "{{odinfmt_bin}}" just fetch-odinfmt
 
-# Every `run_*`, `test*` and `diagnose` recipe depends on this, so it runs before every build - which
-# makes its cost a tax on every iteration, and worth keeping small. odin does not create the output
-# directory (the linker fails with LNK1104), so this cannot just be dropped.
-#
-# The directories are created all at once rather than one per line because just starts a new shell
-# per recipe line, and on Windows the shell launch dwarfs the work: hyperfine puts `powershell.exe
-# -NoProfile -Command exit` at ~149ms against ~40ms for the actual directory creation. Note the
-# corollary - scoping this to only the one directory a given recipe needs saves ~5ms of that 40 and
-# is not worth the complexity; the shell launch is the whole cost.
+# Every recipe that produces a binary depends on this. Odin does not create the output directory
+# One line/call keeps the cost to one shell command
 # ---
 # ensure the build artifacts top level directory exists
 [unix]
@@ -371,11 +299,7 @@ fetch-odinfmt *args: require-uv
 	mkdir -p target/debug target/fast_debug target/release_debug target/release target/release_nochecks
 
 # `if not exist` rather than swallowing md's "already exists" with `2>nul`, so a genuine failure still
-# sets a non-zero exit.
-#
-# The loop variable is a single `%d`, NOT the `%%d` a .bat file would use: doubling is escaping for
-# batch *files*, and `cmd /c` takes a command *line*. Getting it wrong is not subtle - cmd aborts the
-# recipe with "%%d was unexpected at this time".
+# sets a non-zero exit. The loop var is a single `%d`, NOT the `%%d` that a .bat file would use for escaping
 # ---
 # ensure the build artifacts top level directory exists
 [windows]
@@ -552,9 +476,14 @@ clean:
 	if exist target rmdir /s /q target
 	just mktarget_dirs
 
-# build with some verbose diagnostics
-diagnose *args: mktarget_dirs
-	odin build . -debug -microarch:native -show-more-timings -show-debug-messages -show-timings -linker:{{linker}} -out:{{ target_path("debug", main_name) }} {{args}}
+# It used to build `.`, which cannot work: the root package is `package sciter`, a library with no
+# `main`, so every invocation died on `Undefined entry point procedure 'main'` before printing a single
+# timing. Repointed at `examples/NAME.odin` like the rest of the build family, and to the same output
+# path as `run_debug` so `just rerun NAME` finds what this built.
+# ---
+# build an example with some verbose diagnostics
+diagnose name="hello_window" *args: mktarget_dirs ensure-engine
+	odin build examples/{{name}}.odin -file -debug -microarch:native -show-more-timings -show-debug-messages -show-timings -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
 
 # Cross platform: Sublime then offers them in every window. The `.sublime-project` file is
@@ -664,26 +593,12 @@ sublime-build-init:
 	print("added build_systems stub to " + path)
 
 
-# Resolves an extra collection import (`import "{{collection_name}}:pkg"`). Only needed when you pull
-# packages from a directory outside this project. ols.json holds a machine-specific absolute path, so
-# gitignore it and regenerate after cloning or when the path changes:
-#     XYZ_HOME=/path/to/collection just ols-config
-# FILL IN: rename collection_name / collection_path (and the XYZ_HOME env var) above to match your collection.
-# ---
-# SKELETON: (re)generate ols.json so the Odin language server resolves an extra collection
-[script]
-ols-config:
-	import json, sys
-	path = r"{{collection_path}}"
-	if not path:
-		sys.exit("set the collection path env var first, e.g. XYZ_HOME=/path/to/collection just ols-config")
-	config = {
-		"$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
-		"collections": [{"name": "{{collection_name}}", "path": path}],
-	}
-	with open("ols.json", "w") as f:
-		f.write(json.dumps(config, indent=4) + "\n")
-	print("wrote ols.json -> {{collection_name}} collection at " + path)
+# No `ols-config` recipe: the skeleton ships one to register an extra collection (the `xyz:` in
+# `import "xyz:pkg"`), and this project has none. Everything here is the root package plus `sciter_app`,
+# and the examples reach them by relative path because they live inside the repository - see
+# docs/getting-started.md. The recipe sat unedited with its placeholder `xyz` / `XYZ_HOME` names, so it
+# could only ever have written an ols.json pointing at nothing. Take the skeleton's `ols-config *pairs`
+# if a collection is ever added.
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -1092,6 +1007,17 @@ leak-check: mktarget_dirs ensure-engine
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
 check-ownership:
 	{{py}} .github/scripts/check-ownership.py
+
+
+# Rule 1's static half. `guard_engine_thread` is the runtime check and it only sees calls that reach it,
+# so this asserts that they all do: `engine()` is the package's only route to the function table, and a
+# bare `sciter.api()` anywhere else is a call the guard cannot see. That is not hypothetical - it is how
+# the guard shipped, watching 124 of 199 call sites while `eval`, `call` and every `Value` constructor
+# went unwatched. No engine and no display needed.
+# ---
+# assert the thread-affinity rule in docs/rules.md section 1: every engine call goes through engine()
+check-affinity:
+	{{py}} .github/scripts/check-affinity.py
 
 
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
