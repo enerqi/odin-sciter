@@ -280,6 +280,22 @@ singleton and calls the engine on one thread. And if the macOS suite is ever run
 `ODIN_TEST_THREADS > 1` the guard will trap, correctly: that would be several workers sharing an engine,
 which is the thing rule 1 forbids.
 
+**And the same rule caught the guard's own second half, one run later.** The main-thread check added for
+R10-06 defaulted to on for all of Darwin, so every macOS *test* binary inherited a rule no test can
+satisfy — the runner keeps the main thread for its own loop and submits tests to a pool, at any thread
+count. The windowed examples were fine, because their bootstrap re-arms the guard anyway. `archive` and
+`single_binary` were not: they deliberately have no bootstrap (see above — `single_binary` must not load
+the on-disk engine), their tests touch the engine, and all seven and one of eight respectively trapped on
+their first call.
+
+The fix is `&& !ODIN_TEST` on the default, in `sciter_app/affinity.odin`, rather than an opt-out per
+example: `ODIN_TEST` is a build-level constant visible inside the library, and "no test binary on macOS
+can be on the main thread" is a fact about `odin test`, not about any one example. Eighteen bootstraps
+briefly carried an explicit `main_thread = false`; they no longer need it and no longer have it. The
+useful part of the episode is the shape — **a check whose default no test can satisfy is not a strict
+check, it is a broken build** — and it was found the way the one before it was found, by a platform
+nobody here can run.
+
 Verified before pushing: `just lint`, `just check`, `just cross-check` (all three targets), and the
 Darwin-only blocks compiled *for real* by pointing their `when` at Windows in one file and running
 `odin test` — `odin check` does not enter `when ODIN_TEST`, so nothing else would have compiled them.

@@ -282,9 +282,21 @@ Windows, with `strict = false` so the counter can be read instead of trapping:
 | `main_thread = true` (what Darwin gets) | a worker | **1** |
 | `main_thread = true` | main | 0 |
 
-The Darwin test bootstrap passes `main_thread = false` alongside its re-arm, for the reason in R10-08:
-the runner has no way to put a test on the main thread, so the requirement is right for an application
-and impossible for a test binary.
+**The first version of this defaulted to on for all of Darwin, and that was wrong** — it went red on the
+next macOS CI run. The eighteen windowed examples were unaffected, because their bootstrap re-arms the
+guard anyway; `archive` and `single_binary`, which deliberately have no bootstrap and whose tests do
+touch the engine, trapped on their first call and took 8 of their 15 tests with them. Odin's runner
+keeps the main thread for its own loop and submits every test to a pool at any `ODIN_TEST_THREADS`
+count, so *no* test binary on macOS can satisfy the rule.
+
+The default is now `ODIN_OS == .Darwin && !ODIN_TEST` — one expression in the library rather than an
+opt-out per example, because `ODIN_TEST` is a build-level constant visible inside `sciter_app` (checked,
+not assumed) and "a test binary is never on the main thread" is a fact about `odin test` and not about
+any one example. It also means the eighteen bootstraps need no `main_thread` argument at all, and
+carrying one would have taught the nineteenth example to copy it.
+
+The general shape is worth more than the fix: **a check whose default no test can satisfy is not a
+strict check, it is a broken build.** Both times this guard has been wrong, macOS is what said so.
 
 ### R10-07 — nothing tests guard coverage, and the test that could is deliberately shaped not to  [severity: nit]
 

@@ -50,7 +50,7 @@ when ODIN_DEBUG {
 	g_affinity := Affinity {
 		on          = true,
 		strict      = true,
-		main_thread = ODIN_OS == .Darwin,
+		main_thread = ODIN_OS == .Darwin && !ODIN_TEST,
 	}
 
 	// **macOS needs a stronger rule than the other two platforms, and this is how it is checked.**
@@ -66,6 +66,15 @@ when ODIN_DEBUG {
 	// process's first thread - verified directly on macOS by comparing thread ids in a probe, which is
 	// also the fact the Darwin test bootstrap is built on. So the main thread's id can be recorded with
 	// no platform API, no `foreign import` and nothing to link.
+	//
+	// **Off in a test binary, `&& !ODIN_TEST` above.** Odin's runner builds a `thread.Pool` and submits
+	// every test to it, at any `ODIN_TEST_THREADS` count, keeping the main thread for its own loop - so
+	// no test on macOS can satisfy this rule, and a default that no test can satisfy is a default that
+	// fails every macOS test binary rather than a check. That is not a guess: it shipped that way for
+	// one CI run, and `archive` and `single_binary` - the two examples whose tests touch the engine
+	// without going through the windowed bootstrap - trapped on their first call. `ODIN_TEST` is a
+	// build-level constant, visible here and not only in the `main` package, which is what makes this
+	// the whole fix rather than a per-example opt-out.
 	@(private = "file")
 	g_main_thread: int
 
@@ -89,14 +98,14 @@ when ODIN_DEBUG {
 //     that reason. It is the engine's rule, not this package's invention, so the honest fix is one
 //     thread rather than a disabled check.
 //
-// `main_thread` is the macOS half, and it defaults to on there and off everywhere else. It adds "and
-// that thread must be the process's main thread" to the rule, because AppKit requires it and rule 1 on
-// its own does not - see the note beside `g_main_thread`. Pass `main_thread = false` where the split is
-// forced and understood: a test binary, whose tests run on a `thread.Pool` worker no matter what, is the
-// case it exists for, and the Darwin bootstrap in the examples is where it is used.
+// `main_thread` is the macOS half: it adds "and that thread must be the process's main thread" to the
+// rule, because AppKit requires it and rule 1 on its own does not - see the note beside `g_main_thread`.
+// The default matches the state that field starts in, on for a macOS **program** and off for everything
+// else, a macOS *test binary* included. Pass it explicitly to measure the check itself, which is how it
+// was tested from Windows.
 //
 // Calling it also re-arms: the next guarded call decides which thread is the engine's.
-check_thread_affinity :: proc(on := true, strict := true, main_thread := ODIN_OS == .Darwin) {
+check_thread_affinity :: proc(on := true, strict := true, main_thread := ODIN_OS == .Darwin && !ODIN_TEST) {
 	when ODIN_DEBUG {
 		// One field at a time, atomically, rather than a whole-struct assignment. The guard reads these
 		// from whatever thread it happens to be on, so a plain store races those reads - and this is the

@@ -87,7 +87,10 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   `check_thread_affinity(main_thread = …)`, on by default on Darwin. AppKit aborts the process if the
   engine's singleton is built anywhere but the main thread, and rule 1 on its own permits a consistent
   worker — which passes every check here and then dies in Apple's code. No platform API involved:
-  `@(init)` runs on the first thread, so recording its id there is the whole implementation.
+  `@(init)` runs on the first thread, so recording its id there is the whole implementation. **Off in a
+  test binary** (`&& !ODIN_TEST`): Odin's runner keeps the main thread for its own loop and submits every
+  test to a pool, so no macOS test binary can satisfy the rule — a default no test can satisfy is a
+  broken build rather than a strict check, which is what one CI run said.
 - **Every exported wrapper procedure is now reached by a test.**
 - `released_resources()`, `app_event(n)`, and twelve further `scoped_` constructors.
 
