@@ -649,7 +649,7 @@ test_animation_frame_is_one_shot :: proc(t: ^testing.T) {
 
 	deadline := time.now()
 	for watch.ticks == 0 && time.since(deadline) < 2 * time.Second {
-		sciter_app.run_once()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	testing.expect_value(t, watch.ticks, 1)
 
@@ -812,8 +812,8 @@ test_request_element_data_delivers_to_the_element :: proc(t: ^testing.T) {
 
 	deadline := time.now()
 	for watch.data_bytes == 0 && time.since(deadline) < 3 * time.Second {
-		sciter_app.run_once()
-		sciter_app.heartbeat()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	testing.expect(t, watch.data_bytes > 0, "the bytes arrived as a .DATA_ARRIVED event")
 	// Measured: a `file://` load that worked answers 0, not 200 - `status` is the HTTP code only when
@@ -825,8 +825,8 @@ test_request_element_data_delivers_to_the_element :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.request_element_data(scroller, "file:///no/such/file", .RAW), nil)
 	fail_deadline := time.now()
 	for watch.data_status == 0 && time.since(fail_deadline) < 3 * time.Second {
-		sciter_app.run_once()
-		sciter_app.heartbeat()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	testing.expect_value(t, watch.data_bytes, 0)
 	testing.expect(t, watch.data_status != 0, "a missing file arrives with a non-zero status")
@@ -854,8 +854,8 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 
 	deadline := time.now()
 	for watch.data_bytes == 0 && time.since(deadline) < 3 * time.Second {
-		sciter_app.run_once()
-		sciter_app.heartbeat()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	testing.expect(t, watch.data_bytes > 0, "the body arrived as a .DATA_ARRIVED event")
 
@@ -868,8 +868,8 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 	)
 	params_deadline := time.now()
 	for watch.data_bytes == 0 && time.since(params_deadline) < 3 * time.Second {
-		sciter_app.run_once()
-		sciter_app.heartbeat()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 
 	// The same handle rules as everything else that takes an element.

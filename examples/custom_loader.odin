@@ -632,7 +632,7 @@ test_a_delayed_request_is_answered_after_the_fact_with_data_ready_async :: proc(
 		),
 		nil,
 	)
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	testing.expect_value(t, element_style("#h", "color"), "#00FF00")
 	testing.expect_value(t, element_style("#p", "color"), "#0000FF")

@@ -958,16 +958,16 @@ test_location_origins :: proc(t: ^testing.T) {
 	// document, so these two disagree - a wrapper that ignored the origin would return one rect.
 	testing.expect(t, from_root.y != from_container.y, "root and container origins must differ")
 
-	// **`.View` and `.Root` are the same origin on Windows and different on Linux.** `.Root` is the
-	// document's root element, `.View` is the window's client area, and whether there is anything
-	// between them is a windowing-system question rather than a DOM one. Asserted both ways rather than
-	// dropped, because "these two origins coincide" is exactly the kind of thing that is true on the
-	// machine you develop on and false on the one you ship to.
-	when ODIN_OS == .Windows {
-		testing.expect_value(t, from_view, from_root)
-	} else {
-		testing.expect(t, from_view != from_root, "the view origin is not the root origin")
-	}
+	// **`.View` and `.Root` coincide here, and the reason is the interesting part.** `.Root` is the
+	// document's root element and `.View` is the client area, so whether anything sits between them is a
+	// windowing-system question rather than a DOM one - and these tests now run against a *windowless*
+	// view, where there is no window and therefore nothing to sit between.
+	//
+	// Measured: windowed, the two agree on Windows and differ on Linux (which is what this assertion
+	// used to say, and it cost a CI run to find out that it had stopped being true). Windowless, they
+	// agree on both - the surface *is* the client area. So the distinction the `.View` origin exists to
+	// express is one only a real window can make, which is worth knowing before designing around it.
+	testing.expect_value(t, from_view, from_root)
 }
 
 // Two collapse rules for out-of-flow elements, both of which have cost this repository a false engine
@@ -1001,7 +1001,7 @@ test_out_of_flow_elements_collapse :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.load_html(window, POSITIONED), nil)
 	for _ in 0 ..< 10 {
-		sciter_app.run_once()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	root, rerr := sciter_app.root(window)
 	testing.expect_value(t, rerr, nil)
@@ -3369,7 +3369,7 @@ test_a_tag_is_interned_and_outlives_the_element_it_came_from :: proc(t: ^testing
 	// Remove the element the string came from, finalizing it, and the string is still there.
 	_, rerr := sciter_app.remove_element(first, true)
 	testing.expect_value(t, rerr, nil)
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	testing.expect_value(t, name, "li")
 
 	// Put the document back: this file's tests share one window.

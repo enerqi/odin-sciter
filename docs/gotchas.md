@@ -205,6 +205,20 @@ only while you are calling `windowless_heartbeat`. `request_loader`'s tests beca
 three) with a windowless harness for exactly that reason: the request had not finished by the time the
 assertion read it. Beat the view until the thing you are waiting for has happened, or use a window.
 
+And the sharp edge on macOS, which is a process-ending version of the same rule: **`run_once` and
+`heartbeat` are the *application* pump, and on macOS they may only be called from the main thread.**
+Both reach `xwing::application::heartbit` → `nextEventMatchingMask`, which AppKit answers with
+
+```
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException',
+    reason: 'nextEventMatchingMask should only be called from the Main Thread!'
+```
+
+— not an error code, an abort of the whole process. A test is never on the main thread there, so code
+that drives a windowless view from a test drives *the view*, with `windowless_heartbeat`, and never the
+application. Measured: `examples/input.odin` aborted exactly this way after its harness moved to a
+windowless view but its tests kept calling `run_once`.
+
 ---
 
 ## Where the knowledge actually lives

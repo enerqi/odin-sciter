@@ -40,6 +40,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "core:time"
 
 DOC :: `<html>
 <head><style>
@@ -522,7 +523,7 @@ test_elements_created_later_are_asked_about :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, sciter_app.set_attribute(el, "style", "behavior: my-gauge"), nil)
 	testing.expect_value(t, sciter_app.insert_element(el, body), nil) // nil index: append
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	testing.expectf(t, len(app.requested) == before + 1, "one more request, got %d", len(app.requested) - before)
 	testing.expect_value(t, app.requested[len(app.requested) - 1], "my-gauge")
@@ -541,7 +542,7 @@ test_removing_the_element_detaches_the_behavior :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	_, g2_rmerr := sciter_app.remove_element(g2)
 	testing.expect_value(t, g2_rmerr, nil)
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	testing.expect_value(t, app.freed, freed_before + 1)
 	testing.expect_value(t, app.live, live_before - 1)
@@ -558,7 +559,7 @@ test_replacing_the_document_detaches_everything :: proc(t: ^testing.T) {
 
 	// A second document with no behaviors at all, so nothing new attaches to confuse the count.
 	testing.expect_value(t, sciter_app.load_html(g_view.window, `<html><body><p>nothing here</p></body></html>`), nil)
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	testing.expect_value(t, app.live, 0)
 	testing.expect_value(t, app.freed, 5)
@@ -582,7 +583,7 @@ test_a_behavior_handler_receives_its_subscription :: proc(t: ^testing.T) {
 	// Three quarters of the way across the bar, in the element's own coordinates.
 	_, serr := sciter_app.send_mouse(g1, .MOUSE_MOVE, {(box.width * 3) / 4, box.height / 2})
 	testing.expect_value(t, serr, nil)
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	text, terr := sciter_app.text(g1, context.temp_allocator)
 	testing.expect_value(t, terr, nil)

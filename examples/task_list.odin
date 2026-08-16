@@ -942,7 +942,7 @@ test_keyboard_drives_the_model :: proc(t: ^testing.T) {
 	press :: proc(el: sciter_app.Element, key: u32) {
 		sciter_app.send_key(el, .DOWN, key)
 		for _ in 0 ..< 10 {
-			sciter_app.run_once()
+			sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 		}
 	}
 
@@ -983,11 +983,11 @@ test_entry_field_adds_a_task :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, sciter_app.set_focus(entry), nil)
 	for _ in 0 ..< 10 {
-		sciter_app.run_once()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 	testing.expect_value(t, sciter_app.send_text(entry, "typed in"), nil)
 	for _ in 0 ..< 10 {
-		sciter_app.run_once()
+		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	}
 
 	commit_entry(app)

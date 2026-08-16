@@ -358,10 +358,14 @@ have_display :: proc() -> bool {
 // would be slow, and closing one is itself hazardous (see `close` in sciter_app/window.odin) - but it
 // makes the tests here order-coupled: **a test that changes the document must put it back**, usually by
 // reloading `DOC`, or it breaks a later test and the failure points at the wrong one.
-g_view: sciter_app.Windowless_View
+g_window: sciter_app.Window
 
 @(private = "file")
 test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
+	if !have_display() {
+		fmt.println("skipping - this test needs a window")
+		return nil, false
+	}
 	if !sciter_app.load_engine() {
 		testing.fail_now(t, "the Sciter engine is not loadable - set SCITER_LIB")
 	}
@@ -375,29 +379,22 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	// entirely. Harmless on Linux, where it just makes the engine's warnings visible.
 	sciter_app.set_default_debug_output()
 
-	if g_view.window == nil {
+	if g_window == nil {
 		// The engine keeps the argv and the window for the life of the process; allocating them outside
 		// the test runner's tracking allocator keeps them from being reported as leaks.
 		context.allocator = runtime.default_allocator()
 
+		sciter_app.init()
 
-		v, err := sciter_app.create_windowless({width = 400, height = 300})
+		w, err := sciter_app.create_window({width = 400, height = 300})
 		testing.expect_value(t, err, nil)
-		if v.window == nil {
+		if w == nil {
 			return nil, false
 		}
-		g_view = v
+		g_window = w
 	}
-	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
-
-	// Layout happens on the heartbeat rather than on the load, so anything measured - `location`,
-	// `scroll_info`, intrinsic sizes - reads zeroes without this. Eight beats is what
-	// `examples/windowless.odin` settles in, and the paint is what actually drives layout.
-	for i in 0 ..< 8 {
-		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
-		sciter_app.paint_windowless(&g_view)
-	}
-	return g_view.window, true
+	testing.expect_value(t, sciter_app.load_html(g_window, DOC), nil)
+	return g_window, true
 }
 
 // A minimal handler that only records what arrived.

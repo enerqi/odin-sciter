@@ -566,7 +566,7 @@ test_frames_are_accepted :: proc(t: ^testing.T) {
 		"and a part of one",
 	)
 
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	testing.expect(t, sciter_app.video_stop_streaming(dest), "stop_streaming")
 
 	// Stopping does not kill the site - the element is still there, ready for another stream.
@@ -659,9 +659,9 @@ test_an_external_frame_is_released_when_the_engine_is_done_with_it :: proc(t: ^t
 	)
 
 	// The release may be immediate or may wait for the upload, so give the engine a turn either way.
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 	testing.expect(t, sciter_app.video_stop_streaming(dest))
-	sciter_app.heartbeat()
+	sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
 
 	testing.expect(t, g_released.count > 0, "the release callback must run or every frame leaks")
 	testing.expect(t, g_released.data == raw_data(bytes), "and it hands back the buffer it was given")

@@ -327,28 +327,18 @@ window was just how the harness got one — so eleven examples now build a **win
 which needs no `NSWindow` and therefore no main thread. `sciter_app/windowless.odin` says why this is
 cheap: four procedures are windowless-specific and "everything else in the package works unchanged".
 
-| converted | skips it was carrying on macOS |
-| --- | ---: |
-| `dom_walk` | 72 |
-| `call_odin_from_js` | 17 |
-| `events` | 15 |
-| `input` | 14 |
-| `behavior` | 14 → 1 |
-| `video` | 13 |
-| `eval` | 11 |
-| `graphics_gallery` | 10 |
-| `custom_loader` | 9 |
-| `named_behavior` | 9 |
-| `worker_thread` | 9 |
-| `task_list` | 4 |
+Eleven files converted: `dom_walk`, `call_odin_from_js`, `events`, `input`, `behavior`, `video`, `eval`,
+`graphics_gallery`, `custom_loader`, `named_behavior` and `task_list`. All still pass on Windows, which
+is the point — the same tests, one less requirement.
 
-All of them still pass on Windows, which is the point: the same tests, one less requirement. **Predicted
-macOS skips: 28 rather than 224** — `workbench` 13, `request_loader` 9, `windowless_gl` 5 and
-`behavior`'s one genuine window test. Predicted, not measured: this file's own ledger says predictions
-about the environment hold and predictions about engine behaviour do not, and "does the engine lay out
-the same way windowless on Darwin" is the second kind. CI is the verifier.
+**How much this recovers is not the whole 224**, and the first attempt at this section said it was. Two
+of these files carry a *second*, windowed harness for the tests that genuinely need a window:
+`dom_walk`'s `styled_window` covers 23 of its 74, and those keep their gate and their skip. So the honest
+figure is roughly 130 skips recovered, not 196, and it is a prediction either way. CI is the verifier —
+this file's own ledger says environment predictions hold and engine-behaviour predictions do not, and
+"does the engine lay out the same way windowless on Darwin" is the second kind.
 
-Three did not convert, and each says something:
+Three files did not convert, and each says something:
 
 - **`behavior`'s `test_window_metrics`** reads `ppi`, `min_width` and `min_height` — questions about a
   window, not a document. It keeps a real one, and its skip is now a statement about that test rather
@@ -358,6 +348,29 @@ Three did not convert, and each says something:
   windowed application do not share a process; gotcha 11 has the measurement.
 - **`request_loader`** went flaky, one run in three: a windowless view has no pump, so a request answered
   asynchronously had not finished by the time the assertion read it. Same gotcha, second half.
+- **`worker_thread`** was converted and then reverted: two of its tests are *about* `sciter_app.heartbeat`
+  delivering posted messages, so replacing that call replaces the subject of the test.
+
+### What the first attempt got wrong, and what caught it
+
+Two things, one per platform, and Windows could see neither.
+
+**macOS: a test may not pump the application.** `sciter_app.run_once` and `heartbeat` both reach
+`xwing::application::heartbit` → `nextEventMatchingMask`, and AppKit terminates the process when that is
+called off the main thread — which a test always is. `input` aborted with
+`'nextEventMatchingMask should only be called from the Main Thread!'` and a stack ending in
+`sciter_app::run_once`. Swapping the harness was not enough: **the tests themselves** had to stop
+pumping. Twenty-two calls across six files became `windowless_heartbeat`, and the audit that finds them
+is "a test that reaches the application pump without going through a windowed helper" — zero remain.
+
+**Linux: the `.View` origin stopped differing from `.Root`.** `dom_walk`'s `test_location_origins`
+asserted `.View != .Root` off Windows, which was true of a *window*. Windowless they coincide on every
+platform, because the surface is the client area and there is no window between them. The assertion now
+says that, and the difference is recorded as the measurement it is rather than patched away.
+
+Both are the same lesson in different clothes: **a conversion that passes on the platform you have is
+evidence about that platform only.** The suite ran green on Windows twice before either of these
+surfaced.
 
 Note for applications, since the trace invites the wrong conclusion: none of this affects a real macOS
 app. `main` runs on the main thread, so `create_window` from `main` is correct by construction. Only a
