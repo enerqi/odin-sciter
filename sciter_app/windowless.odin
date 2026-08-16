@@ -11,7 +11,7 @@
 // unchanged, because they all take a `Window` and the view's `window` field is one.
 //
 // Everything below was measured against the vendored 6.0.4.9 on Linux x64 by
-// `examples/windowless.odin` and `spike/windowless/main.odin` rather than read off the headers - and
+// `examples/windowless.odin` rather than read off the headers - and
 // `sciter-x-msg.h` was then checked against the result and agrees: `SCITER_X_MSG` really is a bare
 // `{ UINT msg; }` with no size field, so the layout derived by measurement is the layout upstream
 // declares. Nobody needs to derive it again. `docs/EMBEDDING.md` is the long version.

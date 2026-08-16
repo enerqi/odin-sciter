@@ -23,19 +23,19 @@ sciter_app.windowless_heartbeat(&view)
 sciter_app.paint_windowless(&view)   // view.pixels is now RGBA
 ```
 
-Everything below was measured against the vendored `libsciter.so` 6.0.4.9 on Linux x64 - first by
-[`spike/windowless/main.odin`](../spike/windowless/main.odin) and then, in more detail, by the example
-and its tests. Not read off the headers.
+Everything below was measured against the vendored `libsciter.so` 6.0.4.9 on Linux x64, by
+[`examples/windowless.odin`](../examples/windowless.odin) and its tests. Not read off the headers.
 
 **One earlier finding on this page has been retracted**: the mouse works, and the section that said it
 did not is kept below with the reason it was wrong, because the mistake is more instructive than the
 correction.
 
 ```sh
-just example windowless              # the wrapped version, writes three PPMs
-odin run spike/windowless            # the original spike
-odin run spike/windowless -- res     # reproduces the SXM_RESOLUTION crash
+just example windowless              # writes three PPMs
 ```
+
+`SXM_RESOLUTION` has no wrapper and nothing here sends it, deliberately - it crashes the process one
+message later. See [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md).
 
 ## The API
 
@@ -58,8 +58,11 @@ The one thing the headers never say. **It is an opaque key, not a handle.** The 
 on the pointer value and never dereferences it as a window.
 
 Confirmed twice: the SDK's own cross-platform windowless demo (`demos.lite/lite-sdl/raster/main.cpp` in
-`sciter-js-sdk`) passes an `SDL_Window*`, which is not an OS window handle either; and the spike here
-passes a literal `rawptr(uintptr(0xBEEF))`, which works end to end.
+`sciter-js-sdk`) passes an `SDL_Window*`, which is not an OS window handle either; and this package
+passes the address of a one-byte heap allocation it makes for the purpose
+([`sciter_app/windowless.odin`](../sciter_app/windowless.odin), `create_windowless`), which works end to
+end. An arbitrary integer cast to a pointer works just as well; the allocation is only how a distinct
+key per view gets minted.
 
 The Windows-only `demos.lite/lite-bitmap` demo passes a real `HWND`, which is what makes this look
 ambiguous — but that demo needs the `HWND` for its own Win32 message loop, not for Sciter.
@@ -180,7 +183,8 @@ instead — measured working, as often as you like, and cheaper anyway.
 This section used to say that no mouse event ever reaches a windowless document, and concluded that the
 mode was display-only. **That was wrong, and the cause is worth more than the correction.**
 
-The spike caught clicks with a full-size transparent overlay, the way a browser page would:
+The test document behind that finding caught clicks with a full-size transparent overlay, the way a
+browser page would:
 
 ```css
 #hit { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }

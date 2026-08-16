@@ -147,7 +147,6 @@ format:
 	odinfmt -w sciter_app
 	odinfmt -w examples
 	odinfmt -w docs/snippets
-	odinfmt -w spike
 
 # The gate for the above, and it exists now because the two things that blocked it stopped being true.
 # The note kept in CHANGELOG.md and PLAN-TESTING-AND-EXAMPLES.md was:

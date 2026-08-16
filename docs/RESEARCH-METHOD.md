@@ -135,13 +135,15 @@ odin build . -out:/dev/null     # exit 0
 Exit 0. `proc "system"` exists and is right: `__stdcall` on 32-bit Windows, matching Sciter's `SCAPI`,
 and the platform default elsewhere.
 
-**Does the ABI theory hold at all?** A ~40-line Odin program (kept at
-[`spike/smoke/main.odin`](../spike/smoke/main.odin)) declares only the first eight members of
-`ISciterAPI`, opens the library with `core:dynlib`, resolves `SciterAPI`, calls it, and reads those
+**Does the ABI theory hold at all?** A ~40-line Odin program declared only the first eight members of
+`ISciterAPI`, opened the library with `core:dynlib`, resolved `SciterAPI`, called it, and read those
 slots. Truncating the struct is safe — the engine owns the memory and only fields at the front are read
-— which is what makes an incremental spike possible without first transcribing 189 members.
+— which is what makes an incremental spike possible without first transcribing 189 members. (The
+program itself is gone, superseded by [`examples/hello_window.odin`](../examples/hello_window.odin) and
+by [`examples/api_map.odin`](../examples/api_map.odin), which verifies the whole vtable mechanically
+rather than its first eight slots. It is in the history if anyone wants it.)
 
-Every number it prints is a separate confirmation: `version` matching `SCITER_API_VERSION` proves the
+Every number it printed was a separate confirmation: `version` matching `SCITER_API_VERSION` proves the
 struct starts where we think and the `u32`-then-pointers padding is right; `SciterClassName()` returning
 `"sciter-view"` proves slot 1's offset *and* that `WCHAR` is genuinely UTF-16 on Linux (checked twice —
 first by dumping raw code units, `115 99 105 116 101 114 45 118 105 101 119 0`, one `u16` per ASCII
@@ -292,7 +294,7 @@ The rig is one small program and a nested X server, so nothing touches the real 
 ```sh
 Xephyr :77 -screen 1024x768 &          # a second X server, in a window
 DISPLAY=:77 ./drag_and_drop &          # the example under test
-DISPLAY=:77 python3 spike/xdnd/xdnd_source.py   # ctypes, no dependencies: a synthetic XDND drag source
+DISPLAY=:77 python3 tools/xdnd_source.py       # ctypes, no dependencies: a synthetic XDND drag source
 ```
 
 The source is the smallest XDND implementation that works: find the window advertising `XdndAware`,

@@ -363,7 +363,7 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 | `external/sciter/` | Vendored SDK headers, both licences, and `VENDORED.md` (pinned version) |
 | `lib/` | The engine binaries |
 | `examples/` | Runnable examples, one file each, plus `assets/`. `extension.odin` is a shared library, not an application. |
-| `spike/smoke/` | The minimal ABI handshake, written before any bindings existed |
+| `tools/xdnd_source.py` | A minimal X11 drag source, to measure a real system drop against `examples/drag_and_drop.odin` |
 | `docs/` | Plan, findings, and how the research was done |
 
 

@@ -231,6 +231,21 @@ has landed on top of it since.
   `uintptr`, kept apart from the package's other `uintptr` tokens. Untyped constants are unaffected.
   **Breaking** only where an id is stored in a variable.
 
+### Removed
+
+- **`spike/` is gone** — `spike/skeleton`, `spike/windowless` and `spike/smoke`, 752 lines of
+  development scratch programs from before the bindings existed. `just format` formatted them and
+  nothing compiled them, so they were the only Odin in the tree that could stop building unnoticed, and
+  what they demonstrated is covered by [`examples/hello_window.odin`](examples/hello_window.odin),
+  [`examples/api_map.odin`](examples/api_map.odin) and
+  [`examples/windowless.odin`](examples/windowless.odin). They are in the history.
+  [`docs/review/07-build-ci.md`](docs/review/07-build-ci.md) R7-07. The rule left behind: Odin in this
+  tree is either compiled or deleted. Not breaking — nothing imported them.
+- **`spike/xdnd/xdnd_source.py` moved to [`tools/xdnd_source.py`](tools/xdnd_source.py)**, kept rather
+  than deleted because it is a live test harness, not scratch work: it is the synthetic X11 drag source
+  that measures a real system drop against `examples/drag_and_drop.odin`, and no test can stage a drag
+  itself. Its invocation is in [`docs/RESEARCH-METHOD.md`](docs/RESEARCH-METHOD.md) section 9.
+
 ### Added
 
 - **The macOS engine is pinned** — `lib/macosx/libsciter.dylib`, 50 029 168 bytes, universal

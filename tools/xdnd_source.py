@@ -8,7 +8,7 @@ Run it against a nested X server so nothing touches the real desktop:
 
     Xephyr :77 -screen 1024x768 &
     DISPLAY=:77 SCITER_LIB=$PWD/lib/linux/x64 ./target/debug/drag_and_drop.exe &
-    python3 spike/xdnd/xdnd_source.py :77 300 200 3.0
+    python3 tools/xdnd_source.py :77 300 200 3.0
 
 Usage: xdnd_source.py <display> <root_x> <root_y> [delay before dropping]
 

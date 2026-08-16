@@ -133,7 +133,7 @@ heights are not involved*:
 
 The three findings these rules cost:
 
-- `spike/windowless/main.odin` → "the engine never delivers mouse events in windowless mode" —
+- the original windowless spike → "the engine never delivers mouse events in windowless mode" —
   retracted (rule 1), see [`EMBEDDING.md`](./EMBEDDING.md).
 - `examples/windowless.odin` → "the intrinsic behaviors ignore the windowless mouse" — retracted
   (rule 2); a click presses a button, toggles a checkbox and focuses an editor.

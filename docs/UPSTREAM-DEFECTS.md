@@ -38,7 +38,9 @@ frame that a windowless view does not have. Because the fault surfaces one messa
 presents as "the heartbeat crashes".
 
 **Reproduction:** create a windowless view, load any document, send `SXM_RESOLUTION`, then send one
-`SXM_HEARTBIT`. `spike/windowless/main.odin -- res` in this repository does exactly that.
+`SXM_HEARTBIT`. No example in this repository does that on purpose: `SXM_RESOLUTION` is the one
+windowless message [`sciter_app/windowless.odin`](../sciter_app/windowless.odin) does not wrap, so
+reproducing it means calling `SciterProcX` with a `Sciter_X_Msg_Resolution` by hand.
 
 **Suggested fix:** `on_media_changed` should skip `setup_window_frame` when the view has no window
 frame, as it already must elsewhere in windowless mode.

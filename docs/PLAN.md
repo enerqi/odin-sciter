@@ -387,10 +387,8 @@ odin-sciter/
     assets/                       # hello.htm + css + svg; extension/index.htm
       app/                        # the folder packfolder packs, for `archive`
       app.pak                     # COMMITTED 2 KB archive, so `archive` needs no SDK
-  spike/
-    smoke/main.odin               # minimal ABI handshake, no generated code
-    xdnd/xdnd_source.py           # a minimal X11 drag source, to measure a real system drop
-    skeleton/main.odin            # the template main this repo started from; no Sciter in it
+  tools/
+    xdnd_source.py                # a minimal X11 drag source, to measure a real system drop
   docs/
     snippets/snippets.odin        # every Odin block in docs/*.md, wrapped just enough to compile
 ```
@@ -495,7 +493,8 @@ types that are already right, or the same conversions get written twice.
 ## 8. Milestones
 
 1. ~~Prerequisites — build odin-c-bindgen, get the SDK from GitLab~~ **done**
-2. ~~Spike — prove the ABI handshake from Odin~~ **done** (`spike/smoke`)
+2. ~~Spike — prove the ABI handshake from Odin~~ **done** (the spike has since been deleted; the
+   handshake is `examples/hello_window.odin` and the vtable check is `examples/api_map.odin`)
 3. ~~Vendor headers + Linux binary, pin the version, record licensing~~ **done**
 4. ~~Generate — flatten, `bindgen.sjson`, prelude, post-process~~ **done**
 5. ~~Verify the generated struct against the shipped engine~~ **done** (`examples/api_map`)

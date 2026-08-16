@@ -55,7 +55,7 @@ PACKAGES = (".", "sciter_app", "docs/snippets")
 # `src/prelude.odin` is deliberately absent: it has no `package` line, because bindgen pastes it into
 # sciter.odin under that file's own one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it
 # and fails the whole run.
-FORMAT_ROOTS = ("sciter_app", "examples", "docs/snippets", "spike")
+FORMAT_ROOTS = ("sciter_app", "examples", "docs/snippets")
 
 
 def format_sources() -> list[str]:

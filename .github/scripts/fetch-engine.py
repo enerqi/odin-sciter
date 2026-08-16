@@ -7,11 +7,11 @@
 single place the pin lives. The relative path is the same under both roots - `bin/<rel>` upstream,
 `lib/<rel>` here.
 
-**Plain `python3` rather than the justfile's `uv run` interpreter, deliberately.** This runs in CI and on
-a contributor's first build, where the fewest dependencies wins: a `[script]` recipe fails on a runner
-with no uv installed with `No such file or directory (os error 2)`, which is what happened the first
-time this was wired up. `.github/scripts/check-ownership.py` is invoked the same way for the same
-reason; the uv interpreter is for the developer-machine recipes that can assume it.
+**Run through the justfile's `{{py}}` (`uv run --no-project -p 3.14 python`), like every other script
+here.** This used to insist on a plain `python3` on the grounds that a CI runner might not have uv, which
+stopped being true once `.github/actions/toolchain` installed uv on all three platforms before any recipe
+runs. `fetch-engine` is the first recipe a fresh clone executes, so `require-uv` guards it - see the
+comment above the recipe.
 
 **Why the hash and not the size.** The upstream tag `6.0.4.9` serves a `libsciter.so` of exactly the
 same 25 015 296 bytes as `6.0.4.9-bis`, with a different SHA-256 - measured, by fetching both. A check

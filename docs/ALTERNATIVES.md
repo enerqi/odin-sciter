@@ -605,7 +605,8 @@ buffer or GPU texture **you** allocate, which is exactly the shape an ImGui `Ima
 `DrawTexture` call wants. So a Sciter pane can live inside a frame loop somebody else owns.
 
 Measured rather than assumed, in [`EMBEDDING.md`](./EMBEDDING.md) and
-[`spike/windowless`](../spike/windowless/main.odin), against 6.0.4.9 on Linux x64. The short version:
+[`examples/windowless.odin`](../examples/windowless.odin), against 6.0.4.9 on Linux x64. The short
+version:
 rendering, CSS, QuickJS, the DOM API, hit-testing and `SciterEval` all work with no window in the
 process — but `SXM_RESOLUTION` crashes the engine and `SXM_MOUSE` is never handled, so today it is a
 *display* embedding rather than an interactive one.

@@ -57,19 +57,22 @@ either — it is `bindgen.sjson`'s `imports_file`, pasted verbatim into the gene
 The cost is real and has already been paid once: the skip messages have drifted apart between files, and
 a change to the fixture is a ten-file edit. When you make one, make it in all ten.
 
-### `docs/snippets/` is compiled, `spike/` is not
+### `docs/snippets/` is compiled
 
 **`docs/snippets/snippets.odin` is every Odin code block in the guides**, wrapped in just enough
 scaffolding to compile, and `just check` type-checks it. That is what stops the documentation from
 rotting silently, and it is worth knowing about before you write a code block: add the snippet there,
 in the section matching the guide, and the guide's block becomes something CI keeps honest.
 
-**`spike/` is the opposite and should probably go.** `spike/skeleton`, `spike/windowless` and
-`spike/smoke` are 752 lines of development scratch programs. `just format` formats them; nothing
-compiles them - `just check` does not - so they can stop building without anyone noticing, and what
-they demonstrate is now covered by `examples/windowless.odin` and `examples/hello_window.odin`. They are
-left in place because deleting somebody's scratch work is not a reviewer's call, but they are the only
-Odin in this tree that nothing verifies.
+**`spike/` used to be the opposite, and is now gone.** `spike/skeleton`, `spike/windowless` and
+`spike/smoke` were 752 lines of development scratch programs that `just format` formatted and nothing
+compiled - so they could have stopped building without anyone noticing - and what they demonstrated is
+covered by `examples/windowless.odin` and `examples/hello_window.odin`. Deleted; they are in the
+history. The one part worth keeping was the X11 drag source, now `tools/xdnd_source.py`.
+
+**The rule that outlives them: Odin in this tree is either compiled or deleted.** `examples/` builds,
+`docs/snippets/` type-checks, the tests run. A new directory of Odin that nothing in `just check`
+touches is a directory that will rot.
 
 ### Advancing the engine in a test
 

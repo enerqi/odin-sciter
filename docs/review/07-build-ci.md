@@ -179,6 +179,12 @@ home of every code block in the guides, and how to add to it. Delete `spike/` or
 it served its purpose, the examples superseded it, and it is the only Odin in the tree that nothing
 compiles.
 
+**Done.** `spike/skeleton`, `spike/windowless` and `spike/smoke` are deleted — in the history if anyone
+wants them — and `spike/xdnd/xdnd_source.py`, which is a live test harness rather than scratch work, is
+now `tools/xdnd_source.py`. `spike` is out of `FORMAT_ROOTS` and out of the `format` recipe. The
+`docs/snippets/` half is documented in `docs/PLAN-TESTING-AND-EXAMPLES.md`, along with the rule the
+deletion leaves behind: Odin in this tree is either compiled or deleted.
+
 ## What is good, specifically
 
 - **`bindgen.yml` asserts byte-identical regeneration against a commit-pinned generator.** This is the
