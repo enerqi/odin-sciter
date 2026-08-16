@@ -316,7 +316,8 @@ rather than re-create it.
 ```odin
 item, _ := sciter_app.make_element("li", "third")   // plain text, not parsed
 defer sciter_app.unuse_element(item)                // yours, inserted or not
-sciter_app.insert_element(item, list)               // no index: appended
+el := sciter_app.borrow_element(item)               // Owned_Element -> Element, a free cast
+sciter_app.insert_element(el, list)                 // no index: appended
 ```
 
 **`make_element` and `clone_element` hand back a reference that is yours, and inserting does not

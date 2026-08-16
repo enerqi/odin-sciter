@@ -595,7 +595,7 @@ set_element_value :: proc(element: Element, value: ^Value) -> Error {
 //
 //	item := sciter_app.make_element("li", "third") or_return
 //	defer sciter_app.unuse_element(item)          // yours either way, inserted or not
-//	sciter_app.insert_element(item, list) or_return
+//	sciter_app.insert_element(sciter_app.borrow_element(item), list) or_return
 //
 // and an element that is created and never unused leaks inside the engine, where Odin's allocator
 // tracking cannot see it.

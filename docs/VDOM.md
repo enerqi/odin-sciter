@@ -303,20 +303,22 @@ Stopping after 2 would be a perfectly good outcome.
 - **Where handlers live.** A vnode is rebuilt every frame, so a closure in it is rebuilt too, while
   `attach_handler` needs a stable address that outlives the attachment. The likely answer is that
   handlers are keyed and owned by the layer, not by the vnode — but that is the design's real unknown,
-  and it is the same boundary Fleury's Part 7 ("Where IMGUI Ends") is about, which is
-  [still paywalled](./FLEURY-UI.md#where-the-paywall-starts-and-whats-only-known-from-teasers).
+  and it is the same boundary Fleury's Part 7 ("Where IMGUI Ends") is about, which is still paywalled —
+  see [`ALTERNATIVES.md`](./ALTERNATIVES.md#the-hybrid-an-immediate-api-over-a-retained-cache).
 - **How it composes with `behavior:` names.** `named_behavior` means the engine can attach a widget to
   any element the stylesheet matches, including ones the diff just created. That looks like a good fit —
   the diff owns structure, the engine owns widgets — but it has not been tried.
 - **Whether an immediate-mode call site is wanted on top** (option C in the earlier survey, and the
-  subject of [`FLEURY-UI.md`](./FLEURY-UI.md)). Everything above is the retained half either way, so it
-  is not a fork in the road yet.
+  subject of [the hybrid section in
+  `ALTERNATIVES.md`](./ALTERNATIVES.md#the-hybrid-an-immediate-api-over-a-retained-cache)). Everything
+  above is the retained half either way, so it is not a fork in the road yet.
 
 ## Reading
 
 - [`reactor.md`](./reactor.md) — what Sciter already does, in C++, for script. Read this before deciding
   the Odin layer is necessary.
-- [`FLEURY-UI.md`](./FLEURY-UI.md) — the immediate-mode-over-retained-cache architecture, Parts 1–3.
+- [`ALTERNATIVES.md`](./ALTERNATIVES.md#the-hybrid-an-immediate-api-over-a-retained-cache) — the
+  immediate-mode-over-retained-cache architecture, from the three parts of Fleury's series that are free.
 - [`examples/task_list.odin`](../examples/task_list.odin) — the gentle version of the same design, and
   the thing this would replace the middle of.
 - [`examples/workbench.odin`](../examples/workbench.odin) — the hard version, and the evidence behind

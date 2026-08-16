@@ -6,6 +6,9 @@ Everything you need to get a window on screen, and what to do when it does not a
 
 - [Odin](https://odin-lang.org/docs/install/) — a recent nightly or release
 - [just](https://just.systems/) — the task runner every command below uses
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — **not optional, and needed before the
+  first build**: every Python step here runs through it, and fetching the engine is one of them. The
+  recipes check for it and print the install command rather than failing as "os error 2"
 - Linux x64, Windows x64 or macOS. The first two have been run on real machines; macOS is exercised in
   CI only. The platform table in [`README.md`](../README.md#finding-the-engine) says exactly what that
   does and does not prove, and [`deployment.md`](./deployment.md) covers shipping.
@@ -63,13 +66,33 @@ Five calls in a fixed order, and the order is not negotiable:
 | Call | Why it must be there |
 | --- | --- |
 | `load_engine` | opens the shared library and fetches the API table. Nothing works before it. |
-| `init` | `SCITER_APP_INIT`. The engine wants argv, as UTF-16. Skipping it crashes on window creation. |
+| `init` | `SCITER_APP_INIT`. The engine wants argv, as UTF-16. Skipping it faults **at process exit**, not here — see below. |
 | `create_window` | `.MAIN` is the default flag, and it is what makes closing the window end `run` |
 | `show` | a window is created hidden |
 | `run` | Sciter's own pump — no GTK, no Win32 loop, on any platform |
 
 `shutdown` releases the engine's resources afterwards. `stop` asks `run` to return early, and is safe
 to call from inside an event handler.
+
+**Leaving `init` out is the one omission the engine does not report, and it was documented wrongly here
+until it was measured.** On Windows, 6.0.4.9: without `init` the window is created, the document loads,
+the DOM answers, and `hide` / `heartbeat` / `close` all succeed — and then the process segfaults on the
+way out of `main`, exit code 139, with nothing on the stack naming the omission. The same program with
+`init` exits 0. A debug build now traps inside `create_window` instead, where the call is still on the
+stack; a release build gets the exit fault, so this is a line to write rather than a check to rely on.
+
+**Nothing frees `context.temp_allocator` for you, and `run` never comes back to your code.** Every call
+that takes a string, a selector or a URL builds its argument in that arena, so an application whose
+handlers do DOM work grows for as long as it lives. Pick a boundary — one turn of the pump is the usual
+one — and [`rules.md`](./rules.md#you-own-the-temp-allocator-boundary) has the three worth choosing
+between:
+
+```odin
+for sciter_app.run_once() {
+	sciter_app.heartbeat()
+	free_all(context.temp_allocator)   // the boundary
+}
+```
 
 Put your files somewhere that can `import "path/to/sciter_app"`, or add the repository as an Odin
 collection. The examples import it by relative path because they live inside the repository.

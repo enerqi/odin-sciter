@@ -83,7 +83,7 @@ exception are all completely silent.
 
 | | |
 | --- | --- |
-| `create_window(opts := Window_Options{}) -> (Window, Error)` | `{}` flags means `{.MAIN}`; `0,0` size lets the engine choose |
+| `create_window(opts := Window_Options{}) -> (Window, Error)` | `{}` flags means `{.MAIN}`; `0,0` size lets the engine choose. Traps in a debug build if `init` has not run — without it the window opens and the *process* faults at exit |
 | `load_html(window, html: string, base_url := "") -> Error` | UTF-8 HTML. Without a base URL, relative references have nowhere to look. |
 | `load_file(window, url: string) -> Error` | a path, `file://`, `http://`, or `this://app/...` |
 | `set_home_url(window, url) -> Error` | the base for relative references |

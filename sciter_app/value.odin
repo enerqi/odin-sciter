@@ -147,7 +147,15 @@ value_make_array :: proc(length: int) -> (v: Value) {
 	// the value first, so an array whose length is computed must not change type when the count is 0.
 	if length <= 0 {
 		empty, err := value_parse("[]")
-		return empty if err == nil else v
+		if err != nil {
+			// `value_parse` reports a bad document by handing back an error *string*, which owns a
+			// reference like any other Value - so the failure path has something to give back, not
+			// nothing. Dropping it here leaked one reference per call and read as a leak in whatever
+			// built the array.
+			value_clear(&empty)
+			return v
+		}
+		return empty
 	}
 	undefined: Value
 	engine().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)

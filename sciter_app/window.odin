@@ -25,10 +25,15 @@ Window_Options :: struct {
 // Sciter 6 removed the SW_TITLEBAR / SW_RESIZEABLE / SW_CONTROLS / SW_GLASSY / SW_ALPHA / SW_TOOL flags
 // that 4.x had: a plain top-level window is the default now, and window chrome is a CSS concern. The
 // window's title comes from the document's <title>, not from here.
-create_window :: proc(opts := Window_Options{}) -> (window: Window, err: Error) {
+//
+// **`init` must have run.** A debug build traps here if it has not, because the engine does not
+// complain: without `init` the window opens, the document loads, and the *process* faults at exit -
+// see `guard_initialized` in `app.odin` for the measurement.
+create_window :: proc(opts := Window_Options{}, loc := #caller_location) -> (window: Window, err: Error) {
 	if !sciter.loaded() {
 		return nil, .Not_Loaded
 	}
+	guard_initialized(loc)
 
 	flags := opts.flags
 	if flags == {} {

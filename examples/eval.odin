@@ -1353,7 +1353,13 @@ when ODIN_OS != .Windows {
 		testing.expect(t, g_diagnostics.count > 0, "its own window's error arrives")
 
 		// A second window, with no handler of its own and none installed globally.
+		//
+		// `init` first, and it is not ceremony: this file's harness is windowless and never calls it, so
+		// this is the one test here that stands up the windowed application subsystem. Without it the
+		// window still opens and this test still passes - and the *process* faults on the way out, which
+		// is what `create_window`'s debug guard now traps. `dom_walk`'s windowed helper does the same.
 		context.allocator = runtime.default_allocator()
+		sciter_app.init()
 		other, oerr := sciter_app.create_window({width = 200, height = 150})
 		testing.expect_value(t, oerr, nil)
 		if other == nil {return}

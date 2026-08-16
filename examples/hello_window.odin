@@ -28,7 +28,18 @@ HTML :: `<html>
 
 main :: proc() {
 	// 1. Open the engine. Nothing else may be called before this succeeds.
+	//
+	// `tried` is the candidate list, and it comes back on **every** path, success included - each string
+	// separately allocated, and nothing else owns it. Freeing it is the caller's, which is why the defer
+	// is here and not only on the failure branch. `sciter_app.load_engine` is this whole block in one
+	// call; see docs/rules.md §4.
 	err, tried := sciter.load()
+	defer {
+		for candidate in tried {
+			delete(candidate)
+		}
+		delete(tried)
+	}
 	if err != .None {
 		fmt.eprintfln("could not load the Sciter engine: %v", err)
 		fmt.eprintln("looked for", sciter.LIBRARY_NAME, "in:")

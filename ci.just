@@ -106,11 +106,11 @@ api-map-verify: mktarget_dirs
 	raise SystemExit(check.returncode)
 
 
-# exercise the resource-owning paths and fail if anything is still held by the engine at exit
-#
 # Needs -debug: sciter_app/tracking.odin compiles to nothing without it, and the sweep says so rather
 # than passing vacuously. Not part of `example-tests` because it is a program, not a test file - see the
 # header of examples/leak_sweep.odin for why the check cannot live in a test binary.
+# ---
+# exercise the resource-owning paths and fail if anything is still held by the engine at exit
 leak-check: mktarget_dirs ensure-engine
 	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
 	{{ target_path("debug", "leak_sweep.exe") }}
@@ -120,6 +120,19 @@ leak-check: mktarget_dirs ensure-engine
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
 check-ownership:
 	{{py}} .github/scripts/check-ownership.py
+
+
+# The listings inside `//` doc comments are the one kind of Odin in this tree that nothing compiles -
+# `just check` covers the packages and `docs/snippets`, and a comment fragment has no declarations to
+# type check against. Three of them passed an `Owned_Element` where a borrowed `Element` was wanted,
+# on the most-copied DOM idiom in the library, and one of the three had a *correct* compiled twin in
+# `snippets.odin` - so the guide and its checked copy had drifted. This checks the one thing about a
+# fragment that can be checked without a compiler. `--self-test` runs it against that listing.
+# ---
+# assert the owned/borrowed split in the listings inside doc comments and guides
+check-doc-ownership:
+	{{py}} .github/scripts/check-doc-ownership.py --self-test
+	{{py}} .github/scripts/check-doc-ownership.py
 
 
 # Rule 1's static half. `guard_engine_thread` is the runtime check and it only sees calls that reach it,

@@ -178,6 +178,10 @@ el := sciter_app.borrow_element(item)       // then `el` everywhere below
 sciter_app.insert_element(el, list) or_return
 ```
 
+The compiler enforces that in code. It does not enforce it in a *comment*, and three listings in this
+repository got it wrong — which is what `just check-doc-ownership` now checks, over the Odin inside doc
+comments and inside these guides.
+
 **Nodes** are the same, with one difference that was measured the wrong way round here until it was
 tested: **inserting a node into a document does not hand your reference over.** `make_text_node` and
 `make_comment_node` return an `Owned_Node`, `node_add_ref` is the only other way to get one, and every

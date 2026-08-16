@@ -581,6 +581,42 @@ and `wasm/clay.o` prebuilt, and compare Sciter, which ships a `.so` you `dlopen`
 build-system dependency in your project, and that is the real difference between it and everything else
 on the ladder — not the binding quality, which is fine.
 
+### The hybrid: an immediate API over a retained cache
+
+"Immediate versus retained" is a false pair, and the design that shows why is the one behind the RAD
+Debugger's UI — Ryan Fleury's numbered "UI" series at [dgtlgrove.com](https://www.dgtlgrove.com/).
+Parts [1](https://www.dgtlgrove.com/p/ui-part-1-the-interaction-medium),
+[2](https://www.dgtlgrove.com/p/ui-part-2-build-it-every-frame-immediate) and
+[3](https://www.dgtlgrove.com/p/ui-part-3-the-widget-building-language) are free and carry the
+architecture; parts 4–9 and the text-input bonus are paywalled, so what follows is the free three and
+nothing inferred about the rest ([`RESEARCH-METHOD.md`](./RESEARCH-METHOD.md) on why a teaser is not a
+summary). Part 7, "Where IMGUI Ends", is the one that would most directly answer where the hybrid stops,
+and it is behind the paywall.
+
+The argument against pure retained mode is that construction, mutation and interaction handling end up
+at separate call sites, so keeping them in sync is a standing source of bugs and dead widgets accumulate.
+Immediate mode collapses them into one call in one place — and then has no memory, which breaks hover
+animation, scroll position and focus. The fix is a widget struct whose **tree links are rebuilt every
+frame** while its **hash entry is looked up every frame**, keyed off the widget's label
+(`"Save##save_btn"`, ImGui's convention): persistent state — `hot_t` / `active_t`, scroll, focus, and a
+`last_frame_touched_index` that is how the system notices a widget *stopped* being built — lives in the
+cached entry, and no builder code manages it.
+
+Layout cannot happen inline, because a widget call does not yet know its siblings or children, so the
+frame splits into build → autolayout → render, with layout running against the tree just built (sizes
+standalone, then upwards-dependent, then downwards-dependent, then violation solving, then positions).
+Sizing is a tagged union — `Pixels`, `TextContent`, `PercentOfParent`, `ChildrenSum`, plus a `strictness`
+that decides what gets compressed when children overflow. And there is no widget-kind enum: one struct,
+one flags field, orthogonal booleans (`Clickable`, `DrawText`, …), so N flags cover 2^N behaviours while
+the core branches on N — a checkbox is a composition, not a type.
+
+**Why it belongs in this document.** It is a third point on the same triangle as the table above, not a
+rebuttal of it: still immediate at the call site, so it keeps ImGui-family FFI simplicity — one call per
+widget, no markup, no VM — while the keyed cache buys back the persistent state that makes Sciter's
+retained DOM attractive in the first place. What it does not buy back is HTML/CSS, a sandbox, or a
+cascade: the layout engine is yours to own. [`VDOM.md`](./VDOM.md) is the same question asked from this
+repository's side — whether to put a retained-diff layer over Sciter's DOM — and the answer there was no.
+
 ### An immediate-mode feel *with* markup
 
 The question splits once markup is allowed back in, because "immediate mode" and "HTML/CSS" are not

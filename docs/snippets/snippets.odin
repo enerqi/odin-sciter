@@ -38,6 +38,9 @@ gs1 :: proc() {
 	sciter_app.shutdown()
 }
 
+// getting-started.md's second block is the temp-allocator boundary, which is the same listing rules.md
+// carries - `pump_with_a_boundary_block` below is that block, compiled once for both.
+
 // ---------------------------------------------------------------------------------------------------
 // architecture.md, block 1
 
@@ -359,7 +362,8 @@ dom9 :: proc(window: sciter_app.Window) {
 dom9b :: proc(list: sciter_app.Element) {
 	item, _ := sciter_app.make_element("li", "third")
 	defer sciter_app.unuse_element(item)
-	sciter_app.insert_element(sciter_app.borrow_element(item), list)
+	el := sciter_app.borrow_element(item)
+	sciter_app.insert_element(el, list)
 }
 
 dom9c :: proc(el, parent, other_parent, a, b, list: sciter_app.Element) {

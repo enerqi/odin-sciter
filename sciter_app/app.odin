@@ -60,6 +60,38 @@ g_argv_allocator: mem.Allocator
 @(private)
 g_initialized: bool
 
+// Traps if a window is about to be created without `init` having run. Debug builds only, like the
+// affinity guard in `affinity.odin`, and for the same reason: the failure this prevents lands nowhere
+// near the mistake.
+//
+// **Measured on Windows, 6.0.4.9, and it is the worst shape a mistake can have.** Skipping `init`
+// does not fail at `create_window`, which the documentation used to claim: the window is created, the
+// document loads, the DOM answers, `hide`/`heartbeat`/`close` all succeed - and then the *process
+// segfaults on the way out of `main`*, exit code 139, with nothing on the stack naming the omission.
+// The same program with `init` exits 0. So there is no error to return that anybody would see in time,
+// and nothing later in the run to trap on; the only moment the mistake is still visible is this one.
+//
+// A windowless program is not affected and never reaches here: `create_windowless` stands the engine
+// up itself and `docs/gotchas.md` #11 is the rule about not mixing the two in one process.
+@(private)
+guard_initialized :: proc(loc := #caller_location) {
+	when ODIN_DEBUG {
+		if g_initialized {
+			return
+		}
+		runtime.print_string(
+			"\nsciter_app: create_window before init()\n" +
+			"  `init` is SCITER_APP_INIT, and the engine wants argv before any window exists. Without it\n" +
+			"  everything here works - the window opens, the document loads - and the process faults at\n" +
+			"  exit instead, a long way from this call. Add `sciter_app.init()` after `load_engine`.\n" +
+			"  See docs/getting-started.md and docs/rules.md.\n  at ",
+		)
+		runtime.print_caller_location(loc)
+		runtime.print_string("\n")
+		runtime.trap()
+	}
+}
+
 // Hands the engine argc/argv. Call once, after `sciter.load()` and before creating any window.
 //
 // `args` defaults to `os.args`. The engine wants UTF-16 here: the comment on SCITER_APP_INIT in
@@ -90,6 +122,19 @@ init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
 
 // Runs the message pump until `stop` is called or the last SW_MAIN window closes. Returns the
 // engine's exit code.
+//
+// **It never returns to your code in between, so it is not a place to free anything.** Every call in
+// this package that takes a string, a selector or a URL bumps `context.temp_allocator`, nothing here
+// ever calls `free_all`, and a handler that does DOM work under `run` therefore grows the arena for as
+// long as the application lives - which looks like a leak in the bindings and is not one. Either put
+// the boundary inside your handlers, or drive the pump yourself:
+//
+//	for sciter_app.run_once() {
+//		sciter_app.heartbeat()
+//		free_all(context.temp_allocator)   // the boundary
+//	}
+//
+// `docs/rules.md` §4 is the whole rule and the three boundaries worth choosing between.
 run :: proc() -> int {
 	return int(engine().SciterExec(.LOOP, 0, 0))
 }

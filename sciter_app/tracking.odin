@@ -157,9 +157,15 @@ track_release :: proc(kind: Resource_Kind, handle: rawptr, loc: runtime.Source_C
 		// is still on the stack. What follows it is a segfault somewhere else - measured, one spurious
 		// `unuse_request` and two `unuse_element`s - so the assert is strictly better than what the
 		// engine will do next.
+		//
+		// **`.Graphics_State` is the one kind that is counted rather than trapped**, because it is the
+		// one kind whose under-flow is not a reference count. `restore_state` past a matched pair, or on
+		// an empty stack, is answered `.OK` by this engine and measured harmless - it is still a bug, and
+		// `report_leaked_resources` names it, but trapping on it would contradict `restore_state`'s own
+		// documented behaviour and would fire on a painter that is merely defensive.
 		if _, found := g_tracker.handles[handle]; !found {
 			g_tracker.underflows[kind] += 1
-			if g_tracker.strict {
+			if g_tracker.strict && kind != .Graphics_State {
 				runtime.print_string("\nsciter_app: released a ")
 				runtime.print_string(resource_kind_name(kind))
 				runtime.print_string(" that was never acquired - this is the under-flow that segfaults\n  at ")
@@ -207,7 +213,8 @@ track_release_counted :: proc(kind: Resource_Kind) {
 //
 // A negative count is worth acting on rather than ignoring: it means more releases than acquisitions,
 // which for a reference-counted engine resource is the under-flow that segfaults - see `use_element`
-// and `Owned_Request`.
+// and `Owned_Request`. The exception is `.Graphics_State`, where a negative count is an unbalanced
+// `restore_state`: a bug, and measured harmless on this engine rather than fatal - see `track_release`.
 outstanding_resources :: proc() -> (counts: [Resource_Kind]int) {
 	when ODIN_DEBUG {
 		counts = g_tracker.counted
@@ -262,7 +269,11 @@ report_leaked_resources :: proc() -> (leaked: int) {
 			runtime.print_string(": ")
 			runtime.print_int(n)
 			if n < 0 {
-				runtime.print_string("  <- MORE RELEASES THAN ACQUISITIONS: this is the under-flow that segfaults")
+				if kind == .Graphics_State {
+					runtime.print_string("  <- MORE RESTORES THAN SAVES: harmless on this engine, still a bug")
+				} else {
+					runtime.print_string("  <- MORE RELEASES THAN ACQUISITIONS: this is the under-flow that segfaults")
+				}
 			}
 			runtime.print_string("\n")
 		}

@@ -85,6 +85,10 @@ just example-tests    # 381 tests across 24 files
 just leak-check       # the engine-resource leak gate (needs -debug and a display)
 ```
 
+The counts in that block are 2026-08-13's, like the rest of this directory — `just --list` is the
+current set of gates and `just stats` the current numbers. Three more have been added since:
+`check-affinity`, `check-invariants` and `api-map-verify`.
+
 ## Cross-cutting themes
 
 **Counts are hand-maintained and all of them have drifted.** README says 25 examples / 337 tests /

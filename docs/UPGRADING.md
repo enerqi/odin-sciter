@@ -132,9 +132,28 @@ consumers vendor or submodule the repository or import it by path.
    and `just parity --check` — the slots the new headers declare against the ones `sciter_app` wraps,
    diffed against `docs/parity-baseline.txt`. `api_map` catches a slot that moved or vanished; this is
    the one that catches a slot that *appeared*, which is how coverage otherwise rots one SDK at a time
-4. run the windowed examples by hand on every platform that claims to be tested
-5. move the `## Unreleased` heading in [`CHANGELOG.md`](../CHANGELOG.md) to the version being cut, and
-   check the platform table in it and in `README.md` still tell the truth
+4. run the windowed examples by hand on **Linux x64 and Windows x64** — the two platforms whose "Looked
+   at by a human" column in [`README.md`](../README.md#finding-the-engine) says yes. That table is the
+   definition of what this repository claims, and this step is how the claim stays true; if a column
+   there changes, this step changes with it.
+
+   **macOS is deliberately not in that list, and its absence is not a pending task.** Nobody working on
+   this repository owns a Mac, so what is claimed for it is exactly what `macos-14` can prove: the
+   engine loads, the ISciterAPI table matches, a window opens, the display-free half of the suite
+   passes, nothing leaks. A window *rendering what it should* is outside that, and a release must not
+   wait on evidence nobody is in a position to produce. Ship with the claim narrow and say so, rather
+   than blocking the tag or quietly widening it — [`MACOS-CHECKLIST.md`](./MACOS-CHECKLIST.md) is the
+   record of where the line is and why
+5. move the `## Unreleased` heading in [`CHANGELOG.md`](../CHANGELOG.md) to the version being cut —
+   `just release VERSION` does exactly that and nothing else, no commit and no tag — and check the
+   platform table in it and in `README.md` still tell the truth.
+
+   **For the first release specifically:** the file currently carries *both* a `## Unreleased` section
+   and a `## v6.0.4.9 — the first release, unreleased`, so `just release 6.0.4.9` refuses with "already
+   has a '## v6.0.4.9' section". That refusal is correct and the fix is editorial, not mechanical:
+   either fold Unreleased into the v6.0.4.9 section by hand and tag that, or leave v6.0.4.9 as written
+   and cut `just release 6.0.4.9-2`. Decide which release the review fixes belong to before running
+   anything
 6. confirm `external/sciter/VENDORED.md` names the right tag, commit, engine version, API version and
    SHA-256
 7. tag and push:

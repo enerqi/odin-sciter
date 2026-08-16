@@ -277,7 +277,15 @@ when ODIN_OS == .Windows {
 // ---------------------------------------------------------------------------------------------------
 
 main :: proc() {
+	// The candidate list comes back on every path, success included, and nothing else owns it - see
+	// `sciter.load` and docs/rules.md §4.
 	err, tried := sciter.load()
+	defer {
+		for candidate in tried {
+			delete(candidate)
+		}
+		delete(tried)
+	}
 	if err != .None {
 		fmt.eprintln("could not load the Sciter engine:", err)
 		for candidate in tried {

@@ -510,9 +510,14 @@ found a stray MSYS gdb that took the multi-word `-ex` arguments as filenames.
 
 Holding the missing `odin-sqlite.dylib` back was the right call: building the extension in CI would
 have sent this test down its real path instead of the skip, and the bad `delete` — which is on the skip
-path — would have vanished unfixed and unexplained. **That step is now the next thing to land**, and
-with the abort gone it should merely turn a skip into a real run of `SciterLibraryInit`, on all three
-platforms, for the first time.
+path — would have vanished unfixed and unexplained.
+
+**That step has since landed.** All three jobs run `just extension sqlite_extension odin-sqlite` before
+the suite (`.github/workflows/ci.yml:200`, `:307`, `:414`), so `SciterLibraryInit` is exercised in CI on
+every platform for the first time rather than skipped on all of them. Measured on Windows: the extension
+builds, all 7 tests pass, and `test_script_can_load_the_library_and_query` takes its real path instead of
+printing the skip message. The macOS half of that is a claim about the next run of the macOS job, not a
+measurement — reconcile it here when that run happens, along with §2a's "21 of 22".
 
 ### 3. Quarantine — **MEASURED: not an issue**
 

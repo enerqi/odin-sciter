@@ -320,6 +320,10 @@ save_state :: proc(gfx: Graphics, loc := #caller_location) -> Error {
 // Restoring more often than you saved is answered `.OK` by this engine rather than `.FAILURE`, from an
 // empty stack as well as past a matched pair, so it will never tell you the pairing is wrong that way
 // round. Getting it wrong the other way is fatal - see `save_state`.
+//
+// The one thing that does notice is the ledger: with `track_resources` on, an extra restore drives
+// `outstanding_resources()[.Graphics_State]` negative and `report_leaked_resources` names it. It is
+// counted rather than trapped, precisely because the engine tolerates it - see `track_release`.
 restore_state :: proc(gfx: Graphics) -> Error {
 	err := gfx_err(graphics_api().gStateRestore(sciter.Hgfx(gfx)))
 	if err == nil {

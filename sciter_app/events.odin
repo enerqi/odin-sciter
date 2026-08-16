@@ -474,6 +474,12 @@ scroll_event :: proc(event: Event) -> (se: Scroll_Event, ok: bool) {
 //
 // `name` is borrowed from the engine and valid for the call. `value` is decoded into `allocator`,
 // because the engine hands it over as UTF-16.
+//
+// **That decode happens on every event, whether or not you read `value`** - this and
+// `data_arrived_event` are the two accessors in this file that allocate, and they are called from a
+// handler, which is the one place a per-call allocation compounds. `event_name` is a separate call for
+// exactly that reason. Pass `context.temp_allocator` unless the string outlives the handler, and see
+// `docs/rules.md` §4 for where the arena's boundary goes.
 Attribute_Change :: struct {
 	element: Element,
 	name:    string,
@@ -656,6 +662,10 @@ http_request :: proc(
 // So 0 means both "a local file, fine" and "the network went nowhere", which is why the header's
 // comment that 0 is an unknown error is only a third right. **`len(data) == 0` is the reliable failure
 // test**; `status` is worth reading afterwards to say *why*, and is the HTTP code when there was one.
+//
+// **`uri` is decoded on every event, whether or not you read it.** Like `attribute_change_event`, this
+// accessor allocates and is called from a handler; pass `context.temp_allocator` unless the string has
+// to outlive the call, and see `docs/rules.md` §4 for the arena boundary that makes that safe.
 Data_Arrived :: struct {
 	initiator: Element, // whatever was passed to `request_element_data`
 	data:      []u8,

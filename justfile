@@ -213,6 +213,10 @@ fetch-engine *args: require-uv
 	  echo "or see https://docs.astral.sh/uv/getting-started/installation/"; \
 	  exit 1; }
 
+# The same, in cmd. Each platform variant carries its own description because `just --list` only sees
+# the comment above the variant it selects - without this the recipe lists blank on Windows.
+# ---
+# fail with instructions if uv is missing
 [windows]
 @require-uv:
 	where uv >nul 2>&1 || (echo uv is not on PATH, and every Python recipe here runs through it. & echo Install it with:  irm https://astral.sh/uv/install.ps1 ^| iex & echo or see https://docs.astral.sh/uv/getting-started/installation/ & exit /b 1)
@@ -225,6 +229,8 @@ fetch-engine *args: require-uv
 @ensure-engine:
 	test -f {{engine_path}} || just fetch-engine
 
+# ---
+# make sure the engine is on disk before anything tries to build against it
 [windows]
 @ensure-engine:
 	if not exist {{engine_path}} just fetch-engine
@@ -245,6 +251,8 @@ fetch-odinfmt *args: require-uv
 @ensure-odinfmt:
 	test -f "{{odinfmt_bin}}" || just fetch-odinfmt
 
+# ---
+# make sure the pinned odinfmt is installed before formatting with it
 [windows]
 @ensure-odinfmt:
 	if not exist "{{odinfmt_bin}}" just fetch-odinfmt
@@ -795,14 +803,17 @@ extension-run: extension
 
 # Runs the `@(test)` procs that live inside the examples. `ODIN_TEST_THREADS=1` for the reason in this
 # section's header. Tests that need a window skip themselves when there is no DISPLAY / WAYLAND_DISPLAY.
-# ---
-# run the tests inside one example, e.g. `just example-test eval`
 #
 # `-keep-executable` because `odin test` deletes the binary after running it, and `example-tests`'
 # `trace()` re-runs that binary under lldb/gdb to get a backtrace out of a test that aborted without a
 # message. Without this flag the file is always gone by the time `trace` looks, its `os.path.exists`
 # guard is always false, and the whole debugger path is unreachable on every platform - which is what it
 # was. Measured: run this recipe and `target/debug/<name>_test.exe` does not exist afterwards.
+#
+# The one-line description goes last, under the `# ---`: `just --list` shows the *last* comment line
+# above a recipe, so a paragraph written after it becomes the description and reads as a fragment.
+# ---
+# run the tests inside one example, e.g. `just example-test eval`
 example-test name="eval" *args: mktarget_dirs ensure-engine
 	odin test examples/{{name}}.odin -file -debug -keep-executable -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
 

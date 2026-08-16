@@ -163,6 +163,7 @@ Run one with `just example NAME`.
 | `sqlite_extension` | **A real library bound and published to script** — `SQLite`, `DB` and `Recordset` over the system `libsqlite3`, as a loadable extension. `just extension sqlite_extension odin-sqlite` |
 | `script_bridge` | **Capabilities Odin cannot bind, driven anyway** — clipboard, dialogs, `@sys`, `@env`: ask the document. See [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md#capabilities-that-only-script-can-reach) |
 | `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
+| `leak_sweep` | Not a lesson but a gate, and the thirtieth file: it drives every resource-owning path and fails if the engine is still holding anything at exit. Run by `just leak-check`, and a `main` rather than a test for the reason its header gives |
 
 Tests live inside the examples, next to the code they cover:
 
@@ -408,8 +409,8 @@ alongside this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN`
 Python steps run through uv like every other one.
 
 The gates CI runs live in `ci.just` rather than in the justfile proper — `format-check`,
-`build-examples`, `check-ownership`, `check-affinity`, `parity`, `stats`, `api-map-verify`,
-`leak-check`, `cross-check`, `window-canary`. It is `import`ed, so they are ordinary recipes: `just
+`build-examples`, `check-ownership`, `check-affinity`, `check-invariants`, `check-doc-ownership`,
+`parity`, `stats`, `api-map-verify`, `leak-check`, `cross-check`, `window-canary`. It is `import`ed, so they are ordinary recipes: `just
 parity` and `just --list` do not know the difference. Two of them are worth running by hand after an
 engine change:
 

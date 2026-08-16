@@ -127,7 +127,8 @@ scoped_behavior_value :: proc(element: Element) -> (value: Value, handled: bool,
 // as for the element that is thrown away:
 //
 //	item := sciter_app.scoped_make_element("li", "third") or_return
-//	sciter_app.insert_element(item, list) or_return    // the document holds its own reference
+//	el := sciter_app.borrow_element(item)              // the scoped call hands back an Owned_Element
+//	sciter_app.insert_element(el, list) or_return      // the document holds its own reference
 //	// the reference that came back here is given up at the end of the scope
 
 // `make_element`, with the reference it hands back released at the end of the calling scope.

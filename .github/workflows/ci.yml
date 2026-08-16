@@ -117,6 +117,14 @@ jobs:
       - name: Check the ledger and callback-context invariants
         run: just check-invariants
 
+      # The listings inside doc comments are the only Odin here that nothing compiles - `just check`
+      # covers the packages and docs/snippets, and a comment fragment has nothing to type check
+      # against. Three of them passed an Owned_Element to a borrowed parameter, on the most-copied DOM
+      # idiom in the library, and one had a correct compiled twin in snippets.odin - so a guide and its
+      # checked copy had drifted. Source only, no engine.
+      - name: Check the owned/borrowed split in doc listings
+        run: just check-doc-ownership
+
       # Formatting is maintained like the type check and the vet flags, not by hand. This needs no
       # engine and writes nothing - `odinfmt` prints to stdout and the recipe compares bytes. It became
       # gateable when the formatter stopped rewriting files on every run; the justfile comment on

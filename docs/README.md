@@ -1,6 +1,6 @@
 # Documentation index
 
-30 files besides this index, and the first decision a reader has to make is which one to open. This is
+29 files besides this index, and the first decision a reader has to make is which one to open. This is
 that decision, made for you.
 
 The guides are **not** split into directories, deliberately: every one cross-links the others by
@@ -54,9 +54,10 @@ itself; nothing here changes when this repository changes.
 
 - [`reactor.md`](./reactor.md) — Sciter's own script-side framework: JSX, `patch()`, components, Signals
 - [`ENGINE.md`](./ENGINE.md) — what the shipped engine binary contains
-- [`FLEURY-UI.md`](./FLEURY-UI.md) — a stub, awaiting material that is behind a paywall
-- [`ALTERNATIVES.md`](./ALTERNATIVES.md) — 84 KB comparing Sciter against other UI toolkits. An essay
-  about the ecosystem, kept because the research was expensive; not a guide to this library
+- [`ALTERNATIVES.md`](./ALTERNATIVES.md) — 87 KB comparing Sciter against other UI toolkits. An essay
+  about the ecosystem, kept because the research was expensive; not a guide to this library. It absorbed
+  `FLEURY-UI.md`, which was a summary of somebody else's paywalled blog series and about no part of this
+  repository
 
 ## Maintainer notes
 
@@ -72,8 +73,9 @@ Working documents. Read these if you are changing the bindings, not if you are u
 - [`review/08-typing-idiom.md`](./review/08-typing-idiom.md) — where `distinct` types, default arguments
   and enums did and did not pay for themselves, with the four questions that prompted the pass answered
   at the top
-- [`PLAN-TESTING-AND-EXAMPLES.md`](./PLAN-TESTING-AND-EXAMPLES.md) — house rules for the suite, and why
-  the test fixture is duplicated across ten files
+- [`PLAN-TESTING-AND-EXAMPLES.md`](./PLAN-TESTING-AND-EXAMPLES.md) — house rules for the suite: why the
+  test fixture is duplicated across ten files, how to pump the engine from a test, the commenting
+  standard, and the acceptance checklist. The worklist it was named for is finished and gone
 - [`RESEARCH-METHOD.md`](./RESEARCH-METHOD.md) — measure before documenting, and how
 - [`BINDGEN-LIBCLANG.md`](./BINDGEN-LIBCLANG.md) — how `sciter.odin` is generated
 - [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) — the Windows bring-up, measured: what was

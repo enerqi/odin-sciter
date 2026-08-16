@@ -57,6 +57,15 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 - **`sciter_app/affinity.odin`** — rule 1 is now checked in debug builds, not just written down: the
   wrapper arms on first use and traps on a later call from another thread. The whole example suite
   passes with it armed and strict.
+- **`create_window` traps in a debug build when `init` has not run.** Measured on Windows: without
+  `init` the window opens, the document loads, the DOM answers and the teardown succeeds — and the
+  process segfaults on the way out of `main`, exit 139, with nothing on the stack naming the omission.
+  The guard fires where the call still is. `docs/getting-started.md` said this crashed at window
+  creation, which it does not.
+- **`just check-doc-ownership`** in CI — the listings inside `//` doc comments are the one kind of Odin
+  here that nothing compiles, and three of them passed an `Owned_Element` where a borrowed `Element`
+  was wanted. The check reads both the producers and the borrow-takers out of `sciter_app/*.odin`, so
+  it extends itself, and `--self-test` runs it against the listing that was wrong.
 - **`sciter_app/tracking.odin`** and **`just leak-check`** in CI — a debug ledger for the resources that
   live *inside* the engine, which `mem.Tracking_Allocator` cannot see, plus the sweep that fails the
   build when any are still held at exit.
@@ -121,6 +130,14 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 - **`just cross-check` covers `darwin_arm64`**, the architecture CI's macOS runner actually builds on.
 - **Windowed tests skip themselves on macOS and the skip messages stopped lying** — they used to name
   `DISPLAY`/`WAYLAND_DISPLAY` on platforms where neither exists.
+- **`docs/getting-started.md` names `uv` as a prerequisite**, which it always was: the first command on
+  the page fetches the engine, and every Python step runs through uv.
+- **`docs/PLAN-TESTING-AND-EXAMPLES.md` is the house rules and nothing else.** The worklist it was named
+  for — close the coverage gap, build a larger example — is finished, so its batches, its proposal and
+  its ticked acceptance boxes are in the history and the conventions that outlived them are not.
+- **`just --list` stopped showing fragments.** `example-test` and `leak-check` had their one-line
+  description written *above* a following paragraph, and just shows the last comment line; the three
+  `[windows]` recipe variants that carried no comment of their own listed blank on Windows.
 
 ### Fixed
 
@@ -132,6 +149,15 @@ on a size match alone, `sort_children` clamping one end of its range, `combine_u
 and `sqlite_extension` freeing memory nothing had allocated — undefined behaviour on all three
 platforms, fatal only on macOS. Each is listed with the wrapper it lives on in
 [`docs/review/README.md`](docs/review/README.md).
+
+A later pass fixed four more: `examples/hello_window.odin` and `examples/api_map.odin` leaked the
+candidate list `sciter.load` returns on every path — the exact mistake `docs/rules.md` §4 warns about,
+demonstrated by the two files a newcomer reads first; `value_make_array(0)` dropped the error Value
+`value_parse` hands back on failure; an unbalanced `restore_state` trapped the resource ledger with a
+message about a segfault that does not happen for graphics state, contradicting `restore_state`'s own
+measured documentation, and is now counted and reported instead; and three listings passed an
+`Owned_Element` to a borrowed parameter (`sciter_app/dom.odin`, `sciter_app/scoped.odin`,
+`docs/dom.md`, whose compiled twin in `snippets.odin` was right all along).
 
 A second group corrected documentation that was **wrong**, which is the more dangerous kind: `eval`
 never reports a script error through its `Error` (the returned Value carries it), over-releasing a
@@ -189,6 +215,10 @@ The findings, the measurements behind them and the two still open are in
   tree is either compiled or deleted.
 - `spike/xdnd/xdnd_source.py` moved to [`tools/xdnd_source.py`](tools/xdnd_source.py) — a live test
   harness rather than scratch work, and the only way to stage a real system drop.
+- **`docs/FLEURY-UI.md` is gone** — 174 lines summarising a third-party blog series, most of it behind
+  a paywall, and nothing in it about these bindings. The free parts' architecture is now a section of
+  [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md), where the comparison belongs; `docs/VDOM.md` points
+  there. `docs/` is 29 documents besides its index.
 
 ### Known issues
 
