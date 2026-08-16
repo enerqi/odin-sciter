@@ -291,6 +291,7 @@ main :: proc() {
 		for candidate in tried {
 			fmt.eprintfln("  tried %s", candidate)
 		}
+		fmt.eprintln("\nRun `just fetch-engine`, or set SCITER_LIB to a library file or its directory.")
 		os.exit(1)
 	}
 	api := sciter.api()

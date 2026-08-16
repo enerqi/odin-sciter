@@ -4,8 +4,11 @@ Everything you need to get a window on screen, and what to do when it does not a
 
 ## What you need
 
-- [Odin](https://odin-lang.org/docs/install/) — a recent nightly or release
-- [just](https://just.systems/) — the task runner every command below uses
+- [Odin](https://odin-lang.org/docs/install/) — **`dev-2026-08`** is what CI builds with and what these
+  recipes are tested against. There is no stable release line and `core:` changes between nightlies, so
+  a much newer or older one may not compile the tree. The pin lives in
+  [`.github/actions/toolchain/action.yml`](../.github/actions/toolchain/action.yml)
+- [just](https://just.systems/) — the task runner every command below uses; CI pins `1.55.1`
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — **not optional, and needed before the
   first build**: every Python step here runs through it, and fetching the engine is one of them. The
   recipes check for it and print the install command rather than failing as "os error 2"
@@ -94,8 +97,10 @@ for sciter_app.run_once() {
 }
 ```
 
-Put your files somewhere that can `import "path/to/sciter_app"`, or add the repository as an Odin
-collection. The examples import it by relative path because they live inside the repository.
+The examples import `sciter_app` by relative path because they live inside this repository. For your
+own program, vendor the repository and point an Odin collection at it —
+[`using-in-your-project.md`](./using-in-your-project.md) is that page, with the flag, what the minimum
+checkout is, and how the engine reaches your users.
 
 ## Install the debug output, first
 
@@ -134,11 +139,19 @@ looked for libsciter.so in:
   lib/linux/x64/libsciter.so
   libsciter.so
 
-Set SCITER_LIB to the library file or its directory, e.g.
-  SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64 just example hello_window
+Either put libsciter.so next to the executable - the first path above - or point
+SCITER_LIB at the library file or the directory holding it:
+  export SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64
 ```
 
-The file name per platform is `libsciter.so`, `sciter.dll`, `libsciter.dylib`.
+The last two lines are written for the platform the program was built for: `set SCITER_LIB=…` and the
+PowerShell spelling on Windows, `export` on Linux and macOS. The file name per platform is
+`libsciter.so`, `sciter.dll`, `libsciter.dylib`.
+
+Inside this repository the answer is usually neither: `just fetch-engine` puts the pinned engine in
+`lib/<platform>/`, which is candidate 4, and every recipe that builds anything does it for you. The two
+that matter are for a program *outside* the repository — see
+[`using-in-your-project.md`](./using-in-your-project.md).
 
 ## When it does not work
 
@@ -194,6 +207,7 @@ parallel by default. Every test recipe here passes `-define:ODIN_TEST_THREADS=1`
 
 | You want to | Read |
 | --- | --- |
+| **use this from your own project** | [`using-in-your-project.md`](./using-in-your-project.md) |
 | **get the four contracts right** | [`rules.md`](./rules.md) |
 | **avoid the footguns that cost a day each** | [`gotchas.md`](./gotchas.md) |
 | understand why the bindings are shaped this way | [`architecture.md`](./architecture.md) |

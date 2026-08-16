@@ -42,6 +42,31 @@ gs1 :: proc() {
 // carries - `pump_with_a_boundary_block` below is that block, compiled once for both.
 
 // ---------------------------------------------------------------------------------------------------
+// using-in-your-project.md, the external-project main
+//
+// The body only. That page's block imports through a *collection* - `import sa "sciter:sciter_app"` -
+// which is the one line that cannot be reproduced here, since this file is inside the repository and
+// imports by relative path. The calls are what this checks; the import spelling is measured on the page
+// itself, against a project built outside the tree.
+
+use_in_your_project :: proc() {
+	if !sciter_app.load_engine() {return}
+	sciter_app.init()
+	sciter_app.set_default_debug_output()
+
+	window, err := sciter_app.create_window({width = 400, height = 300})
+	if err != nil {
+		fmt.eprintln("no window:", err)
+		return
+	}
+	sciter_app.load_html(window, "<html><body><h1>external project</h1></body></html>")
+	sciter_app.show(window)
+
+	sciter_app.run()
+	sciter_app.shutdown()
+}
+
+// ---------------------------------------------------------------------------------------------------
 // architecture.md, block 1
 
 arch1 :: proc() {

@@ -46,8 +46,11 @@ main :: proc() {
 		for candidate in tried {
 			fmt.eprintfln("  %s", candidate)
 		}
-		fmt.eprintln("\nSet SCITER_LIB to the library file or its directory, e.g.")
-		fmt.eprintln("  SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64 just run hello_window")
+		// Platform-neutral on purpose: `VAR=value command` is a Unix shell idiom that does nothing in
+		// cmd or PowerShell, and this example runs on all three. `sciter_app.load_engine` prints the
+		// same list plus the SCITER_LIB spelling for the platform it was built for.
+		fmt.eprintln("\nRun `just fetch-engine` to install the pinned engine into lib/, or set SCITER_LIB")
+		fmt.eprintln("to a library file or the directory holding one. See docs/getting-started.md.")
 		os.exit(1)
 	}
 	api := sciter.api()

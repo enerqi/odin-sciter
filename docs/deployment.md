@@ -3,9 +3,10 @@
 What to ship, where the engine has to be, what you owe Terra Informatica, and what to expect on each
 platform.
 
-> **Status.** Linux x64 and Windows x64 are both vendored and run on real machines. macOS is fetched
-> rather than vendored — `just fetch-engine`, verified against its SHA-256 — and exercised in CI only;
-> nobody here owns a Mac. Its packaging rows below are instructions rather
+> **Status.** No engine is committed here on any platform: all three are fetched by `just fetch-engine`
+> and verified against the SHA-256 in `external/sciter/VENDORED.md`. What differs is who has *run* them
+> — Linux x64 and Windows x64 on real machines, macOS in CI only, because nobody here owns a Mac. Its
+> packaging rows below are instructions rather
 > than verified results, with one exception: everything said about the *dylib itself* (universal,
 > ad-hoc signed, absolute install name, system frameworks only) was read out of the file's Mach-O
 > headers and is measurement. See [`MACOS-CHECKLIST.md`](MACOS-CHECKLIST.md).
@@ -107,7 +108,7 @@ For a single artifact, `load_embedded` puts the engine in the executable as data
 the user's cache directory, and loads it from there. [`resources.md`](./resources.md#the-engine-itself)
 covers the mechanics. Before adopting it, weigh:
 
-- the executable grows by ~25 MB (~19 MB on Windows, ~50 MB on macOS, where the vendored dylib is
+- the executable grows by ~25 MB (~19 MB on Windows, ~50 MB on macOS, where the shipped dylib is
   universal and carries both architectures)
 - the first run writes to a cache directory, which must be writable and **must not be mounted
   `noexec`** — which is why this uses the user's cache directory rather than `/tmp`, since `/tmp` is
@@ -134,13 +135,13 @@ or, since the loader here is `dlopen`-based rather than link-time, simply pass t
 to `load_engine`. Note that the dylib's own install name is the absolute `/usr/local/lib/libsciter.dylib`
 rather than `@rpath/libsciter.dylib`, which matters to a link-time consumer and not to this one.
 
-Four things about signing, three of them measured from the vendored file:
+Four things about signing, three of them measured from the fetched dylib itself:
 
 - **it is ad-hoc signed** (`CodeDirectory` flags `0x2`, empty CMS blob). That is what lets arm64 macOS
   map it at all — unsigned code is refused outright — and it is *not* a Developer ID and not notarized
 - **so you must re-sign it with your own identity** and notarize the bundle. `codesign` rewrites the
   file, which invalidates the SHA-256 recorded in `external/sciter/VENDORED.md`; sign a copy in your
-  build output, never the vendored one
+  build output, never the one in `lib/` that `fetch-engine --check` verifies
 - **an engine extracted at runtime by `load_embedded` is not covered by your bundle's signature.** It
   is byte-identical to the embedded copy, so it keeps the ad-hoc signature and should load, but a
   hardened-runtime application with library validation enabled will refuse it. Ship the two files for a

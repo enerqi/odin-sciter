@@ -1,6 +1,6 @@
 # Documentation index
 
-29 files besides this index, and the first decision a reader has to make is which one to open. This is
+30 files besides this index, and the first decision a reader has to make is which one to open. This is
 that decision, made for you.
 
 The guides are **not** split into directories, deliberately: every one cross-links the others by
@@ -42,6 +42,7 @@ Read the one you need, when you need it.
 | [`html-css-js.md`](./html-css-js.md) | what Sciter's dialects do and do not include |
 | [`BEHAVIORS.md`](./BEHAVIORS.md) | the engine's intrinsic behaviors, measured one by one |
 | [`EMBEDDING.md`](./EMBEDDING.md) | windowless rendering into a surface you own |
+| [`using-in-your-project.md`](./using-in-your-project.md) | **your program, this repository as a dependency** — what to vendor, the collection flag, and getting the engine to your users. Everything else here is written from inside this checkout |
 | [`deployment.md`](./deployment.md) | shipping: the engine, archives, one-file builds |
 | [`JS-RUNTIME.md`](./JS-RUNTIME.md) | what script can reach at runtime |
 | [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md) | engine bugs you will meet, and the workarounds |

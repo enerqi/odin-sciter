@@ -18,6 +18,13 @@ import "core:unicode/utf16"
 // This is `sciter.load` plus the error message. "it did not load" is the most common first-run problem
 // with Sciter and a bare dlopen error says nothing useful, so the candidate list is worth printing
 // every time.
+//
+// **The advice is written for the reader's platform and for a program outside this repository**, which
+// is where this message is actually read. It used to say
+// `SCITER_LIB=/path/to/sdk/bin/linux/x64 just example hello_window` on all three: a Linux path, a shell
+// idiom that does nothing in cmd or PowerShell, and a recipe from a checkout the reader does not have.
+// It also skipped the answer a shipped application wants - the library beside the executable, which is
+// already the first candidate in the list above it. See docs/using-in-your-project.md.
 load_engine :: proc(path := "") -> bool {
 	err, tried := sciter.load(path)
 
@@ -39,8 +46,16 @@ load_engine :: proc(path := "") -> bool {
 	for candidate in tried {
 		fmt.eprintfln("  %s", candidate)
 	}
-	fmt.eprintln("\nSet SCITER_LIB to the library file or its directory, e.g.")
-	fmt.eprintln("  SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64 just example hello_window")
+	fmt.eprintfln("\nEither put %s next to the executable - the first path above - or point", sciter.LIBRARY_NAME)
+	fmt.eprintln("SCITER_LIB at the library file or the directory holding it:")
+	when ODIN_OS == .Windows {
+		fmt.eprintln("  set SCITER_LIB=C:\\path\\to\\sciter-js-sdk\\bin\\windows\\x64      (cmd)")
+		fmt.eprintln("  $env:SCITER_LIB = 'C:\\path\\to\\sciter-js-sdk\\bin\\windows\\x64'  (PowerShell)")
+	} else when ODIN_OS == .Darwin {
+		fmt.eprintln("  export SCITER_LIB=/path/to/sciter-js-sdk/bin/macosx")
+	} else {
+		fmt.eprintln("  export SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64")
+	}
 	return false
 }
 

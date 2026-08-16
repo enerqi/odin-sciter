@@ -51,6 +51,11 @@ regenerating: every Python step here runs through it — fetching the engine inc
 needs it before the first build. `just fetch-engine` checks for it and prints the install command
 rather than failing as "os error 2".
 
+**The versions CI builds with are `odin dev-2026-08` and `just 1.55.1`**, pinned as the defaults of
+[`.github/actions/toolchain/action.yml`](.github/actions/toolchain/action.yml), which is the one place
+they are written down. Odin has no stable release line and changes `core:` between nightlies, so a much
+newer or much older one may not compile this tree — that pin is what "a recent Odin" means here.
+
 ```sh
 git clone https://github.com/enerqi/odin-sciter.git
 cd odin-sciter
@@ -70,10 +75,12 @@ offline or air-gapped checkout, fetch once and copy `lib/` across, or point `SCI
 own mirror — the hash check is what makes an untrusted mirror safe. If upstream's URL is unreachable or
 its tag has moved, the fetch falls back to this repository's own release assets without being asked to.
 
-If it does not load, the error lists every path it tried. Point it at a library explicitly with:
+If it does not load, the error lists every path it tried, and names the two ways out for the platform it
+was built for — the library beside the executable, or `SCITER_LIB` pointing at one:
 
 ```sh
-SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64 just example hello_window
+export SCITER_LIB=/path/to/sciter-js-sdk/bin/linux/x64   # cmd: set SCITER_LIB=C:\path\to\…\bin\windows\x64
+just example hello_window
 ```
 
 **If the window opens and then segfaults on X11**, run it with `XMODIFIERS=@im=none`. The crash is
@@ -130,7 +137,9 @@ upgrade: 189 slots, 0 mismatches expected.
 ## Examples
 
 Each is a single self-contained file with the explanation in its header comment, ordered by difficulty.
-Run one with `just example NAME`.
+Run one with `just example NAME` — with three exceptions, marked in the table: `extension` is a shared
+library the engine loads (`just extension`), `leak_sweep` is a gate (`just leak-check`), and two are
+**Linux/X11 only** and do not build elsewhere.
 
 | Example | What it shows |
 | --- | --- |
@@ -158,12 +167,12 @@ Run one with `just example NAME`.
 | `inspector` | Attaching the SDK's DevTools-style inspector to a running window |
 | `windowless` | **No window at all** — the engine renders into a buffer you own, for a pane inside someone else's renderer. See [`EMBEDDING.md`](docs/EMBEDDING.md) |
 | `windowless_gl` | The same on the **GPU** — Sciter's Skia pipeline drawing straight into your OpenGL texture (Linux/EGL) |
-| `integration` | **A Sciter pane inside a window this program owns** — raw Xlib, the host's own frame and event loop, the pane composited in and fully interactive. The SDK's `demos/integration`, in Odin |
-| `native_child` | **The inverse of `integration`** — a native X11 window living *inside* a Sciter window, tracking an element's box. Sciter's `HWINDOW` is an X11 window id, which is what makes it possible |
+| `integration` | **Linux/X11 only.** A Sciter pane inside a window this program owns — raw Xlib, the host's own frame and event loop, the pane composited in and fully interactive. The SDK's `demos/integration`, in Odin. Excluded from `just check` and `build-examples` on other platforms |
+| `native_child` | **Linux/X11 only.** The inverse of `integration` — a native X11 window living *inside* a Sciter window, tracking an element's box. Sciter's `HWINDOW` is an X11 window id, which is what makes it possible |
 | `sqlite_extension` | **A real library bound and published to script** — `SQLite`, `DB` and `Recordset` over the system `libsqlite3`, as a loadable extension. `just extension sqlite_extension odin-sqlite` |
 | `script_bridge` | **Capabilities Odin cannot bind, driven anyway** — clipboard, dialogs, `@sys`, `@env`: ask the document. See [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md#capabilities-that-only-script-can-reach) |
-| `extension` | The inverse arrangement — Odin as a native extension the *engine* loads. See below. |
-| `leak_sweep` | Not a lesson but a gate, and the thirtieth file: it drives every resource-owning path and fails if the engine is still holding anything at exit. Run by `just leak-check`, and a `main` rather than a test for the reason its header gives |
+| `extension` | **Not `just example`** — a shared library the *engine* loads, built with `just extension`. The inverse arrangement; see below |
+| `leak_sweep` | **Not `just example`** — a gate, and the thirtieth file: `just leak-check` drives every resource-owning path and fails if the engine is still holding anything at exit. A `main` rather than a test, for the reason its header gives |
 
 Tests live inside the examples, next to the code they cover:
 
@@ -362,7 +371,7 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 | `src/flatten_headers.py` | Concatenates the SDK headers into one file for bindgen, and explains why that is necessary |
 | `src/postprocess_bindings.py` | Rewrites the calling convention, and drops the `-> Void` returns bindgen emits for C `void` |
 | `external/sciter/` | Vendored SDK headers, both licences, and `VENDORED.md` (pinned version) |
-| `lib/` | The engine binaries |
+| `lib/` | Where `just fetch-engine` installs the engine, per platform. **Git-ignored and empty in a fresh clone** — no engine is committed |
 | `examples/` | Runnable examples, one file each, plus `assets/`. `extension.odin` is a shared library, not an application. |
 | `tools/xdnd_source.py` | A minimal X11 drag source, to measure a real system drop against `examples/drag_and_drop.odin` |
 | `justfile` | Every task, plus the pins (engine, odinfmt, bindgen). `ci.just` holds the gates and `release.just` the release surgery; both are `import`ed into one namespace, so `just --list` shows the lot |
@@ -457,10 +466,18 @@ The five that make up the reading order, in order:
 | [`gotchas.md`](docs/gotchas.md) | **the things that cost a day each** — measured, and none of it derivable from the headers |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
 
+**Writing a program of your own rather than reading the examples?**
+[`docs/using-in-your-project.md`](docs/using-in-your-project.md) is the page for that — what to vendor
+(the minimum is `sciter.odin` plus `sciter_app/`, 560 KB), the `-collection:` flag and the two import
+spellings, and how the engine reaches your users. Every other page here is written from inside this
+checkout, where `just` does that work for you.
+
 Every Odin code block in the guides that teach the API lives in [`docs/snippets/`](docs/snippets/) as
-well, and is type checked by `just check` — documentation drifts silently otherwise. Two kinds of block
-are deliberately absent and say so where they are: raw-Xlib listings, which do not type check off Linux
-and would break `just cross-check`, and the code in the maintainer notes and the essays
+well, and is type checked by `just check` — documentation drifts silently otherwise. Three kinds of
+block are deliberately absent and say so where they are: raw-Xlib listings, which do not type check off
+Linux and would break `just cross-check`; the collection-qualified `import` lines in
+`using-in-your-project.md`, which cannot resolve from inside the repository and are measured against a
+project built outside it instead; and the code in the maintainer notes and the essays
 (`RESEARCH-METHOD.md`, `WINDOWS-CHECKLIST.md`, `VDOM.md`, `ALTERNATIVES.md` and the like), which is
 illustrative rather than something to paste. The correspondence is maintained by hand;
 `docs/snippets/snippets.odin` names the guide each block came from.

@@ -62,6 +62,12 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   process segfaults on the way out of `main`, exit 139, with nothing on the stack naming the omission.
   The guard fires where the call still is. `docs/getting-started.md` said this crashed at window
   creation, which it does not.
+- **[`docs/using-in-your-project.md`](docs/using-in-your-project.md)** — the case every other page
+  assumed away: your program, this repository as a dependency. What to vendor (the minimum that
+  compiles is `sciter.odin` plus `sciter_app/`, measured at 560 KB), why it is the repository root and
+  not `sciter_app/` alone, the `-collection:` flag with both import spellings — `sciter:.` for the raw
+  bindings, since the bare `sciter:` is a syntax error — and how the engine reaches your users. All of
+  it built and run from outside the tree.
 - **`just check-doc-ownership`** in CI — the listings inside `//` doc comments are the one kind of Odin
   here that nothing compiles, and three of them passed an `Owned_Element` where a borrowed `Element`
   was wanted. The check reads both the producers and the borrow-takers out of `sciter_app/*.odin`, so
@@ -130,8 +136,19 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 - **`just cross-check` covers `darwin_arm64`**, the architecture CI's macOS runner actually builds on.
 - **Windowed tests skip themselves on macOS and the skip messages stopped lying** — they used to name
   `DISPLAY`/`WAYLAND_DISPLAY` on platforms where neither exists.
+- **`load_engine`'s failure message is written for the reader's platform**, and for a program outside
+  this repository, which is where it is actually read. It used to print
+  `SCITER_LIB=/path/to/sdk/bin/linux/x64 just example hello_window` on all three platforms — a Linux
+  path, a shell idiom that does nothing in cmd or PowerShell, and a recipe from a checkout the reader
+  does not have — and never mentioned the answer a shipped application wants, which is the library
+  beside the executable and already the first candidate it prints.
 - **`docs/getting-started.md` names `uv` as a prerequisite**, which it always was: the first command on
-  the page fetches the engine, and every Python step runs through uv.
+  the page fetches the engine, and every Python step runs through uv. It and the README now also name
+  the toolchain versions CI builds with (`odin dev-2026-08`, `just 1.55.1`) instead of "a recent
+  nightly", and point at the one file the pin lives in.
+- **The README's example table marks what is not `just example NAME`** — `extension` is a shared
+  library, `leak_sweep` is a gate, and `integration` and `native_child` are Linux/X11 only and do not
+  build elsewhere, which the table implied they did.
 - **`docs/PLAN-TESTING-AND-EXAMPLES.md` is the house rules and nothing else.** The worklist it was named
   for — close the coverage gap, build a larger example — is finished, so its batches, its proposal and
   its ticked acceptance boxes are in the history and the conventions that outlived them are not.
@@ -158,6 +175,12 @@ message about a segfault that does not happen for graphics state, contradicting 
 measured documentation, and is now counted and reported instead; and three listings passed an
 `Owned_Element` to a borrowed parameter (`sciter_app/dom.odin`, `sciter_app/scoped.odin`,
 `docs/dom.md`, whose compiled twin in `snippets.odin` was right all along).
+
+Two documentation claims about the repository itself were left behind by the un-vendoring:
+`docs/deployment.md`'s status block still said Linux and Windows were vendored and only macOS fetched —
+in the guide where a wrong claim about what ships costs money — and the README's layout table described
+`lib/` as "the engine binaries" four hundred lines after saying no engine is in the tree. `lib/` is the
+git-ignored destination `just fetch-engine` writes to.
 
 A second group corrected documentation that was **wrong**, which is the more dangerous kind: `eval`
 never reports a script error through its `Error` (the returned Value carries it), over-releasing a
