@@ -110,6 +110,13 @@ jobs:
       - name: Check the thread-affinity rule
         run: just check-affinity
 
+      # Three invariants of the same shape as the one above: a Value or an owned handle handed back is
+      # recorded in the debug ledger, and every `proc "system"` restores a context. Each was true when
+      # the script was written; the script is what keeps them true, because the previous answer to "who
+      # checks this" was a review nine days old. Source only, no engine.
+      - name: Check the ledger and callback-context invariants
+        run: just check-invariants
+
       # Formatting is maintained like the type check and the vet flags, not by hand. This needs no
       # engine and writes nothing - `odinfmt` prints to stdout and the recipe compares bytes. It became
       # gateable when the formatter stopped rewriting files on every run; the justfile comment on
@@ -152,6 +159,16 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: '1'
           GALLIUM_DRIVER: llvmpipe
         run: xvfb-run -a -s "-screen 0 1280x1024x24" just window-canary
+
+      # Here for comparison rather than for coverage - the Linux tests already open windows, so this
+      # adds little on its own. It is what makes the macOS number readable: a windowed example that
+      # fails only there is a platform finding, and one that fails everywhere is a broken example.
+      - name: Run the windowed examples as programs
+        env:
+          XMODIFIERS: '@im=none'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" just windowed-examples
 
       # Xvfb because the windowed tests gate themselves on DISPLAY/WAYLAND_DISPLAY and would otherwise
       # skip ~two thirds of the suite. The screen is given explicitly because Xvfb's default depth is
@@ -289,6 +306,11 @@ jobs:
       - name: Build the SQLite native extension
         run: just extension sqlite_extension odin-sqlite
 
+      # The third platform's reading of the same measurement, for the reason given on the Linux job.
+      # This runner has a desktop session, so no Xvfb and no XMODIFIERS.
+      - name: Run the windowed examples as programs
+        run: just windowed-examples
+
       - name: Run the example tests
         timeout-minutes: 45
         env:
@@ -360,6 +382,14 @@ jobs:
       # lldb backtrace when the answer is no.
       - name: Can the engine create a window here?
         run: just window-canary
+
+      # **The step that makes this platform's green mean something.** The windowed tests below skip
+      # themselves here - AppKit will not make an NSWindow on the test runner's pool thread - so the
+      # suite's total counts roughly fourteen examples it never exercised. A program's `main` is the
+      # main thread, so the same code runs as a program with nothing skipped. 124 is the pass: the
+      # timeout fired, so the window was still up.
+      - name: Run the windowed examples as programs
+        run: just windowed-examples
 
       # EXAMPLE_TEST_TIMEOUT bounds each example rather than the job, for the same reason as the other
       # two platforms: a windowed test that blocks on the message pump would otherwise be reported only

@@ -133,6 +133,17 @@ check-affinity:
 	{{py}} .github/scripts/check-affinity.py
 
 
+# Three more invariants of the same shape, each true today and each held true by nobody: a Value handed
+# back is recorded in the ledger, an owned handle is too, and every `proc "system"` restores a context.
+# All three were verified by hand in the 2026-08-13 review, which is the argument for the script rather
+# than against it - so was rule 1, and it drifted. Follows delegation, so a `scoped_` twin is not a
+# hole. No engine and no display needed.
+# ---
+# assert the ledger and callback-context invariants: tracked(), track_acquire(), and `context =`
+check-invariants:
+	{{py}} .github/scripts/check-invariants.py
+
+
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
 # slots the engine has - it catches a reordered or removed one. It cannot catch an *added* one: a newer
 # SDK regenerates into `sciter.odin` as fields nothing wraps, and coverage degrades one upgrade at a
@@ -180,6 +191,77 @@ window-canary: mktarget_dirs
 [macos]
 window-canary: mktarget_dirs
 	.github/scripts/macos-canary.sh
+
+
+# The windowed examples, run as **programs** rather than as tests - which on macOS is the only way they
+# run at all.
+#
+# `odin test` puts every test on a `thread.Pool` worker and AppKit refuses to make an `NSWindow` off the
+# main thread, so `have_display()` answers false under `ODIN_TEST` on Darwin and fourteen examples skip
+# themselves. A skip is a pass in the runner's accounting, so the macOS suite's green says less than the
+# other two platforms' (docs/MACOS-CHECKLIST.md section 2a). A program's `main` *is* the main thread, so
+# the same code runs here with nothing skipped.
+#
+# The contract is the canaries': run it for a few seconds and see whether it is still alive. **124 is
+# the pass** - the timeout fired, so the pump was still turning and the window was still up. 0 is
+# reported separately rather than folded into either column: a windowed program that returns on its own
+# has either finished legitimately or failed to open a window and given up, and from outside there is no
+# telling which. Anything else is the crash it looks like.
+#
+# What this does *not* prove is that the window has anything in it - `docs/PLAN.md` section 1's ceiling,
+# and the reason README.md's platform table keeps a "looked at by a human" column. Run `window-canary`
+# first; if the machine cannot open a window at all, every line below is the same failure repeated.
+#
+# WINDOWED_EXAMPLE_SECONDS (default 8) is how long each one has to stay up.
+# ---
+# run every windowed example as a program and check it stays up
+[script]
+windowed-examples: mktarget_dirs ensure-engine
+	import os, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import host_x11_skip, parallel, run_with_timeout, windowed_examples
+
+	secs = int(os.environ.get("WINDOWED_EXAMPLE_SECONDS", "8"))
+	out = os.path.join("target", "debug", "windowed")
+	os.makedirs(out, exist_ok=True)
+
+	names = windowed_examples(host_x11_skip())
+	exe = lambda n: os.path.join(out, n + ".exe")
+
+	# Built in parallel, run one at a time: these take focus, and several windows racing for it on one
+	# desktop is a different experiment from the one being run.
+	def build(name):
+		return run_with_timeout(
+			["odin", "build", f"examples/{name}.odin", "-file", "-debug", f"-out:{exe(name)}"], 0
+		)
+
+	if any(parallel(names, build)):
+		raise SystemExit("a windowed example failed to build")
+
+	if sys.platform.startswith("linux"):
+		# The XSetICFocus crash in README.md - the input method, not the window. Set on this process so
+		# the children inherit it; `run_with_timeout` passes no environment of its own.
+		os.environ.setdefault("XMODIFIERS", "@im=none")
+
+	alive, exited, failed = [], [], []
+	for name in names:
+		print(f"--- {name}", flush=True)
+		code = run_with_timeout([exe(name)], secs)
+		if code == 124:
+			alive.append(name)
+		elif code == 0:
+			exited.append(name)
+		else:
+			failed.append(f"{name}(exit {code})")
+
+	print()
+	print(f"stayed up for {secs}s: {len(alive)}/{len(names)}")
+	if exited:
+		print(f"exited on their own (read these): {' '.join(exited)}")
+	if failed:
+		print(f"FAILED: {' '.join(failed)}")
+		raise SystemExit(1)
+	print(f"ok: {len(names)} windowed examples ran as programs with no crash")
 
 
 # The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS

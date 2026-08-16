@@ -27,6 +27,7 @@ from __future__ import annotations
 import glob
 import os
 import subprocess
+import threading
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -77,6 +78,25 @@ def example_sources(skip: "tuple[str, ...] | set[str]" = ()) -> list[str]:
 	return [f for f in sorted(glob.glob("examples/*.odin")) if os.path.basename(f)[:-5] not in skip]
 
 
+def windowed_examples(skip: "tuple[str, ...] | set[str]" = ()) -> list[str]:
+	"""Bare names of the examples that open a window, derived rather than listed.
+
+	An example is windowed if its source calls `create_window`. Deriving it means a new windowed example
+	is covered by `just windowed-examples` the day it is written, where a hand-kept list is a second
+	place to forget - which is the failure this repository has already had once, with the vendored-engine
+	CI gates that guarded binaries nobody committed any more.
+
+	Extensions have no `main` at all, and the X11-only pair does not build off Linux.
+	"""
+	skip = set(skip) | set(EXTENSIONS)
+	out = []
+	for f in example_sources(skip):
+		with open(f, encoding="utf-8", errors="replace") as fh:
+			if "create_window(" in fh.read():
+				out.append(os.path.basename(f)[:-5])
+	return out
+
+
 def odin_check_cmds(skip: "tuple[str, ...] | set[str]" = (), target: str | None = None) -> list[list[str]]:
 	"""`odin check` command lines for both packages, the guides' snippets and every example.
 
@@ -114,11 +134,15 @@ def try_run(cmd: list[str], **kwargs) -> int:
 	return subprocess.run(cmd, **kwargs).returncode
 
 
-def run_with_timeout(cmd: list[str], limit: int) -> int:
+def run_with_timeout(cmd: list[str], limit: int, capture: bool = False):
 	"""Run `cmd`, killing its whole process tree if it outlives `limit` seconds. 0 means no ceiling.
 
 	Returns the exit code, or 124 for a timeout - the same number GNU `timeout` uses, and the number the
-	summary line and CI both read as "this one hung".
+	summary line and CI both read as "this one hung". With `capture`, returns `(code, output)` and the
+	output is *also* printed as it arrives: a run that takes forty-five minutes must not go silent, and a
+	test that aborts must still leave its last lines on the console. The pump thread is what buys both -
+	`subprocess.run(capture_output=True)` would hold everything until the process ended, which is exactly
+	when a crashed test tells you least.
 
 	**The process tree, not the process.** This replaces `timeout --kill-after=10s`, which had a failure
 	mode measured on Windows: `just example-test <name>` spawns `odin test`, which builds and then runs a
@@ -129,16 +153,45 @@ def run_with_timeout(cmd: list[str], limit: int) -> int:
 	"""
 	print(" ".join(cmd), flush=True)
 
-	if limit <= 0:
+	if limit <= 0 and not capture:
 		return subprocess.run(cmd).returncode
 
 	kwargs = {}
 	if not is_windows():
 		kwargs["start_new_session"] = True
+	if capture:
+		kwargs.update(
+			stdout=subprocess.PIPE,
+			stderr=subprocess.STDOUT,
+			text=True,
+			errors="replace",
+			bufsize=1,
+		)
 
 	proc = subprocess.Popen(cmd, **kwargs)
+
+	lines: list[str] = []
+	pump = None
+	if capture:
+
+		def drain():
+			for line in proc.stdout:  # type: ignore[union-attr]
+				lines.append(line)
+				print(line, end="", flush=True)
+
+		pump = threading.Thread(target=drain, daemon=True)
+		pump.start()
+
+	def done(code: int):
+		if pump is not None:
+			# Bounded, because a killed process tree can leave the pipe open in a grandchild and this
+			# thread would then never see EOF - the hang `run_with_timeout` exists to prevent, moved one
+			# level down.
+			pump.join(timeout=5)
+		return (code, "".join(lines)) if capture else code
+
 	try:
-		return proc.wait(timeout=limit)
+		return done(proc.wait(timeout=limit if limit > 0 else None))
 	except subprocess.TimeoutExpired:
 		print(f"::warning::timed out after {limit}s, killing the process tree", flush=True)
 		if is_windows():
@@ -152,7 +205,7 @@ def run_with_timeout(cmd: list[str], limit: int) -> int:
 
 			os.killpg(proc.pid, signal.SIGKILL)
 		proc.wait()
-		return 124
+		return done(124)
 
 
 def parallel(jobs: list, worker) -> list:

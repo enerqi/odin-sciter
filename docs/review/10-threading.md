@@ -21,16 +21,16 @@ it is not committed.
 | R10-03 | the unlocked ledger is mutated off-thread and loses counter updates | major | **premise restored** |
 | R10-04 | the video API documents worker-thread use with nothing behind it | minor | open |
 | R10-05 | the guard's own `on`/`strict` state is read and written non-atomically | minor | **fixed** |
-| R10-06 | the rule the guard models is not the rule macOS enforces | minor | open |
+| R10-06 | the rule the guard models is not the rule macOS enforces | minor | **fixed** |
 | R10-07 | nothing tests guard *coverage*, and the one test that could is deliberately shaped not to | nit | **fixed** |
 | R10-08 | found by fixing R10-01: the macOS test bootstrap really does use the engine from two threads | major | **fixed** |
 
 ## Status — 2026-08-16, the same day
 
-Six of the eight are closed. R10-08 was not in the original seven: it is what the completed guard found
-on its first macOS CI run, an hour after the fix landed. The two left open both need a measurement
-before they need a change, and neither can be measured from here (R10-04 wants a live video
-destination, R10-06 wants a Mac).
+Seven of the eight are closed. R10-08 was not in the original seven: it is what the completed guard
+found on its first macOS CI run, an hour after the fix landed. R10-06 was expected to need a Mac and did
+not — see its entry. The one still open, R10-04, needs a live video destination with a producing worker
+before it needs a change.
 
 `engine()` in `sciter_app/sciter_app.odin` is the fix that carried four of the five: it is now the
 package's only route to the engine's function table, it calls `guard_engine_thread` on the way in, and
@@ -267,9 +267,24 @@ correctness with nothing checking it is the exact situation `affinity.odin:5-6` 
 rule 1. An application that runs its UI on a spawned thread (a plugin host, an embedded runtime, a
 second UI thread) is portable on Linux and Windows and aborts on macOS, with the guard silent.
 
-**Fix:** small — add the Darwin main-thread condition to the guard under
-`when ODIN_OS == .Darwin`, and state the platform variant in `rules.md` §1, which currently describes
-only the consistency rule.
+**Fixed**, and more cheaply than expected. `check_thread_affinity` gained a third parameter,
+`main_thread`, defaulting to `ODIN_OS == .Darwin`: when the guard arms, the thread that armed it must
+also be the process's main thread. No platform API and nothing to link — `@(init)` procedures run at
+start-up on the first thread, which `MACOS-CHECKLIST.md` had already verified on macOS directly, so
+recording `sync.current_thread_id()` there is the whole implementation.
+
+The check itself is platform-neutral; only the default is Darwin. That is what made it measurable from
+Windows, with `strict = false` so the counter can be read instead of trapping:
+
+| | arming thread | violations |
+|---|---|---:|
+| `main_thread = false` (the non-Darwin default) | a worker | 0 |
+| `main_thread = true` (what Darwin gets) | a worker | **1** |
+| `main_thread = true` | main | 0 |
+
+The Darwin test bootstrap passes `main_thread = false` alongside its re-arm, for the reason in R10-08:
+the runner has no way to put a test on the main thread, so the requirement is right for an application
+and impossible for a test binary.
 
 ### R10-07 — nothing tests guard coverage, and the test that could is deliberately shaped not to  [severity: nit]
 
@@ -367,9 +382,12 @@ smaller than it.
    `check-ownership`, so the coverage cannot rot back.
 4. **The two documentation overclaims** — `rules.md:43` and `threading.md:19` — rewritten only after (1)
    made them true, plus the ledger's own note in `tracking.odin:88`.
-5. **R10-06** and **R10-04** remain open. Both need a measurement before they need a change, and both
-   measurements need hardware or a scenario this pass did not have: a Mac, and a live video destination
-   with a producing worker.
+5. **R10-06** later, once it turned out not to need a Mac: the check is platform-neutral and only its
+   default is Darwin, so it was written and measured from Windows by passing `main_thread = true`
+   explicitly.
+6. **R10-04** remains open. It needs a live video destination with a producing worker before it needs a
+   change, and that is a scenario rather than a hardware problem — `examples/video.odin` streams frames
+   from the engine's own thread today.
 
 ## The probe
 

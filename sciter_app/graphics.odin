@@ -189,6 +189,13 @@ image_from_element :: proc(element: Element) -> (image: Image, err: Error) {
 	return Image(img), nil
 }
 
+// The image's dimensions and whether it carries alpha.
+//
+// **A released image answers `0x0` with a `nil` error**, not a failure - measured, by dropping the last
+// reference to a 4x4 image and asking again. A nil handle is the only case that comes back as
+// `.BAD_PARAM`, and that check is this wrapper's, not the engine's. So zero width is worth reading as
+// "this handle is probably dead" rather than as a measurement; the engine has no way to tell you which.
+// See the note above `value_to_graphics` for where that measurement came from.
 image_size :: proc(image: Image) -> (width, height: int, has_alpha: bool, err: Error) {
 	if image == nil {
 		return 0, 0, false, sciter.Graphin_Result.BAD_PARAM
@@ -882,6 +889,29 @@ value_from_text :: proc(text: Text) -> (v: Value, err: Error) {
 	return tracked(v), nil
 }
 
+// The four unwrappers below hand back the handle the Value is already holding, and **it is borrowed**:
+// no reference is taken, nothing is owed, and the handle dies with the Value. A handle that has to
+// outlive the Value needs its own reference - `retain_image`, `retain_path`, `retain_text`.
+//
+// Measured, because the header says nothing about it (`sciter-x-graphics.h:397`) and the `const VALUE*`
+// is suggestive rather than decisive. Create an image, wrap it, unwrap it, then drop the references one
+// at a time:
+//
+//   - the unwrapped handle **is** the wrapped one, not a copy
+//   - after `release_image` of the caller's own reference the image is still alive and 4x4, so
+//     `value_from_image` took a reference of its own - which is what the ledger's `tracked()` records
+//   - after `value_clear` it is gone. So the unwrap took nothing
+//
+// That is the opposite of the four `value_from_*` above, and the signature cannot say so the way
+// `Owned_Element` does: `Image`, `Path`, `Text` and `Graphics` are the same type in both directions. It
+// is written here because the ledger records the wrapping and not the unwrapping, which would otherwise
+// look like the omission - `.github/scripts/check-invariants.py` carries the same answer as a listed
+// exemption, so the two cannot drift apart silently.
+//
+// **The dead handle does not report itself.** `image_size` on the image above, after the last reference
+// went, answered `0x0` with a `nil` error rather than a failure. Same shape as the return codes
+// documented on `eval` and `unuse_element`: the result answers "did the call complete", never "is this
+// handle still live".
 value_to_graphics :: proc(v: ^Value) -> (gfx: Graphics, err: Error) {
 	h: sciter.Hgfx
 	gfx_err(graphics_api().vUnWrapGfx(v, &h)) or_return

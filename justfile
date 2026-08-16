@@ -849,16 +849,33 @@ example-tests: ensure-engine
 		print(f"    --- where {test} died", flush=True)
 		run_with_timeout(cmd, limit)
 
-	# The name of the proc `@(test)` decorates. `\s*` spans the newline between them, and any other
-	# attributes stacked in between are `@(...)` lines that the name pattern will not match.
-	TEST_NAME = re.compile(r"@\(test\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*::")
+	# The name of the proc `@(test)` decorates. `\s*` spans the newline between them, and the inner group
+	# steps over any further attributes stacked in between - without it, a test written
+	# `@(test)` / `@(private)` / `name ::` is one the bisect below never re-runs, which is the one place
+	# a missing name costs something. Requiring a declaration to follow is also what keeps prose *about*
+	# `@(test)` from counting, which `stats.py` was doing until this pattern was shared with it.
+	TEST_NAME = re.compile(r"@\(test\)\s*(?:@\([^)]*\)\s*)*([A-Za-z_][A-Za-z0-9_]*)\s*::")
 	bisect = []
 
 	# The X11-only pair does not compile off Linux at all - see justlib - so running their tests there
 	# reports a build failure per example and says nothing about this platform.
 	skip = () if sys.platform.startswith("linux") else X11_ONLY
 
+	# **A skip is a pass in the runner's accounting, and that is how a green suite overstates itself.**
+	# `Finished N tests` counts a test that returned early after printing "skipping" exactly the same as
+	# one that exercised the engine, so on macOS - where every windowed test skips under `ODIN_TEST`, see
+	# docs/MACOS-CHECKLIST.md - the total says roughly three times more than it means. Counting the skip
+	# lines is what turns that from a paragraph somebody has to remember into a number in the output.
+	#
+	# One line per skipped test, which holds while every skip site prints exactly once, and they all go
+	# through the same `if !have_display()` shape. It is a tally rather than a gate: the honest count
+	# differs per platform and per machine, so a threshold here would be a number to silence rather than
+	# a fact to read.
+	SKIPPED = re.compile(r"^.*\bskipping\b.*$", re.M | re.I)
+	FINISHED = re.compile(r"^Finished (\d+) tests?", re.M)
+
 	failed = []
+	tally = []
 	for f in sorted(glob.glob("examples/*.odin")):
 		name = os.path.basename(f)[:-5]
 		if name in skip:
@@ -867,7 +884,8 @@ example-tests: ensure-engine
 			if "@(test)" not in fh.read():
 				continue
 		print(f"--- {name}", flush=True)
-		code = run_with_timeout(["just", "example-test", name], limit)
+		code, out = run_with_timeout(["just", "example-test", name], limit, capture=True)
+		tally.append((name, sum(int(n) for n in FINISHED.findall(out)), len(SKIPPED.findall(out))))
 		if code != 0:
 			failed.append(f"{name}(exit {code})")
 			bisect.append(name)
@@ -891,6 +909,25 @@ example-tests: ensure-engine
 				trace(name, test, limit)
 
 	print()
+	ran = sum(n for _, n, _ in tally)
+	skipped = sum(s for _, _, s in tally)
+
+	# The static total, so the two numbers can be compared rather than each read alone. They differ by
+	# whatever this platform did not build - the X11-only pair off Linux - and a difference with no
+	# named cause is the thing worth noticing.
+	declared = files = 0
+	for f in sorted(glob.glob("examples/*.odin")):
+		n = len(TEST_NAME.findall(open(f, encoding="utf-8", errors="replace").read()))
+		declared, files = declared + n, files + (1 if n else 0)
+
+	print(f"{ran} of {declared} test procedures ran, in {len(tally)} of {files} example files")
+	print(f"    {skipped} of the {ran} skipped themselves")
+	if skipped:
+		for name, n, s in tally:
+			if s:
+				print(f"      {name:<22} {n:>3} tests, {s:>3} skipped")
+		print(f"    {ran - skipped} actually exercised something")
+		print("    a skip is a pass to the runner - `just windowed-examples` is how the windowed ones run")
 	if skip:
 		print(f"(skipped, X11-only: {' '.join(skip)})")
 	if failed:

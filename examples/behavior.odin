@@ -315,7 +315,11 @@ when ODIN_OS == .Darwin && ODIN_TEST {
 		// real and unavoidable - AppKit wants main for the singleton, the runner wants a worker for the
 		// tests - so what re-arming buys is the rest of the rule: the first test call arms the worker,
 		// and a later call from anywhere else still traps. docs/MACOS-CHECKLIST.md section 2 has why.
-		sciter_app.check_thread_affinity()
+		//
+		// `main_thread = false` for the same reason and in the same breath: on Darwin the guard also
+		// asserts that the engine's thread *is* the main thread, which is right for an application and
+		// impossible for a test - the runner has no way to put a test on it.
+		sciter_app.check_thread_affinity(main_thread = false)
 	}
 }
 

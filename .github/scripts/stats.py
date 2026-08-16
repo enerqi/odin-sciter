@@ -29,7 +29,13 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TEST_MARKER = "@(test)"
+# A test is `@(test)` followed by a declaration, not the string `@(test)` anywhere in the file. Counting
+# the string over-reported by one: `examples/eval.odin`'s header says "the `@(test)` procs at the bottom
+# exercise the conversions", and prose about tests was being counted as a test. The inner group allows
+# other attributes stacked between the marker and the name, which is legal and which a plain
+# `@\(test\)\s*name` would silently drop instead - the opposite error, and the one that matters more,
+# because a test nothing counts is a test nothing misses.
+TEST_MARKER = re.compile(r"@\(test\)\s*(?:@\([^)]*\)\s*)*[A-Za-z_][A-Za-z0-9_]*\s*::")
 
 # Exported procs of the wrapper: top-level `name :: proc`, minus anything marked @(private) on the line
 # before. Proc-group members are declared the same way and count once, as the group.
@@ -63,8 +69,8 @@ def main(argv: list[str]) -> int:
 	example_files = sorted(glob.glob(os.path.join(ROOT, "examples", "*.odin")))
 	sources = {p: read(p) for p in example_files}
 
-	tests = sum(text.count(TEST_MARKER) for text in sources.values())
-	test_files = sum(1 for text in sources.values() if TEST_MARKER in text)
+	tests = sum(len(TEST_MARKER.findall(text)) for text in sources.values())
+	test_files = sum(1 for text in sources.values() if TEST_MARKER.search(text))
 
 	exported = exported_procs()
 	haystack = "\n".join(sources.values())

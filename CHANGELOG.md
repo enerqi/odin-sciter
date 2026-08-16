@@ -68,9 +68,26 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 - **New gates in CI**: `just parity --check` (C-API slot coverage against
   [`docs/parity-baseline.txt`](docs/parity-baseline.txt)), `just check-ownership` (allocator ⇒ owned),
   `just check-affinity` (every engine call goes through `engine()`, so the runtime thread guard can
-  see it — the gap it closes is described under Fixed), `just stats --check` (the counts the docs
-  quote), and `just lint` over both packages and all examples. `just example-tests` bisects a test that kills the process, which used to report `exit 134`
+  see it — the gap it closes is described under Fixed), `just check-invariants` (a `Value` or an owned
+  handle handed back is recorded in the debug ledger, and every `proc "system"` restores a context —
+  three invariants that were true and that nothing was keeping true), `just stats --check` (the counts
+  the docs quote), and `just lint` over both packages and all examples. `just example-tests` bisects a test that kills the process, which used to report `exit 134`
   against a file and name nothing.
+- **`just windowed-examples`** — every example that opens a window, run as a *program* rather than as a
+  test, with the canaries' contract: exit 124 means the timeout fired, so the window was still up. On
+  macOS this is the only way those examples run at all, because AppKit will not make an `NSWindow` on
+  the test runner's pool thread and fourteen of them skip themselves. It runs on all three platforms in
+  CI so a macOS-only failure can be told apart from a broken example. The windowed set is derived from
+  the source, not listed, so a new one is covered the day it is written.
+- **`just example-tests` counts the skips.** "384 of 396 test procedures ran, in 22 of 24 example files;
+  5 of the 384 skipped themselves." A skip is a pass in the runner's accounting, so a total on its own
+  overstates a platform that skips a lot — which is macOS. This replaces a paragraph in
+  [`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md) asking the reader to remember that.
+- **The thread guard checks the *main* thread on macOS**, not just a consistent one:
+  `check_thread_affinity(main_thread = …)`, on by default on Darwin. AppKit aborts the process if the
+  engine's singleton is built anywhere but the main thread, and rule 1 on its own permits a consistent
+  worker — which passes every check here and then dies in Apple's code. No platform API involved:
+  `@(init)` runs on the first thread, so recording its id there is the whole implementation.
 - **Every exported wrapper procedure is now reached by a test.**
 - `released_resources()`, `app_event(n)`, and twelve further `scoped_` constructors.
 
@@ -132,6 +149,20 @@ concerned and in [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md).
 
 The findings, the measurements behind them and the two still open are in
 [`docs/review/10-threading.md`](docs/review/10-threading.md).
+
+- **`just stats` counted one test that does not exist.** It counted the string `@(test)`, and
+  `examples/eval.odin`'s header says "the `@(test)` procs at the bottom exercise the conversions" — so
+  prose about tests was a test. It now requires a declaration to follow the marker, and steps over any
+  attributes stacked in between, which the old pattern in `example-tests` would have dropped instead:
+  a test nothing counts is a test the failure-bisect never re-runs. 397 → 396, and `docs/PLAN.md` with
+  it.
+- **`value_to_graphics`, `value_to_image`, `value_to_path` and `value_to_text` say what they hand
+  back.** They had no doc comment at all, in the one family where the signature cannot answer the
+  question — those four types are the same ones the *owning* `value_from_*` family returns. Measured:
+  the unwrap gives back the identical handle and takes no reference of its own, so it is **borrowed**
+  and dies with the Value; the wrap does take one, which is what the ledger records. Also measured and
+  now written on `image_size`: a released image answers `0x0` with a `nil` error rather than failing.
+  [`docs/review/11-partial-enforcement.md`](docs/review/11-partial-enforcement.md).
 
 ### Removed
 

@@ -39,16 +39,40 @@ package sciter_app
 when ODIN_DEBUG {
 	@(private = "file")
 	Affinity :: struct {
-		on:         bool,
-		strict:     bool,
-		id:         int, // 0 until the first guarded call arms it
-		violations: int,
+		on:          bool,
+		strict:      bool,
+		main_thread: bool, // Darwin: the armed thread must also be *the* main thread
+		id:          int, // 0 until the first guarded call arms it
+		violations:  int,
 	}
 
 	@(private = "file")
 	g_affinity := Affinity {
-		on     = true,
-		strict = true,
+		on          = true,
+		strict      = true,
+		main_thread = ODIN_OS == .Darwin,
+	}
+
+	// **macOS needs a stronger rule than the other two platforms, and this is how it is checked.**
+	// Rule 1 is consistency - every call on whichever thread came first - and on Darwin that is not
+	// enough: `init`, `create_image` and `create_windowless` all construct the engine's
+	// `xwing::application` singleton, which builds `NSApplication`, and `create_window` reaches
+	// `NSWindow`. AppKit aborts the process for either off the main thread. A program that runs the
+	// engine on one consistent *worker* thread therefore satisfies rule 1, satisfies the rest of this
+	// file, and dies in AppKit with a trace naming Apple's code and none of its own
+	// (docs/MACOS-CHECKLIST.md section 2 has one).
+	//
+	// `@(init)` is what makes this cheap: those procedures run at start-up, before `main`, on the
+	// process's first thread - verified directly on macOS by comparing thread ids in a probe, which is
+	// also the fact the Darwin test bootstrap is built on. So the main thread's id can be recorded with
+	// no platform API, no `foreign import` and nothing to link.
+	@(private = "file")
+	g_main_thread: int
+
+	@(private = "file")
+	@(init)
+	record_main_thread :: proc "contextless" () {
+		g_main_thread = sync.current_thread_id()
 	}
 }
 
@@ -65,8 +89,14 @@ when ODIN_DEBUG {
 //     that reason. It is the engine's rule, not this package's invention, so the honest fix is one
 //     thread rather than a disabled check.
 //
+// `main_thread` is the macOS half, and it defaults to on there and off everywhere else. It adds "and
+// that thread must be the process's main thread" to the rule, because AppKit requires it and rule 1 on
+// its own does not - see the note beside `g_main_thread`. Pass `main_thread = false` where the split is
+// forced and understood: a test binary, whose tests run on a `thread.Pool` worker no matter what, is the
+// case it exists for, and the Darwin bootstrap in the examples is where it is used.
+//
 // Calling it also re-arms: the next guarded call decides which thread is the engine's.
-check_thread_affinity :: proc(on := true, strict := true) {
+check_thread_affinity :: proc(on := true, strict := true, main_thread := ODIN_OS == .Darwin) {
 	when ODIN_DEBUG {
 		// One field at a time, atomically, rather than a whole-struct assignment. The guard reads these
 		// from whatever thread it happens to be on, so a plain store races those reads - and this is the
@@ -76,6 +106,7 @@ check_thread_affinity :: proc(on := true, strict := true) {
 		sync.atomic_store(&g_affinity.id, 0)
 		sync.atomic_store(&g_affinity.violations, 0)
 		sync.atomic_store(&g_affinity.strict, strict)
+		sync.atomic_store(&g_affinity.main_thread, main_thread)
 		sync.atomic_store(&g_affinity.on, on)
 	}
 }
@@ -134,6 +165,27 @@ guard_engine_thread :: proc(loc := #caller_location) {
 		// The first guarded call wins. Compare-and-exchange rather than a plain store so that two
 		// threads racing to be first cannot both think they are.
 		if _, armed := sync.atomic_compare_exchange_strong(&g_affinity.id, 0, me); armed {
+			if sync.atomic_load(&g_affinity.main_thread) && me != g_main_thread {
+				sync.atomic_add(&g_affinity.violations, 1)
+				if !sync.atomic_load(&g_affinity.strict) {
+					return
+				}
+				runtime.print_string("\nsciter_app: the engine is being used from thread ")
+				runtime.print_int(me)
+				runtime.print_string(", but this platform requires the main thread (")
+				runtime.print_int(g_main_thread)
+				runtime.print_string(
+					")\n  macOS builds the engine's NSApplication singleton on the first call - `init`," +
+					" `create_image` and\n  `create_windowless` all reach it - and AppKit aborts the" +
+					" process off the main thread. This\n  traps here instead, where the call is still on" +
+					" the stack. See docs/rules.md rule 1 and\n  docs/MACOS-CHECKLIST.md section 2." +
+					" `check_thread_affinity(main_thread = false)` is the way out\n  for a test binary," +
+					" whose tests never run on the main thread.\n  at ",
+				)
+				runtime.print_caller_location(loc)
+				runtime.print_string("\n")
+				runtime.trap()
+			}
 			return
 		}
 		if sync.atomic_load(&g_affinity.id) == me {

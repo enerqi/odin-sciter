@@ -81,6 +81,40 @@ Every row runs in the `macos` job of `.github/workflows/ci.yml` unless it says o
 
 ## The predictions
 
+### The ledger — audited 2026-08-16
+
+Every section below was written before the machine existed. Scoring them against what the runs actually
+said is the only way to find out whether writing predictions down is paying for itself, and the answer
+has a shape:
+
+| § | prediction | outcome |
+| --- | --- | --- |
+| 1 | a hosted runner can reach WindowServer | **held** |
+| 2 | AppKit's main-thread rule breaks the windowed tests | **held, and under-scoped** — it is not about windows: `create_image` and `create_windowless` reach the singleton too |
+| 3 | nothing is quarantined in CI | **held** |
+| 4 | an unbundled binary may never come forward | **unresolved, and unresolvable here** — needs a human at a Mac |
+| 5 | 15 null slots: the Linux list minus `SciterCreateNSView` | **wrong** — 16, the Linux list exactly, and the slot named for the platform is null *on* it |
+| 5 | `dladdr` resolves every non-null slot to its own `…Imp` | **held** — 173 of 173 |
+| 6 | no JIT entitlement is needed | **untested** — nothing here runs under the hardened runtime, so this is still reasoning, not a result |
+| 7 | the extracted universal dylib keeps its ad-hoc signature and loads | **held**, and it turned out to be checkable after all — `single_binary`'s 8 tests are green (§2a) |
+| 8 | the X11-only pair has no macOS equivalent | not a prediction, a statement of scope |
+
+**Four held, one wrong, one unresolvable, one untested.** The pattern in that column is worth more than
+the score: *every prediction about the environment held, and the one about the engine's API surface was
+wrong.* §5 already records that this is the third API-shape prediction in this repository to be wrong,
+after two for Windows. Environments are guessable — a hosted macOS runner is a documented thing, and so
+is `com.apple.quarantine`. What an undocumented C API answers on a platform nobody has run it on is not,
+and no amount of reasoning about the header improves it. That is the argument for `api-map-verify` and
+`MACOS_NULLS` being gates rather than notes, and it generalises: **predict the environment, measure the
+API.**
+
+One more entry belongs here and has no section, because nobody predicted it: fixing §2 introduced a
+genuine two-thread split — the singleton built on `main` by the bootstrap, every test on a pool worker —
+which nothing caught until the thread guard was completed nine days later and went red on the first
+macOS run. It is written up as R10-08 in [`review/10-threading.md`](./review/10-threading.md) and in
+"The bootstrap and the affinity guard" below. The lesson is not about macOS: a workaround for a
+platform rule is itself a change that wants a prediction, and this one did not get one.
+
 ### 1. Does a CI runner have a window server? — **MEASURED: yes**
 
 Predicted: it works, the canary exits 124 and the suite runs. **It does.**
@@ -251,10 +285,22 @@ Darwin-only blocks compiled *for real* by pointing their `when` at Windows in on
 `odin test` — `odin check` does not enter `when ODIN_TEST`, so nothing else would have compiled them.
 `events`, `behavior` and `graphics` still pass 24, 14 and 12 tests on Windows.
 
-Still open: with the windowed tests skipping rather than aborting, the macOS suite should go green — and
-green will then mean *less* than it does on the other two platforms. That is what the "Looked at by a
-human" column in `README.md` is for, and running the windowed examples as programs is the next piece of
-work rather than something this bring-up finished.
+Was open, now closed, and it was the point: with the windowed tests skipping rather than aborting the
+macOS suite goes green, and green then means *less* here than on the other two platforms. Two things
+were built to say how much less.
+
+**`just windowed-examples`** runs every example that calls `create_window` as a *program*, which is
+where `main` is the main thread and nothing skips. Same contract as the canaries — 124 is the pass, the
+timeout fired so the window was still up. It runs on all three platforms in CI, deliberately: a windowed
+example that fails only on macOS is a platform finding, one that fails everywhere is a broken example,
+and without the other two columns there is no telling which. It does not prove the window has anything
+in it; that ceiling has not moved, and the "Looked at by a human" column in `README.md` is still what
+covers it.
+
+**`just example-tests` counts the skips.** It prints how many test procedures ran of how many exist, and
+how many of those returned early — so this file no longer has to warn in prose that the total overstates
+itself. Measured on Windows the day it was written: 384 of 396 ran, 5 skipped. On macOS the skipped
+number is the one to read.
 
 Note for applications, since the trace invites the wrong conclusion: none of this affects a real macOS
 app. `main` runs on the main thread, so `create_window` from `main` is correct by construction. Only a
@@ -408,7 +454,7 @@ the code-signing question at the top of this file: ad-hoc is enough to load on a
 For a human who fetched the SDK by hand: `xattr -dr com.apple.quarantine <path>`. The CI job prints
 `xattr -l` so this is never a guess.
 
-### 4. Bundle and activation policy
+### 4. Bundle and activation policy — **unresolved, and CI cannot resolve it**
 
 An unbundled binary can create windows, but has no `Info.plist` and may never become the frontmost
 application — the window opens behind everything and never takes keyboard focus. Irrelevant to CI,
@@ -475,7 +521,7 @@ Pinned with a `when` rather than skipped, so an engine that fixes it fails the t
 Written up as defect 12 in [`UPSTREAM-DEFECTS.md`](./UPSTREAM-DEFECTS.md), and the workaround for a host
 carrying structure through the clipboard is `JSON.stringify` / `JSON.parse` around the text flavour.
 
-### 6. No JIT entitlement is needed
+### 6. No JIT entitlement is needed — **still reasoning, not a result**
 
 Sciter 6's script engine is QuickJS, an interpreter. Nothing here needs
 `com.apple.security.cs.allow-jit` or `allow-unsigned-executable-memory` under the hardened runtime.
