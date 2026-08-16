@@ -205,9 +205,9 @@ only while you are calling `windowless_heartbeat`. `request_loader`'s tests beca
 three) with a windowless harness for exactly that reason: the request had not finished by the time the
 assertion read it. Beat the view until the thing you are waiting for has happened, or use a window.
 
-And the sharp edge on macOS, which is a process-ending version of the same rule: **`run_once` and
-`heartbeat` are the *application* pump, and on macOS they may only be called from the main thread.**
-Both reach `xwing::application::heartbit` → `nextEventMatchingMask`, which AppKit answers with
+And the sharp edge on macOS, which is a process-ending version of the same rule: **`run_once` is the
+*application* pump, and on macOS it may only be called from the main thread.** It reaches
+`xwing::application::heartbit` → `nextEventMatchingMask`, which AppKit answers with
 
 ```
 *** Terminating app due to uncaught exception 'NSInternalInconsistencyException',
@@ -218,6 +218,19 @@ Both reach `xwing::application::heartbit` → `nextEventMatchingMask`, which App
 that drives a windowless view from a test drives *the view*, with `windowless_heartbeat`, and never the
 application. Measured: `examples/input.odin` aborted exactly this way after its harness moved to a
 windowless view but its tests kept calling `run_once`.
+
+**`heartbeat` is the exception, and it was not obvious.** `SciterExec(.LOOP_HEARTBIT)` reaches the same
+`application::heartbit`, so the expectation was that it aborts too. It does not, measured on the same
+runner: `examples/events.odin` drives its timer tests with `sciter_app.heartbeat` in a loop, on a
+windowless view, on a test thread, and passes. The difference is presumably that a process which never
+called `init` has no application to pump and the call falls through before it reaches AppKit — so treat
+this as "measured, not explained", and do not read it as permission. `run_once` in the same position
+ends the process.
+
+One more, from the same run: **`set_debug_output` scoped to a windowless view's handle instantiates an
+`NSWindow` on macOS**, and therefore aborts from a test. The same call on the same view is fine on Linux
+and Windows. `examples/eval.odin`'s per-window handler test skips on Darwin because of it. The handle a
+windowless view carries answers as a window on two platforms out of three.
 
 ---
 

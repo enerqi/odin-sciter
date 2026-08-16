@@ -837,9 +837,6 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
 		sciter_app.paint_windowless(&g_view)
 	}
-	for _ in 0 ..< 20 {
-		sciter_app.run_once()
-	}
 	return g_view.window, true
 }
 

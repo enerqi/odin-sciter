@@ -449,8 +449,11 @@ test_window :: proc(t: ^testing.T) -> (window: sciter_app.Window, root: sciter_a
 // that watches for one has to let the pump turn first.
 @(private = "file")
 settle :: proc(n := 10) {
-	for _ in 0 ..< n {
-		sciter_app.run_once()
+	for i in 0 ..< n {
+		// The **view's** heartbeat, not the application's. `sciter_app.run_once` reaches
+		// `nextEventMatchingMask`, which AppKit refuses off the main thread - and a test is never on it.
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
 	}
 }
 
@@ -972,7 +975,12 @@ test_clearing_set_values_argument_frees_the_callers_value_under_it :: proc(t: ^t
 	// ever starts faulting on Linux too, delete it rather than chasing it - the rule it demonstrates is
 	// in the comment above `on_clearing_set_value` and in `docs/rules.md`, which is where a reader
 	// should be learning it anyway.
-	when ODIN_OS != .Windows {
+	//
+	// **macOS joined Windows on 2026-08-16**, in the milder of the two ways: rather than faulting, the
+	// freed payload reads as empty *immediately* - `right_after` came back "" where Linux still reads
+	// the old string. Same undefined behaviour, a different allocator answering. Taking the instruction
+	// above at its word rather than chasing it, so this is now Linux-only.
+	when ODIN_OS == .Linux {
 		// The trap: immediately afterwards the caller's Value still reads correctly, because nothing has
 		// reused the freed payload yet.
 		right_after, rerr := sciter_app.value_to_string(&payload, context.temp_allocator)

@@ -135,8 +135,11 @@ click_at :: proc(element: sciter_app.Element, pos: [2]i32) -> sciter_app.Error {
 }
 
 pump :: proc(n := 15) {
-	for _ in 0 ..< n {
-		sciter_app.run_once()
+	for i in 0 ..< n {
+		// The **view's** heartbeat, not the application's. `sciter_app.run_once` reaches
+		// `nextEventMatchingMask`, which AppKit refuses off the main thread - and a test is never on it.
+		sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
+		sciter_app.paint_windowless(&g_view)
 	}
 }
 
