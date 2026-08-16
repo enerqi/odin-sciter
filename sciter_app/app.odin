@@ -83,7 +83,7 @@ init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
 		g_argv[i] = raw_data(g_argv_storage[i])
 	}
 
-	sciter.api().SciterExec(.INIT, uintptr(len(g_argv)), uintptr(raw_data(g_argv)))
+	engine().SciterExec(.INIT, uintptr(len(g_argv)), uintptr(raw_data(g_argv)))
 	g_initialized = true
 	return nil
 }
@@ -91,18 +91,18 @@ init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
 // Runs the message pump until `stop` is called or the last SW_MAIN window closes. Returns the
 // engine's exit code.
 run :: proc() -> int {
-	return int(sciter.api().SciterExec(.LOOP, 0, 0))
+	return int(engine().SciterExec(.LOOP, 0, 0))
 }
 
 // Runs one iteration of the pump. Returns false when the pump is finished - `run` is a loop over this.
 // Use it when Sciter has to share a thread with another event source.
 run_once :: proc() -> bool {
-	return sciter.api().SciterExec(.LOOP_ITERATION, 0, 0) != 0
+	return engine().SciterExec(.LOOP_ITERATION, 0, 0) != 0
 }
 
 // Services outstanding tasks and timers without processing input. Pair with `run_once`.
 heartbeat :: proc() {
-	sciter.api().SciterExec(.LOOP_HEARTBIT, 0, 0)
+	engine().SciterExec(.LOOP_HEARTBIT, 0, 0)
 }
 
 // Asks the pump to return, with the value `run` should hand back. Safe to call from an event handler,
@@ -117,7 +117,7 @@ heartbeat :: proc() {
 // This is the second parameter found hiding behind the two `*Exec` dispatchers - see `close` in
 // `window.odin` for the first, and `docs/gotchas.md` for why this API shape keeps producing them.
 stop :: proc(exit_code := 0) {
-	sciter.api().SciterExec(.STOP, uintptr(exit_code), 0)
+	engine().SciterExec(.STOP, uintptr(exit_code), 0)
 }
 
 // Releases the engine's resources. Call after `run` returns.
@@ -126,7 +126,7 @@ stop :: proc(exit_code := 0) {
 // pointers for as long as it is running. Without this an `init` -> `shutdown` -> `init` cycle - a plugin
 // host, or a test proving `shutdown` releases everything - leaks the previous set.
 shutdown :: proc() {
-	sciter.api().SciterExec(.SHUTDOWN, 0, 0)
+	engine().SciterExec(.SHUTDOWN, 0, 0)
 
 	for arg in g_argv_storage {
 		delete(arg, g_argv_allocator)
@@ -141,7 +141,7 @@ shutdown :: proc() {
 
 // The engine's version as [major, minor, revision, build].
 version :: proc() -> [4]u32 {
-	api := sciter.api()
+	api := engine()
 	return {api.SciterVersion(0), api.SciterVersion(1), api.SciterVersion(2), api.SciterVersion(3)}
 }
 
@@ -180,7 +180,7 @@ version :: proc() -> [4]u32 {
 // and it runs at every `load_html` - into that document's `globalThis`, before the document's own
 // scripts. It is the one way to publish a global that does not go through `set_global`.
 set_option :: proc(option: sciter.Sciter_Rt_Options, value: uintptr, window: Window = nil) -> Error {
-	ok := sciter.api().SciterSetOption(rawptr(window), option, value)
+	ok := engine().SciterSetOption(rawptr(window), option, value)
 	return nil if ok else Api_Error.Option_Failed
 }
 
@@ -218,7 +218,7 @@ set_debug_mode :: proc(enabled := true, window: Window = nil) -> Error {
 // `handler` is called from the engine, so it must be `proc "system"` and has no `context`: copy what
 // you need and decode it later. Pass nil to detach, and do detach before the handler's memory goes.
 set_debug_output :: proc(handler: sciter.Debug_Output_Proc, param: rawptr = nil, window: Window = nil) {
-	sciter.api().SciterSetupDebugOutput(rawptr(window), param, handler)
+	engine().SciterSetupDebugOutput(rawptr(window), param, handler)
 }
 
 // Installs a handler that prints the engine's diagnostics to stderr.
@@ -302,12 +302,12 @@ default_debug_output :: proc "system" (
 // `""` is refused rather than treated as "clear it" - the engine answers false and keeps what it has -
 // so a sheet that matches nothing, `no-such-element {}`, is how to get back to no master styling.
 set_master_css :: proc(css: string) -> Error {
-	ok := sciter.api().SciterSetMasterCSS(raw_data(css), u32(len(css)))
+	ok := engine().SciterSetMasterCSS(raw_data(css), u32(len(css)))
 	return nil if ok else Api_Error.Option_Failed
 }
 
 // Adds to the master stylesheet, keeping what is already there.
 append_master_css :: proc(css: string) -> Error {
-	ok := sciter.api().SciterAppendMasterCSS(raw_data(css), u32(len(css)))
+	ok := engine().SciterAppendMasterCSS(raw_data(css), u32(len(css)))
 	return nil if ok else Api_Error.Option_Failed
 }

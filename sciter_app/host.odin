@@ -94,7 +94,7 @@ serve :: proc(request: ^Load_Request, data: []u8) -> Load_Result {
 // was already laid out without it. `examples/custom_loader.odin` has the test.
 data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sciter.Hrequest) -> Error {
 	w := utf16_from_string(uri, context.temp_allocator)
-	ok := sciter.api().SciterDataReadyAsync(
+	ok := engine().SciterDataReadyAsync(
 		rawptr(window),
 		raw_data(w),
 		raw_data(data),
@@ -120,7 +120,7 @@ data_ready_async :: proc(window: Window, uri: string, data: []u8, request_id: sc
 // the fact.
 data_ready :: proc(window: Window, uri: string, data: []u8) -> Error {
 	w := utf16_from_string(uri, context.temp_allocator)
-	ok := sciter.api().SciterDataReady(rawptr(window), raw_data(w), raw_data(data), u32(len(data)))
+	ok := engine().SciterDataReady(rawptr(window), raw_data(w), raw_data(data), u32(len(data)))
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -172,6 +172,10 @@ Posted :: struct {
 //
 // The message is dropped if `window` has no host handler - `set_host_handler` with an `on_posted` is
 // what receives it.
+// `sciter.api()` rather than `engine()`, and it is the only call in the package spelled that way: this
+// is rule 1's one exception, so the thread check that `engine()` carries would trap exactly the use
+// this procedure exists for. `sciter.api()` is a plain read of a pointer written once in `load`, before
+// any thread the poster could be on - see `src/prelude.odin`.
 post_callback :: proc(window: Window, wparam: uintptr, lparam: uintptr = 0) {
 	sciter.api().SciterPostCallback(rawptr(window), wparam, lparam, 0)
 }
@@ -184,7 +188,7 @@ post_callback :: proc(window: Window, wparam: uintptr, lparam: uintptr = 0) {
 // that is what `set_host_handler` gives the engine, so the shape is
 // `(^Host_Handler)(callback_param(window)).user_data`.
 callback_param :: proc(window: Window) -> rawptr {
-	return sciter.api().SciterGetCallbackParam(rawptr(window))
+	return engine().SciterGetCallbackParam(rawptr(window))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -318,11 +322,11 @@ Host_Handler :: struct {
 // notification - the next `load_html` is enough - because it calls the pointer without checking it.
 set_host_handler :: proc(window: Window, handler: ^Host_Handler) {
 	if handler == nil {
-		sciter.api().SciterSetCallback(rawptr(window), host_trampoline, nil)
+		engine().SciterSetCallback(rawptr(window), host_trampoline, nil)
 		return
 	}
 	handler.ctx = context
-	sciter.api().SciterSetCallback(rawptr(window), host_trampoline, handler)
+	engine().SciterSetCallback(rawptr(window), host_trampoline, handler)
 }
 
 @(private)

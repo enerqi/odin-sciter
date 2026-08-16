@@ -88,6 +88,14 @@ when ODIN_DEBUG {
 // Call it once, early, on the engine's thread - the ledger has no locking for the same reason the two
 // cached API tables have none (see docs/rules.md rule 1).
 //
+// That premise is enforced rather than assumed, and it has not always been: while the affinity guard
+// watched only the calls returning a result code, `eval`, `call`, `value_from_string` and the rest
+// could reach `track_acquire_counted` from a worker thread with nothing objecting. Measured that way -
+// 20,000 tracked Values built and cleared on each of two threads, true outstanding zero - this ledger
+// reported 270, 192, 148, 143 and 232 outstanding across five runs, because `counted[kind] += 1` is not
+// an atomic read-modify-write. The counters are still not atomic; what changed is that `engine()` now
+// traps the off-thread call before it gets here. See docs/review/10-threading.md.
+//
 // `strict` decides what happens on an **under-flow** - releasing a handle that was never acquired. The
 // default traps on the first one, deliberately: that mistake is a segfault a moment later, somewhere
 // else, and the call site is only on the stack now. Pass `strict = false` to count them instead, which

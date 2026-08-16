@@ -28,7 +28,7 @@ open_archive :: proc(blob: []u8, loc := #caller_location) -> (archive: Archive, 
 	if len(blob) == 0 {
 		return nil, .Not_Found
 	}
-	h := sciter.api().SciterOpenArchive(raw_data(blob), u32(len(blob)))
+	h := engine().SciterOpenArchive(raw_data(blob), u32(len(blob)))
 	if h == nil {
 		return nil, .Archive_Failed
 	}
@@ -42,7 +42,7 @@ close_archive :: proc(archive: Archive) -> Error {
 	if archive == nil {
 		return nil
 	}
-	ok := sciter.api().SciterCloseArchive(sciter.Archive(archive))
+	ok := engine().SciterCloseArchive(sciter.Archive(archive))
 	if ok {
 		track_release(.Archive, rawptr(archive))
 	}
@@ -72,7 +72,7 @@ archive_item :: proc(archive: Archive, path: string) -> (data: []u8, found: bool
 
 	p: [^]u8
 	n: u32
-	if !sciter.api().SciterGetArchiveItem(sciter.Archive(archive), raw_data(w), &p, &n) {
+	if !engine().SciterGetArchiveItem(sciter.Archive(archive), raw_data(w), &p, &n) {
 		return nil, false
 	}
 	if p == nil {

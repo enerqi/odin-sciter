@@ -163,7 +163,7 @@ is_gpu_backend :: proc(backend: sciter.Sl_Target) -> bool {
 // makes the view reach for a native window frame it does not have. The backtrace names
 // `html::iwindow::setup_window_frame`, several frames away from the call that caused it. A view
 // therefore runs at the engine's default DPI. If a later engine fixes it, the raw call is
-// `sciter.api().SciterProcX(rawptr(view.window), &msg.header)` with a `Sciter_X_Msg_Resolution`.
+// `engine().SciterProcX(rawptr(view.window), &msg.header)` with a `Sciter_X_Msg_Resolution`.
 create_windowless :: proc(
 	opts: Windowless_Options,
 	allocator := context.allocator,
@@ -194,7 +194,7 @@ create_windowless :: proc(
 		backend = opts.backend,
 		device = opts.device,
 	}
-	if !bool(sciter.api().SciterProcX(rawptr(view.window), &create.header)) {
+	if !bool(engine().SciterProcX(rawptr(view.window), &create.header)) {
 		free(view.key, allocator)
 		return {}, .Window_Failed
 	}
@@ -230,7 +230,7 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 			width = u32(width),
 			height = u32(height),
 		}
-		if !bool(sciter.api().SciterProcX(rawptr(view.window), &message.header)) {
+		if !bool(engine().SciterProcX(rawptr(view.window), &message.header)) {
 			return .Window_Failed
 		}
 		view.width, view.height = width, height
@@ -262,7 +262,7 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 		height = u32(height),
 		surface = {bitmap = {pixels = raw_data(surface), stride = u32(row)}},
 	}
-	if !bool(sciter.api().SciterProcX(rawptr(view.window), &message.header)) {
+	if !bool(engine().SciterProcX(rawptr(view.window), &message.header)) {
 		if owns {
 			delete(surface, view.allocator)
 		}
@@ -309,7 +309,7 @@ paint_windowless :: proc(
 		isFore = b32(fore),
 		rcPaint = area,
 	}
-	ok := bool(sciter.api().SciterProcX(rawptr(view.window), &message.header))
+	ok := bool(engine().SciterProcX(rawptr(view.window), &message.header))
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -338,7 +338,7 @@ windowless_heartbeat :: proc(view: ^Windowless_View, elapsed: time.Duration = 0)
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.HEARTBIT)},
 		time = u32(elapsed / time.Millisecond),
 	}
-	sciter.api().SciterProcX(rawptr(view.window), &message.header)
+	engine().SciterProcX(rawptr(view.window), &message.header)
 }
 
 
@@ -350,7 +350,7 @@ windowless_focus :: proc(view: ^Windowless_View, got := true) -> bool {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.FOCUS)},
 		got = b32(got),
 	}
-	return bool(sciter.api().SciterProcX(rawptr(view.window), &message.header))
+	return bool(engine().SciterProcX(rawptr(view.window), &message.header))
 }
 
 // A key event - `SXM_KEY`. `code` is a virtual key for `.DOWN` / `.UP` and a character for `.CHAR`.
@@ -373,7 +373,7 @@ windowless_key :: proc(
 		code = code,
 		modifiers = modifiers,
 	}
-	return bool(sciter.api().SciterProcX(rawptr(view.window), &message.header))
+	return bool(engine().SciterProcX(rawptr(view.window), &message.header))
 }
 
 // A mouse event - `SXM_MOUSE`. Position in the view's coordinates.
@@ -425,7 +425,7 @@ windowless_mouse :: proc(
 		modifiers = modifiers,
 		pos = {x = sciter.Int(pos.x), y = sciter.Int(pos.y)},
 	}
-	return bool(sciter.api().SciterProcX(rawptr(view.window), &message.header))
+	return bool(engine().SciterProcX(rawptr(view.window), &message.header))
 }
 
 // Tears the view down - `SXM_DESTROY` - and frees the surface if this package allocated it.
@@ -445,7 +445,7 @@ destroy_windowless :: proc(view: ^Windowless_View) {
 	message := sciter.Sciter_X_Msg_Destroy {
 		header = {msg = u32(sciter.Sciter_X_Msg_Code.DESTROY)},
 	}
-	sciter.api().SciterProcX(rawptr(view.window), &message.header)
+	engine().SciterProcX(rawptr(view.window), &message.header)
 
 	if view.owns_pixels {
 		delete(view.pixels, view.allocator)

@@ -80,7 +80,7 @@ Origin :: enum u32 {
 // to ask; a rectangle is never the way to find out whether an element is there.
 location :: proc(element: Element, box := Box.Border, origin := Origin.Root) -> (rect: Rect, err: Error) {
 	r: sciter.Rect
-	dom_err(sciter.api().SciterGetElementLocation(sciter.Helement(element), &r, u32(box) | u32(origin))) or_return
+	dom_err(engine().SciterGetElementLocation(sciter.Helement(element), &r, u32(box) | u32(origin))) or_return
 	return Rect{x = r.left, y = r.top, width = r.right - r.left, height = r.bottom - r.top}, nil
 }
 
@@ -88,14 +88,14 @@ location :: proc(element: Element, box := Box.Border, origin := Origin.Root) -> 
 // by `display: none`; true for one hidden by `visibility: hidden`, which still takes up space.
 visible :: proc(element: Element) -> (visible: bool, err: Error) {
 	flag: b32
-	dom_err(sciter.api().SciterIsElementVisible(sciter.Helement(element), &flag)) or_return
+	dom_err(engine().SciterIsElementVisible(sciter.Helement(element), &flag)) or_return
 	return bool(flag), nil
 }
 
 // Whether the element is enabled - neither `:disabled` itself nor inside a disabled container.
 enabled :: proc(element: Element) -> (enabled: bool, err: Error) {
 	flag: b32
-	dom_err(sciter.api().SciterIsElementEnabled(sciter.Helement(element), &flag)) or_return
+	dom_err(engine().SciterIsElementEnabled(sciter.Helement(element), &flag)) or_return
 	return bool(flag), nil
 }
 
@@ -109,14 +109,14 @@ enabled :: proc(element: Element) -> (enabled: bool, err: Error) {
 // The narrowest and widest the element's content can be: `min` is where it can no longer be wrapped
 // any further, `max` is what it takes laid out on one line.
 intrinsic_widths :: proc(element: Element) -> (min, max: i32, err: Error) {
-	dom_err(sciter.api().SciterGetElementIntrinsicWidths(sciter.Helement(element), &min, &max)) or_return
+	dom_err(engine().SciterGetElementIntrinsicWidths(sciter.Helement(element), &min, &max)) or_return
 	return min, max, nil
 }
 
 // How tall the element's content becomes if it is given exactly `for_width` pixels. Asking at a width
 // between the two `intrinsic_widths` is the point: that is where the answer is not obvious.
 intrinsic_height :: proc(element: Element, for_width: i32) -> (height: i32, err: Error) {
-	dom_err(sciter.api().SciterGetElementIntrinsicHeight(sciter.Helement(element), for_width, &height)) or_return
+	dom_err(engine().SciterGetElementIntrinsicHeight(sciter.Helement(element), for_width, &height)) or_return
 	return height, nil
 }
 
@@ -135,7 +135,7 @@ intrinsic_height :: proc(element: Element, for_width: i32) -> (height: i32, err:
 // a bitmap to be drawn at the right size, a platform API, a saved window geometry.
 ppi :: proc(window: Window) -> (dpi: [2]u32) {
 	x, y: u32
-	sciter.api().SciterGetPPI(rawptr(window), &x, &y)
+	engine().SciterGetPPI(rawptr(window), &x, &y)
 	return {x, y}
 }
 
@@ -162,12 +162,12 @@ ppi :: proc(window: Window) -> (dpi: [2]u32) {
 // For "how big does this document want to be", `intrinsic_widths` and `intrinsic_height` on the
 // element that actually holds the content - usually `<body>` - are the calls that answer.
 min_width :: proc(window: Window) -> i32 {
-	return i32(sciter.api().SciterGetMinWidth(rawptr(window)))
+	return i32(engine().SciterGetMinWidth(rawptr(window)))
 }
 
 // See `min_width`. `for_width` is accepted because the C API takes it, and is ignored by this engine.
 min_height :: proc(window: Window, for_width: i32) -> i32 {
-	return i32(sciter.api().SciterGetMinHeight(rawptr(window), u32(for_width)))
+	return i32(engine().SciterGetMinHeight(rawptr(window), u32(for_width)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -188,7 +188,7 @@ scroll_info :: proc(element: Element) -> (info: Scroll_Info, err: Error) {
 	pos: sciter.Point
 	view: sciter.Rect
 	content: sciter.Size
-	dom_err(sciter.api().SciterGetScrollInfo(sciter.Helement(element), &pos, &view, &content)) or_return
+	dom_err(engine().SciterGetScrollInfo(sciter.Helement(element), &pos, &view, &content)) or_return
 
 	return Scroll_Info {
 			pos = {pos.x, pos.y},
@@ -201,7 +201,7 @@ scroll_info :: proc(element: Element) -> (info: Scroll_Info, err: Error) {
 // Scrolls `element`'s content to `pos`. Out-of-range values are clamped by the engine rather than
 // refused. `smooth` animates rather than jumping, and returns before the animation has finished.
 set_scroll_pos :: proc(element: Element, pos: [2]i32, smooth := false) -> Error {
-	return dom_err(sciter.api().SciterSetScrollPos(sciter.Helement(element), {pos.x, pos.y}, b32(smooth)))
+	return dom_err(engine().SciterSetScrollPos(sciter.Helement(element), {pos.x, pos.y}, b32(smooth)))
 }
 
 // Scrolls whatever contains `element` until `element` is in view. This is the one to reach for after
@@ -224,5 +224,5 @@ scroll_to_view :: proc(element: Element, to_top := false, smooth := false) -> Er
 	if smooth {
 		flags += {.SMOOTH}
 	}
-	return dom_err(sciter.api().SciterScrollToView(sciter.Helement(element), flags))
+	return dom_err(engine().SciterScrollToView(sciter.Helement(element), flags))
 }

@@ -69,7 +69,7 @@ Node :: distinct sciter.Hnode
 // of their own: `make_element`, `clone_element`, `remove_element(finalize = false)`, and anything you
 // called `use_element` on yourself. Everything else is borrowed.
 use_element :: proc(element: Element, loc := #caller_location) -> (owned: Owned_Element, err: Error) {
-	err = dom_err(sciter.api().Sciter_UseElement(sciter.Helement(element)))
+	err = dom_err(engine().Sciter_UseElement(sciter.Helement(element)))
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ use_element :: proc(element: Element, loc := #caller_location) -> (owned: Owned_
 }
 
 unuse_element :: proc(element: Owned_Element) -> Error {
-	err := dom_err(sciter.api().Sciter_UnuseElement(sciter.Helement(element)))
+	err := dom_err(engine().Sciter_UnuseElement(sciter.Helement(element)))
 	if err == nil {
 		track_release(.Element, rawptr(element))
 	}
@@ -99,7 +99,7 @@ select_first :: proc(element: Element, selector: string) -> (found: Element, err
 	}
 	w := utf16_from_string(selector, context.temp_allocator)
 
-	dom_err(sciter.api().SciterSelectElementsW(sciter.Helement(element), raw_data(w), first_callback, &sink)) or_return
+	dom_err(engine().SciterSelectElementsW(sciter.Helement(element), raw_data(w), first_callback, &sink)) or_return
 
 	if sink.found == nil {
 		return nil, .Not_Found
@@ -123,7 +123,7 @@ select_all :: proc(
 	}
 	w := utf16_from_string(selector, context.temp_allocator)
 
-	if e := dom_err(sciter.api().SciterSelectElementsW(sciter.Helement(element), raw_data(w), all_callback, &sink));
+	if e := dom_err(engine().SciterSelectElementsW(sciter.Helement(element), raw_data(w), all_callback, &sink));
 	   e != nil {
 		delete(sink.out)
 		return nil, e
@@ -147,7 +147,7 @@ select_all :: proc(
 select_parent :: proc(element: Element, selector: string, depth := 0) -> (found: Element, err: Error) {
 	w := utf16_from_string(selector, context.temp_allocator)
 	he: sciter.Helement
-	dom_err(sciter.api().SciterSelectParentW(sciter.Helement(element), raw_data(w), u32(depth), &he)) or_return
+	dom_err(engine().SciterSelectParentW(sciter.Helement(element), raw_data(w), u32(depth), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -169,7 +169,7 @@ select_parent :: proc(element: Element, selector: string, depth := 0) -> (found:
 // A window that has never been shown still hit-tests, as long as its document has been laid out.
 element_at :: proc(window: Window, pos: [2]i32) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterFindElement(rawptr(window), {x = pos.x, y = pos.y}, &he)) or_return
+	dom_err(engine().SciterFindElement(rawptr(window), {x = pos.x, y = pos.y}, &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -190,13 +190,13 @@ Child_Index :: distinct int
 
 child_count :: proc(element: Element) -> (n: Child_Index, err: Error) {
 	count: u32
-	dom_err(sciter.api().SciterGetChildrenCount(sciter.Helement(element), &count)) or_return
+	dom_err(engine().SciterGetChildrenCount(sciter.Helement(element), &count)) or_return
 	return Child_Index(count), nil
 }
 
 child :: proc(element: Element, n: Child_Index) -> (child: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetNthChild(sciter.Helement(element), u32(n), &he)) or_return
+	dom_err(engine().SciterGetNthChild(sciter.Helement(element), u32(n), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -206,7 +206,7 @@ child :: proc(element: Element, n: Child_Index) -> (child: Element, err: Error) 
 // The parent element, or `.Not_Found` at the root.
 parent :: proc(element: Element) -> (parent: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetParentElement(sciter.Helement(element), &he)) or_return
+	dom_err(engine().SciterGetParentElement(sciter.Helement(element), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -218,7 +218,7 @@ parent :: proc(element: Element) -> (parent: Element, err: Error) {
 // the number to hand back to either of them.
 element_index :: proc(element: Element) -> (index: Child_Index, err: Error) {
 	n: u32
-	dom_err(sciter.api().SciterGetElementIndex(sciter.Helement(element), &n)) or_return
+	dom_err(engine().SciterGetElementIndex(sciter.Helement(element), &n)) or_return
 	return Child_Index(n), nil
 }
 
@@ -232,7 +232,7 @@ element_index :: proc(element: Element) -> (index: Child_Index, err: Error) {
 // the engine.
 tag :: proc(element: Element) -> (tag: string, err: Error) {
 	p: cstring
-	dom_err(sciter.api().SciterGetElementType(sciter.Helement(element), &p)) or_return
+	dom_err(engine().SciterGetElementType(sciter.Helement(element), &p)) or_return
 	return string(p), nil
 }
 
@@ -245,13 +245,13 @@ text :: proc(element: Element, allocator := context.allocator) -> (text: string,
 		ctx       = context,
 		allocator = allocator,
 	}
-	dom_err(sciter.api().SciterGetElementTextCB(sciter.Helement(element), wide_receiver, &sink)) or_return
+	dom_err(engine().SciterGetElementTextCB(sciter.Helement(element), wide_receiver, &sink)) or_return
 	return sink.out, nil
 }
 
 set_text :: proc(element: Element, text: string) -> Error {
 	w := utf16_from_string(text, context.temp_allocator)
-	return dom_err(sciter.api().SciterSetElementText(sciter.Helement(element), raw_data(w), u32(len(w) - 1)))
+	return dom_err(engine().SciterSetElementText(sciter.Helement(element), raw_data(w), u32(len(w) - 1)))
 }
 
 // The element's HTML, allocated in `allocator`. `outer` includes the element's own tag.
@@ -260,14 +260,14 @@ html :: proc(element: Element, outer := false, allocator := context.allocator) -
 		ctx       = context,
 		allocator = allocator,
 	}
-	dom_err(sciter.api().SciterGetElementHtmlCB(sciter.Helement(element), b32(outer), bytes_receiver, &sink)) or_return
+	dom_err(engine().SciterGetElementHtmlCB(sciter.Helement(element), b32(outer), bytes_receiver, &sink)) or_return
 	return sink.out, nil
 }
 
 // Replaces or adds HTML. `.SIH_REPLACE_CONTENT` (the default) replaces the element's children;
 // `.SOH_REPLACE` replaces the element itself.
 set_html :: proc(element: Element, html: string, where_ := sciter.Set_Element_Html.SIH_REPLACE_CONTENT) -> Error {
-	return dom_err(sciter.api().SciterSetElementHtml(sciter.Helement(element), raw_data(html), u32(len(html)), where_))
+	return dom_err(engine().SciterSetElementHtml(sciter.Helement(element), raw_data(html), u32(len(html)), where_))
 }
 
 // An attribute's value, allocated in `allocator`. An absent attribute reads as "".
@@ -277,7 +277,7 @@ attribute :: proc(element: Element, name: string, allocator := context.allocator
 		allocator = allocator,
 	}
 	dom_err(
-		sciter.api().SciterGetAttributeByNameCB(
+		engine().SciterGetAttributeByNameCB(
 			sciter.Helement(element),
 			to_cstring(name, context.temp_allocator),
 			wide_receiver,
@@ -294,7 +294,7 @@ set_attribute :: proc(element: Element, name: string, value: string) -> Error {
 		w = raw_data(utf16_from_string(value, context.temp_allocator))
 	}
 	return dom_err(
-		sciter.api().SciterSetAttributeByName(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
+		engine().SciterSetAttributeByName(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
 	)
 }
 
@@ -309,7 +309,7 @@ Attribute :: struct {
 // `attributes` will report - not everything the cascade gave it.
 attribute_count :: proc(element: Element) -> (n: int, err: Error) {
 	count: u32
-	dom_err(sciter.api().SciterGetAttributeCount(sciter.Helement(element), &count)) or_return
+	dom_err(engine().SciterGetAttributeCount(sciter.Helement(element), &count)) or_return
 	return int(count), nil
 }
 
@@ -323,7 +323,7 @@ attribute_at :: proc(element: Element, n: int, allocator := context.allocator) -
 		allocator = allocator,
 	}
 	dom_err(
-		sciter.api().SciterGetNthAttributeNameCB(sciter.Helement(element), u32(n), bytes_receiver, &name_sink),
+		engine().SciterGetNthAttributeNameCB(sciter.Helement(element), u32(n), bytes_receiver, &name_sink),
 	) or_return
 
 	value_sink := String_Sink {
@@ -331,7 +331,7 @@ attribute_at :: proc(element: Element, n: int, allocator := context.allocator) -
 		allocator = allocator,
 	}
 	if e := dom_err(
-		sciter.api().SciterGetNthAttributeValueCB(sciter.Helement(element), u32(n), wide_receiver, &value_sink),
+		engine().SciterGetNthAttributeValueCB(sciter.Helement(element), u32(n), wide_receiver, &value_sink),
 	); e != nil {
 		delete(name_sink.out, allocator)
 		return {}, e
@@ -388,7 +388,7 @@ delete_attributes :: proc(attributes: []Attribute, allocator := context.allocato
 // call does not make it run: `style` keeps reporting the old answer until something else does. See the
 // note under "Style" below.
 clear_attributes :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().SciterClearAttributes(sciter.Helement(element)))
+	return dom_err(engine().SciterClearAttributes(sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -407,7 +407,7 @@ clear_attributes :: proc(element: Element) -> Error {
 // And a third, which is a reading hazard rather than a rule: that used value is *stored*, so it is
 // only as fresh as the last time the cascade ran. Writing an attribute re-runs it; `clear_attributes`
 // does not, and the old colour keeps being reported until something forces the update -
-// `sciter.api().SciterUpdateElement(he, true)` being the direct way.
+// `engine().SciterUpdateElement(he, true)` being the direct way.
 
 // A style property's used value - a colour as `#RRGGBB`, a length in the unit the engine resolved it
 // to. `""` for a property with no value, including one this build does not know.
@@ -417,7 +417,7 @@ style :: proc(element: Element, name: string, allocator := context.allocator) ->
 		allocator = allocator,
 	}
 	dom_err(
-		sciter.api().SciterGetStyleAttributeCB(
+		engine().SciterGetStyleAttributeCB(
 			sciter.Helement(element),
 			to_cstring(name, context.temp_allocator),
 			wide_receiver,
@@ -438,7 +438,7 @@ set_style :: proc(element: Element, name: string, value: string) -> Error {
 		w = raw_data(utf16_from_string(value, context.temp_allocator))
 	}
 	return dom_err(
-		sciter.api().SciterSetStyleAttribute(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
+		engine().SciterSetStyleAttribute(sciter.Helement(element), to_cstring(name, context.temp_allocator), w),
 	)
 }
 
@@ -492,7 +492,7 @@ Popup_Placement :: enum u32 {
 // Both elements have to be in a document: a detached element is `.PASSIVE_HANDLE`, not an error about
 // the popup.
 show_popup :: proc(popup: Element, anchor: Element, placement := Popup_Placement.Bottom) -> Error {
-	return dom_err(sciter.api().SciterShowPopup(sciter.Helement(popup), sciter.Helement(anchor), u32(placement)))
+	return dom_err(engine().SciterShowPopup(sciter.Helement(popup), sciter.Helement(anchor), u32(placement)))
 }
 
 // Shows `popup` at a point in the window's coordinates. The header is specific about which: "popup
@@ -508,7 +508,7 @@ show_popup :: proc(popup: Element, anchor: Element, placement := Popup_Placement
 // A mouse event's `pos` is relative to the element it was delivered to, so showing a menu where the
 // pointer is means adding that element's `.View` origin to it.
 show_popup_at :: proc(popup: Element, pos: [2]i32, placement := Popup_Placement.Top_Left) -> Error {
-	return dom_err(sciter.api().SciterShowPopupAt(sciter.Helement(popup), {x = pos.x, y = pos.y}, u32(placement)))
+	return dom_err(engine().SciterShowPopupAt(sciter.Helement(popup), {x = pos.x, y = pos.y}, u32(placement)))
 }
 
 // Hides a popup. Takes the popup element itself, or one inside it - **not** the anchor it was shown
@@ -516,7 +516,7 @@ show_popup_at :: proc(popup: Element, pos: [2]i32, placement := Popup_Placement.
 //
 // Hiding one that is not shown is not an error.
 hide_popup :: proc(popup: Element) -> Error {
-	return dom_err(sciter.api().SciterHidePopup(sciter.Helement(popup)))
+	return dom_err(engine().SciterHidePopup(sciter.Helement(popup)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -530,7 +530,7 @@ hide_popup :: proc(popup: Element) -> Error {
 // Re-runs style and layout for the element. `render = true` also repaints it there and then rather
 // than at the next frame, which is what makes it the way to force the cascade to re-resolve.
 update_element :: proc(element: Element, render := false) -> Error {
-	return dom_err(sciter.api().SciterUpdateElement(sciter.Helement(element), b32(render)))
+	return dom_err(engine().SciterUpdateElement(sciter.Helement(element), b32(render)))
 }
 
 // Marks a rectangle *inside* the element as needing a repaint - `area` is in the element's own
@@ -542,13 +542,13 @@ refresh_element_area :: proc(element: Element, area: Rect) -> Error {
 		right  = area.x + area.width,
 		bottom = area.y + area.height,
 	}
-	return dom_err(sciter.api().SciterRefreshElementArea(sciter.Helement(element), r))
+	return dom_err(engine().SciterRefreshElementArea(sciter.Helement(element), r))
 }
 
 // Asks for the whole element to be repainted at the next frame. The cheapest of the three: no style,
 // no layout, no synchronous draw.
 request_paint :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().SciterRequestPaint(sciter.Helement(element)))
+	return dom_err(engine().SciterRequestPaint(sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -556,7 +556,7 @@ request_paint :: proc(element: Element) -> Error {
 
 // The element's :hover / :focus / :checked / ... bits.
 element_state :: proc(element: Element) -> (state: sciter.Element_State_Bits, err: Error) {
-	dom_err(sciter.api().SciterGetElementState(sciter.Helement(element), &state)) or_return
+	dom_err(engine().SciterGetElementState(sciter.Helement(element), &state)) or_return
 	return state, nil
 }
 
@@ -566,19 +566,19 @@ set_element_state :: proc(
 	clear := sciter.Element_State_Bits{},
 	update_view := true,
 ) -> Error {
-	return dom_err(sciter.api().SciterSetElementState(sciter.Helement(element), set, clear, b32(update_view)))
+	return dom_err(engine().SciterSetElementState(sciter.Helement(element), set, clear, b32(update_view)))
 }
 
 // The element's value, as script's `element.value` sees it: the text of an <input>, the selection of a
 // <select>, the checked state of a checkbox. The result owns a reference; `value_clear` it.
 element_value :: proc(element: Element) -> (value: Value, err: Error) {
-	dom_err(sciter.api().SciterGetValue(sciter.Helement(element), &value)) or_return
+	dom_err(engine().SciterGetValue(sciter.Helement(element), &value)) or_return
 	return tracked(value), nil
 }
 
 // Sets the element's value. `value` is not consumed.
 set_element_value :: proc(element: Element, value: ^Value) -> Error {
-	return dom_err(sciter.api().SciterSetValue(sciter.Helement(element), value))
+	return dom_err(engine().SciterSetValue(sciter.Helement(element), value))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -613,7 +613,7 @@ make_element :: proc(tag: string, text := "", loc := #caller_location) -> (eleme
 		w = raw_data(utf16_from_string(text, context.temp_allocator))
 	}
 
-	dom_err(sciter.api().SciterCreateElement(to_cstring(tag, context.temp_allocator), w, &he)) or_return
+	dom_err(engine().SciterCreateElement(to_cstring(tag, context.temp_allocator), w, &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -625,7 +625,7 @@ make_element :: proc(tag: string, text := "", loc := #caller_location) -> (eleme
 // ownership as `make_element` - the copy carries a reference that is yours.
 clone_element :: proc(element: Element, loc := #caller_location) -> (copy: Owned_Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterCloneElement(sciter.Helement(element), &he)) or_return
+	dom_err(engine().SciterCloneElement(sciter.Helement(element), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -656,7 +656,7 @@ insert_element :: proc(element: Element, parent: Element, index: Maybe(Child_Ind
 		at = clamp(wanted, 0, n)
 	}
 
-	return dom_err(sciter.api().SciterInsertElement(sciter.Helement(element), sciter.Helement(parent), u32(at)))
+	return dom_err(engine().SciterInsertElement(sciter.Helement(element), sciter.Helement(parent), u32(at)))
 }
 
 // Takes `element` out of its document. The same `finalize` flag, with the same meaning, as
@@ -679,12 +679,12 @@ insert_element :: proc(element: Element, parent: Element, index: Maybe(Child_Ind
 // `detached` is nil for `finalize = true`, which destroys the element and hands back nothing to hold.
 remove_element :: proc(element: Element, finalize := true) -> (detached: Owned_Element, err: Error) {
 	if finalize {
-		return nil, dom_err(sciter.api().SciterDeleteElement(sciter.Helement(element)))
+		return nil, dom_err(engine().SciterDeleteElement(sciter.Helement(element)))
 	}
 
 	// Before, not after: after the detach there may be nothing left to take a reference to.
 	owned := use_element(element) or_return
-	if e := dom_err(sciter.api().SciterDetachElement(sciter.Helement(element))); e != nil {
+	if e := dom_err(engine().SciterDetachElement(sciter.Helement(element))); e != nil {
 		unuse_element(owned)
 		return nil, e
 	}
@@ -694,7 +694,7 @@ remove_element :: proc(element: Element, finalize := true) -> (detached: Owned_E
 // Exchanges the positions of two elements - both their indexes and their parents, so this moves them
 // between containers as readily as within one.
 swap_elements :: proc(a, b: Element) -> Error {
-	return dom_err(sciter.api().SciterSwapElements(sciter.Helement(a), sciter.Helement(b)))
+	return dom_err(engine().SciterSwapElements(sciter.Helement(a), sciter.Helement(b)))
 }
 
 // Orders `element`'s children in place. Return a negative number, zero or a positive one, as with
@@ -733,9 +733,7 @@ sort_children :: proc(
 		cmp       = cmp,
 		user_data = user_data,
 	}
-	return dom_err(
-		sciter.api().SciterSortElements(sciter.Helement(element), u32(begin), u32(stop), sort_callback, &sink),
-	)
+	return dom_err(engine().SciterSortElements(sciter.Helement(element), u32(begin), u32(stop), sort_callback, &sink))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -752,7 +750,7 @@ Element_Uid :: distinct u32
 
 element_uid :: proc(element: Element) -> (uid: Element_Uid, err: Error) {
 	raw: u32
-	dom_err(sciter.api().SciterGetElementUID(sciter.Helement(element), &raw)) or_return
+	dom_err(engine().SciterGetElementUID(sciter.Helement(element), &raw)) or_return
 	return Element_Uid(raw), nil
 }
 
@@ -770,7 +768,7 @@ element_uid :: proc(element: Element) -> (uid: Element_Uid, err: Error) {
 // `examples/dom_walk.odin` pins both halves.
 element_by_uid :: proc(window: Window, uid: Element_Uid) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetElementByUID(rawptr(window), u32(uid), &he)) or_return
+	dom_err(engine().SciterGetElementByUID(rawptr(window), u32(uid), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -821,7 +819,7 @@ combine_url :: proc(element: Element, url: string, allocator := context.allocato
 	for _ in 0 ..< 4 {
 		buf := make([]u16, size, context.temp_allocator)
 		copy(buf, w)
-		dom_err(sciter.api().SciterCombineURL(sciter.Helement(element), raw_data(buf), u32(size))) or_return
+		dom_err(engine().SciterCombineURL(sciter.Helement(element), raw_data(buf), u32(size))) or_return
 
 		n := 0
 		for n < size && buf[n] != 0 {
@@ -869,7 +867,7 @@ combine_url :: proc(element: Element, url: string, allocator := context.allocato
 element_to_value :: proc(element: Element) -> (v: Value, err: Error) {
 	// Declared as returning UINT rather than SCDOM_RESULT, but the codes are that enum's - a wrap of a
 	// null handle or an unwrap of the wrong type answers .OPERATION_FAILED.
-	dom_err(sciter.Scdom_Result(sciter.api().SciterElementWrap(&v, sciter.Helement(element)))) or_return
+	dom_err(sciter.Scdom_Result(engine().SciterElementWrap(&v, sciter.Helement(element)))) or_return
 	return tracked(v), nil
 }
 
@@ -877,7 +875,7 @@ element_to_value :: proc(element: Element) -> (v: Value, err: Error) {
 // holds anything else - a number, a string, or a text node.
 element_from_value :: proc(v: ^Value) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.Scdom_Result(sciter.api().SciterElementUnwrap(v, &he))) or_return
+	dom_err(sciter.Scdom_Result(engine().SciterElementUnwrap(v, &he))) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -891,7 +889,7 @@ element_from_value :: proc(v: ^Value) -> (element: Element, err: Error) {
 eval_element :: proc(element: Element, script: string) -> (result: Value, err: Error) {
 	w := utf16_from_string(script, context.temp_allocator)
 	dom_err(
-		sciter.api().SciterEvalElementScript(sciter.Helement(element), raw_data(w), u32(len(w) - 1), &result),
+		engine().SciterEvalElementScript(sciter.Helement(element), raw_data(w), u32(len(w) - 1), &result),
 	) or_return
 	return tracked(result), nil
 }
@@ -927,7 +925,7 @@ eval_element :: proc(element: Element, script: string) -> (result: Value, err: E
 //
 // The result owns a reference; `value_clear` it.
 expando :: proc(element: Element) -> (value: Value, err: Error) {
-	dom_err(sciter.api().SciterGetExpando(sciter.Helement(element), &value, true)) or_return
+	dom_err(engine().SciterGetExpando(sciter.Helement(element), &value, true)) or_return
 	return tracked(value), nil
 }
 
@@ -950,7 +948,7 @@ call_function :: proc(element: Element, function: string, args: ..Value) -> (res
 		argv = &args[0]
 	}
 	dom_err(
-		sciter.api().SciterCallScriptingFunction(
+		engine().SciterCallScriptingFunction(
 			sciter.Helement(element),
 			to_cstring(function, context.temp_allocator),
 			argv,
@@ -972,7 +970,7 @@ call_method :: proc(element: Element, method: string, args: ..Value) -> (result:
 		argv = &args[0]
 	}
 	dom_err(
-		sciter.api().SciterCallScriptingMethod(
+		engine().SciterCallScriptingMethod(
 			sciter.Helement(element),
 			to_cstring(method, context.temp_allocator),
 			argv,

@@ -35,7 +35,8 @@
 //     atom; the answer is to only use the ones you were given.
 package sciter_app
 
-import sciter ".."
+// No `import sciter ".."`: both engine calls here go through `engine()`, and nothing in this file names
+// a generated type - the atom is kept as a `distinct u64` of its own.
 import "base:runtime"
 import "core:mem"
 
@@ -46,7 +47,7 @@ Atom :: distinct u64
 // The atom for `name`, interning it if the engine has not seen it before. Two calls with the same name
 // answer the same atom; two different names answer different atoms.
 atom :: proc(name: string) -> Atom {
-	return Atom(sciter.api().SciterAtomValue(to_cstring(name, context.temp_allocator)))
+	return Atom(engine().SciterAtomValue(to_cstring(name, context.temp_allocator)))
 }
 
 // The name an atom stands for, allocated in `allocator`.
@@ -59,7 +60,7 @@ atom_name :: proc(a: Atom, allocator := context.allocator) -> (name: string, ok:
 		ctx       = context,
 		allocator = allocator,
 	}
-	if !sciter.api().SciterAtomNameCB(u64(a), atom_receiver, &sink) {
+	if !engine().SciterAtomNameCB(u64(a), atom_receiver, &sink) {
 		return "", false
 	}
 	return sink.out, sink.out != ""

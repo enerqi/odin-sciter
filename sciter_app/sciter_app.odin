@@ -54,6 +54,24 @@ Api_Error :: enum {
 	Too_Many_Members, // a SOM class was given more than MAX_ASSET_MEMBERS properties or methods
 }
 
+// The engine's function table, with rule 1 checked on the way in.
+//
+// **Every call into the engine from this package goes through here**, and that is the whole point:
+// `sciter.api()` appears exactly once more in these files, in `post_callback`, which is rule 1's one
+// exception. The four error wrappers below and the two sub-table accessors check the same thing, but
+// they can only check the calls that pass through them - which was 124 of 199, leaving `eval`, `call`,
+// every `Value` constructor and the whole windowless surface unwatched, because their engine call
+// returns a bare `SBOOL` rather than a result code. Guarding the table instead of the result covers
+// all of them, and covers `init` too, so the armed thread is the one that really owns the engine.
+//
+// Checking twice on a path that also returns a result code costs one atomic load, and nothing at all in
+// a release build, where `guard_engine_thread` compiles out.
+@(private)
+engine :: proc(loc := #caller_location) -> ^sciter.Isciter_Api {
+	guard_engine_thread(loc)
+	return sciter.api(loc)
+}
+
 // `sciter.Scdom_Result.OK_NOT_HANDLED` is -1 and is a success, so `!= .OK` is not the test.
 @(private)
 dom_err :: proc(r: sciter.Scdom_Result, loc := #caller_location) -> Error {

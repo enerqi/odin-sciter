@@ -58,7 +58,7 @@ borrow_node :: proc(node: Owned_Node) -> Node {
 // The result is the thing that owes a `node_release`; the `Node` that went in is still borrowed and
 // still must not be released. Not needed for a handle used and dropped inside one callback.
 node_add_ref :: proc(node: Node, loc := #caller_location) -> (owned: Owned_Node, err: Error) {
-	if err = dom_err(sciter.api().SciterNodeAddRef(sciter.Hnode(node))); err != nil {
+	if err = dom_err(engine().SciterNodeAddRef(sciter.Hnode(node))); err != nil {
 		return nil, err
 	}
 	track_acquire(.Node, rawptr(node), loc)
@@ -68,7 +68,7 @@ node_add_ref :: proc(node: Node, loc := #caller_location) -> (owned: Owned_Node,
 // Gives back one reference. Pairs with exactly one `make_text_node`, `make_comment_node` or
 // `node_add_ref` - see `Owned_Node` for what the two ways of getting the count wrong cost.
 node_release :: proc(node: Owned_Node) -> Error {
-	err := dom_err(sciter.api().SciterNodeRelease(sciter.Hnode(node)))
+	err := dom_err(engine().SciterNodeRelease(sciter.Hnode(node)))
 	if err == nil {
 		track_release(.Node, rawptr(node))
 	}
@@ -81,7 +81,7 @@ node_release :: proc(node: Owned_Node) -> Error {
 // The node view of an element. Every element is a node; the reverse is not true.
 node_from_element :: proc(element: Element) -> (node: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodeCastFromElement(sciter.Helement(element), &hn)) or_return
+	dom_err(engine().SciterNodeCastFromElement(sciter.Helement(element), &hn)) or_return
 	if hn == nil {
 		return nil, .Not_Found
 	}
@@ -92,7 +92,7 @@ node_from_element :: proc(element: Element) -> (node: Node, err: Error) {
 // the distinction matters more than the failure.
 node_to_element :: proc(node: Node) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterNodeCastToElement(sciter.Hnode(node), &he)) or_return
+	dom_err(engine().SciterNodeCastToElement(sciter.Hnode(node), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -100,7 +100,7 @@ node_to_element :: proc(node: Node) -> (element: Element, err: Error) {
 }
 
 node_type :: proc(node: Node) -> (type: sciter.Node_Type, err: Error) {
-	dom_err(sciter.api().SciterNodeType(sciter.Hnode(node), &type)) or_return
+	dom_err(engine().SciterNodeType(sciter.Hnode(node), &type)) or_return
 	return type, nil
 }
 
@@ -116,13 +116,13 @@ node_type :: proc(node: Node) -> (type: sciter.Node_Type, err: Error) {
 // while `element_from_value` fails with `.OPERATION_FAILED` on a text node's Value.
 
 node_to_value :: proc(node: Node) -> (v: Value, err: Error) {
-	dom_err(sciter.Scdom_Result(sciter.api().SciterNodeWrap(&v, sciter.Hnode(node)))) or_return
+	dom_err(sciter.Scdom_Result(engine().SciterNodeWrap(&v, sciter.Hnode(node)))) or_return
 	return tracked(v), nil
 }
 
 node_from_value :: proc(v: ^Value) -> (node: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.Scdom_Result(sciter.api().SciterNodeUnwrap(v, &hn))) or_return
+	dom_err(sciter.Scdom_Result(engine().SciterNodeUnwrap(v, &hn))) or_return
 	if hn == nil {
 		return nil, .Not_Found
 	}
@@ -154,7 +154,7 @@ Node_Index :: distinct int
 
 node_child_count :: proc(node: Node) -> (n: Node_Index, err: Error) {
 	count: u32
-	dom_err(sciter.api().SciterNodeChildrenCount(sciter.Hnode(node), &count)) or_return
+	dom_err(engine().SciterNodeChildrenCount(sciter.Hnode(node), &count)) or_return
 	return Node_Index(count), nil
 }
 
@@ -162,38 +162,38 @@ node_child_count :: proc(node: Node) -> (n: Node_Index, err: Error) {
 // than `.Not_Found` - it is a mistake, not the end of anything.
 node_child :: proc(node: Node, n: Node_Index) -> (child: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodeNthChild(sciter.Hnode(node), u32(n), &hn)) or_return
+	dom_err(engine().SciterNodeNthChild(sciter.Hnode(node), u32(n), &hn)) or_return
 	return found_node(hn)
 }
 
 node_first_child :: proc(node: Node) -> (child: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodeFirstChild(sciter.Hnode(node), &hn)) or_return
+	dom_err(engine().SciterNodeFirstChild(sciter.Hnode(node), &hn)) or_return
 	return found_node(hn)
 }
 
 node_last_child :: proc(node: Node) -> (child: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodeLastChild(sciter.Hnode(node), &hn)) or_return
+	dom_err(engine().SciterNodeLastChild(sciter.Hnode(node), &hn)) or_return
 	return found_node(hn)
 }
 
 node_next_sibling :: proc(node: Node) -> (sibling: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodeNextSibling(sciter.Hnode(node), &hn)) or_return
+	dom_err(engine().SciterNodeNextSibling(sciter.Hnode(node), &hn)) or_return
 	return found_node(hn)
 }
 
 node_prev_sibling :: proc(node: Node) -> (sibling: Node, err: Error) {
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterNodePrevSibling(sciter.Hnode(node), &hn)) or_return
+	dom_err(engine().SciterNodePrevSibling(sciter.Hnode(node), &hn)) or_return
 	return found_node(hn)
 }
 
 // The parent, which is always an element - only an element can contain nodes.
 node_parent :: proc(node: Node) -> (parent: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterNodeParent(sciter.Hnode(node), &he)) or_return
+	dom_err(engine().SciterNodeParent(sciter.Hnode(node), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -220,7 +220,7 @@ node_text :: proc(node: Node, allocator := context.allocator) -> (text: string, 
 		ctx       = context,
 		allocator = allocator,
 	}
-	dom_err(sciter.api().SciterNodeGetText(sciter.Hnode(node), wide_receiver, &sink)) or_return
+	dom_err(engine().SciterNodeGetText(sciter.Hnode(node), wide_receiver, &sink)) or_return
 	return sink.out, nil
 }
 
@@ -235,7 +235,7 @@ node_text :: proc(node: Node, allocator := context.allocator) -> (text: string, 
 // an inline child without disturbing the child, which `set_text` cannot do.
 node_set_text :: proc(node: Node, text: string) -> Error {
 	w := utf16_from_string(text, context.temp_allocator)
-	return dom_err(sciter.api().SciterNodeSetText(sciter.Hnode(node), raw_data(w), u32(len(w) - 1)))
+	return dom_err(engine().SciterNodeSetText(sciter.Hnode(node), raw_data(w), u32(len(w) - 1)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -249,7 +249,7 @@ node_set_text :: proc(node: Node, text: string) -> Error {
 make_text_node :: proc(text: string, loc := #caller_location) -> (node: Owned_Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterCreateTextNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
+	dom_err(engine().SciterCreateTextNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
 	track_acquire(.Node, rawptr(hn), loc)
 	found := found_node(hn) or_return
 	return Owned_Node(found), nil
@@ -259,7 +259,7 @@ make_text_node :: proc(text: string, loc := #caller_location) -> (node: Owned_No
 make_comment_node :: proc(text: string, loc := #caller_location) -> (node: Owned_Node, err: Error) {
 	w := utf16_from_string(text, context.temp_allocator)
 	hn: sciter.Hnode
-	dom_err(sciter.api().SciterCreateCommentNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
+	dom_err(engine().SciterCreateCommentNode(raw_data(w), u32(len(w) - 1), &hn)) or_return
 	track_acquire(.Node, rawptr(hn), loc)
 	found := found_node(hn) or_return
 	return Owned_Node(found), nil
@@ -280,7 +280,7 @@ make_comment_node :: proc(text: string, loc := #caller_location) -> (node: Owned
 // handle - into another parent, or anywhere at all - is `.INVALID_HANDLE`, and so is inserting a node
 // that is already in the document or one taken back out with `node_remove`. See there.
 node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Owned_Node) -> Error {
-	return dom_err(sciter.api().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
+	return dom_err(engine().SciterNodeInsert(sciter.Hnode(node), u32(where_), sciter.Hnode(what)))
 }
 
 // Takes the node out of the document. `finalize = true` destroys it.
@@ -300,5 +300,5 @@ node_insert :: proc(node: Node, where_: sciter.Node_Ins_Target, what: Owned_Node
 // on it is the borrowed-handle under-flow, `.OK` at the call and a segfault at teardown. Only
 // `make_text_node`, `make_comment_node` and `node_add_ref` produce something to release.
 node_remove :: proc(node: Node, finalize := true) -> Error {
-	return dom_err(sciter.api().SciterNodeRemove(sciter.Hnode(node), b32(finalize)))
+	return dom_err(engine().SciterNodeRemove(sciter.Hnode(node), b32(finalize)))
 }

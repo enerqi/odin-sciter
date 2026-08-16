@@ -22,6 +22,12 @@ helpers, and `check_thread_affinity` turns it down to counting or off. It compil
 build. `examples/worker_thread.odin` has the tests, including what the counter reads after a worker
 touches it.
 
+The check covers every call because there is one way in — `engine()`, the package's only route to the
+engine's function table — and `just check-affinity` is what keeps it that way. Read that as a warning
+rather than as reassurance: it means a silent debug run is now evidence, and it did not used to be.
+Until 2026-08-16 the guard watched only the calls that returned a result code, so fifty
+`value_from_string` calls from a worker thread reported nothing at all.
+
 `post_callback` is the only exception, and it is the *whole* exception:
 
 ```odin

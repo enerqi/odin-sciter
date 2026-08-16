@@ -14,16 +14,21 @@
 // **Debug builds only.** Without `-debug` every procedure here compiles to nothing, exactly as
 // `tracking.odin` does, so a release build pays neither the load nor the branch.
 //
-// Two things it does not claim to be:
+// **It fires before the call, and it covers all of them.** The chokepoint is `engine()` in
+// `sciter_app.odin`, which every procedure in the package goes through to reach the function table, so
+// the guard runs while the offending call is still on the stack and before the engine has been touched.
+// `post_callback` is the single exception, deliberately: it is rule 1's way across and is meant to be
+// called from anywhere.
 //
-//   - **It fires on the way out for the DOM, Value and window calls**, because the chokepoint it sits
-//     in is the error-wrapping helper that runs after the engine returns. The damage, if any, is
-//     already done; what the guard buys is that you learn about it now, at this call, rather than three
-//     frames into an unrelated crash. The graphics and request tables are checked on the way *in*,
-//     because those calls go through an accessor rather than a result.
-//   - **It is not complete.** Procedures that call the engine and return nothing - `post_callback`
-//     excepted, which is meant to be called from anywhere - do not pass through a chokepoint. The
-//     coverage is the ~200 call sites that do, which is most of what an application touches.
+// It did not start that way, and the history is the argument for the current shape. The guard first sat
+// in the four error-wrapping helpers and the two sub-table accessors, which meant it saw a call only if
+// that call returned a result code. Measured: 124 of 199 engine call sites, and the 75 it missed were
+// the ones whose engine call returns a bare `SBOOL` - `eval`, `call`, `load_html`, `create_window`,
+// `close`, every constructor in `value.odin`, the whole windowless surface, and `init`. Fifty
+// `value_from_string` calls from a worker thread reported zero violations. Worse, because `init` was
+// among the misses, the armed thread was whichever thread first reached a *guarded* call rather than
+// the thread that ran `init` - so a worker could arm itself as the engine's thread and the real engine
+// thread would then be the one that trapped. `docs/review/10-threading.md` has both measurements.
 package sciter_app
 
 // Both are used only inside `when ODIN_DEBUG`, so a release build reports them unused without this -
@@ -63,10 +68,15 @@ when ODIN_DEBUG {
 // Calling it also re-arms: the next guarded call decides which thread is the engine's.
 check_thread_affinity :: proc(on := true, strict := true) {
 	when ODIN_DEBUG {
-		g_affinity = Affinity {
-			on     = on,
-			strict = strict,
-		}
+		// One field at a time, atomically, rather than a whole-struct assignment. The guard reads these
+		// from whatever thread it happens to be on, so a plain store races those reads - and this is the
+		// one file whose job is to be right about that. `on` is cleared first and set last, so the window
+		// in which the other three are in flux is a window in which the check is off.
+		sync.atomic_store(&g_affinity.on, false)
+		sync.atomic_store(&g_affinity.id, 0)
+		sync.atomic_store(&g_affinity.violations, 0)
+		sync.atomic_store(&g_affinity.strict, strict)
+		sync.atomic_store(&g_affinity.on, on)
 	}
 }
 
@@ -106,15 +116,17 @@ assert_engine_thread :: proc(loc := #caller_location) {
 	}
 }
 
-// The chokepoint. Arms on first use, then compares.
+// Arms on first use, then compares.
 //
-// Arming on first use rather than in `init` is deliberate: a windowless program never calls `init` -
-// `examples/script_bridge.odin` and `examples/leak_sweep.odin` are both like that - and a guard that
-// only works for windowed applications would be off exactly where the threading is hardest.
+// **First use, not `init`.** A windowed application arms here on the `init` inside it, which is what
+// `docs/rules.md` §1 promises - but a windowless program never calls `init` at all
+// (`examples/script_bridge.odin` and `examples/leak_sweep.odin` are both like that), and a guard that
+// only worked for windowed applications would be off exactly where the threading is hardest. First use
+// gets both, now that `engine()` puts `init` among the guarded calls rather than ahead of them.
 @(private)
 guard_engine_thread :: proc(loc := #caller_location) {
 	when ODIN_DEBUG {
-		if !g_affinity.on {
+		if !sync.atomic_load(&g_affinity.on) {
 			return
 		}
 		me := sync.current_thread_id()
@@ -129,7 +141,7 @@ guard_engine_thread :: proc(loc := #caller_location) {
 		}
 
 		sync.atomic_add(&g_affinity.violations, 1)
-		if !g_affinity.strict {
+		if !sync.atomic_load(&g_affinity.strict) {
 			return
 		}
 		runtime.print_string("\nsciter_app: called from thread ")

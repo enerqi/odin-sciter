@@ -48,12 +48,20 @@ code. `check_thread_affinity(strict = false)` counts violations instead of trapp
 `check_thread_affinity(on = false)` is the off switch a multi-threaded test runner needs — this
 package's own suite runs single-threaded instead, because the rule is the engine's, not this package's.
 
+**Every call is checked, and that is asserted rather than assumed.** The check sits in `engine()`, the
+one route the package has to the engine's function table, so it runs before the call rather than after
+it and there is no second route to forget. `just check-affinity` fails the build on a bare
+`sciter.api()` anywhere in `sciter_app` — which is what the guard's first version quietly allowed, in
+124 of 199 places. `docs/review/10-threading.md` has that measurement and what it cost.
+
 The patterns built on this rule — the doorbell, failure and cancellation, stale answers, guarding your
 own state, and what to do about the UI while the work runs — are in
 [`threading.md`](./threading.md).
 
-The two lazily-cached sub-API tables (`graphics_api()`, `request_api()`) are written on first use with
-no synchronisation, which is correct under this rule and only under this rule.
+Three things in the package are unsynchronised because this rule makes synchronising them unnecessary,
+and they are only correct while it holds: the two lazily-cached sub-API tables (`graphics_api()`,
+`request_api()`), written on first use, and the debug-build resource ledger in `tracking.odin`, whose
+maps and counters are touched by every acquiring call.
 
 ---
 

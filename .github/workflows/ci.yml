@@ -104,6 +104,12 @@ jobs:
       - name: Check the ownership rule
         run: just check-ownership
 
+      # The thread-affinity rule in docs/rules.md section 1. The runtime guard only sees calls that go
+      # through `engine()`, so this is what asserts that every call does - the gap it closes is the one
+      # that let 75 of 199 engine call sites ship unwatched. Source only, so it needs no engine either.
+      - name: Check the thread-affinity rule
+        run: just check-affinity
+
       # Formatting is maintained like the type check and the vet flags, not by hand. This needs no
       # engine and writes nothing - `odinfmt` prints to stdout and the recipe compares bytes. It became
       # gateable when the formatter stopped rewriting files on every run; the justfile comment on

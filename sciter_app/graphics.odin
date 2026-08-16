@@ -70,7 +70,7 @@ g_graphics_api: ^sciter.Sciter_Graphics_Api
 graphics_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Graphics_Api {
 	guard_engine_thread(loc)
 	if g_graphics_api == nil && sciter.loaded() {
-		g_graphics_api = sciter.api().GetSciterGraphicsAPI()
+		g_graphics_api = engine().GetSciterGraphicsAPI()
 	}
 	fmt.assertf(g_graphics_api != nil, "sciter.load() must be called before any graphics call", loc = loc)
 	return g_graphics_api
@@ -114,7 +114,7 @@ Graphics_Caps :: enum u32 {
 // is missing (see `sciter_app/events.odin`) is the standing reminder that these lists can lag.
 graphics_caps :: proc() -> (caps: Graphics_Caps, ok: bool) {
 	raw: u32
-	ok = bool(sciter.api().SciterGraphicsCaps(&raw))
+	ok = bool(engine().SciterGraphicsCaps(&raw))
 	return Graphics_Caps(raw), ok
 }
 

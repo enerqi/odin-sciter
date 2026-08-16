@@ -53,23 +53,23 @@ Event_Handler :: struct {
 // Attaches `handler` to `element`. It hears about `element` and everything below it.
 attach_handler :: proc(element: Element, handler: ^Event_Handler) -> Error {
 	handler.ctx = context
-	return dom_err(sciter.api().SciterAttachEventHandler(sciter.Helement(element), event_trampoline, handler))
+	return dom_err(engine().SciterAttachEventHandler(sciter.Helement(element), event_trampoline, handler))
 }
 
 // Attaches `handler` to the window's whole document, including elements that do not exist yet.
 attach_window_handler :: proc(window: Window, handler: ^Event_Handler) -> Error {
 	handler.ctx = context
 	return dom_err(
-		sciter.api().SciterWindowAttachEventHandler(rawptr(window), event_trampoline, handler, handler.subscription),
+		engine().SciterWindowAttachEventHandler(rawptr(window), event_trampoline, handler, handler.subscription),
 	)
 }
 
 detach_handler :: proc(element: Element, handler: ^Event_Handler) -> Error {
-	return dom_err(sciter.api().SciterDetachEventHandler(sciter.Helement(element), event_trampoline, handler))
+	return dom_err(engine().SciterDetachEventHandler(sciter.Helement(element), event_trampoline, handler))
 }
 
 detach_window_handler :: proc(window: Window, handler: ^Event_Handler) -> Error {
-	return dom_err(sciter.api().SciterWindowDetachEventHandler(rawptr(window), event_trampoline, handler))
+	return dom_err(engine().SciterWindowDetachEventHandler(rawptr(window), event_trampoline, handler))
 }
 
 @(private)
@@ -559,7 +559,7 @@ request_element_data :: proc(
 ) -> Error {
 	w := utf16_from_string(url, context.temp_allocator)
 	return dom_err(
-		sciter.api().SciterRequestElementData(
+		engine().SciterRequestElementData(
 			sciter.Helement(element),
 			raw_data(w),
 			data_type,
@@ -628,7 +628,7 @@ http_request :: proc(
 
 	request_type := sciter.Request_Type.GET_ASYNC if method == .Get else sciter.Request_Type.POST_ASYNC
 	return dom_err(
-		sciter.api().SciterHttpRequest(
+		engine().SciterHttpRequest(
 			sciter.Helement(element),
 			raw_data(w),
 			data_type,
@@ -704,14 +704,14 @@ data_arrived_event :: proc(event: Event, allocator := context.allocator) -> (da:
 //
 // Taking the capture while another element holds it moves it, rather than failing.
 set_capture :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().SciterSetCapture(sciter.Helement(element)))
+	return dom_err(engine().SciterSetCapture(sciter.Helement(element)))
 }
 
 // Gives the capture back. Releasing when nothing was captured, or when another element has it, is not
 // an error - the engine reports success either way, so this is safe to call unconditionally on the way
 // out of a drag.
 release_capture :: proc(element: Element) -> Error {
-	return dom_err(sciter.api().SciterReleaseCapture(sciter.Helement(element)))
+	return dom_err(engine().SciterReleaseCapture(sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -767,12 +767,12 @@ set_timer :: proc(element: Element, interval: time.Duration, id: Timer_Id = 0) -
 	if ms > i64(max(u32)) {
 		return sciter.Scdom_Result.INVALID_PARAMETER
 	}
-	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), u32(ms), uintptr(id)))
+	return dom_err(engine().SciterSetTimer(sciter.Helement(element), u32(ms), uintptr(id)))
 }
 
 // Stops the timer `id` on `element`. Stopping one that is not running is not an error.
 stop_timer :: proc(element: Element, id: Timer_Id = 0) -> Error {
-	return dom_err(sciter.api().SciterSetTimer(sciter.Helement(element), 0, uintptr(id)))
+	return dom_err(engine().SciterSetTimer(sciter.Helement(element), 0, uintptr(id)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -813,7 +813,7 @@ stop_timer :: proc(element: Element, id: Timer_Id = 0) -> Error {
 // so a handler watching for `.ANIMATION` sees a pair around every request. And a nil element is
 // `.INVALID_HANDLE`.
 request_animation_frame :: proc(element: Element, code: sciter.Behavior_Events, reason: uintptr = 0) -> Error {
-	return dom_err(sciter.api().SciterRequestAnimationFrameEvent(sciter.Helement(element), u32(code), reason))
+	return dom_err(engine().SciterRequestAnimationFrameEvent(sciter.Helement(element), u32(code), reason))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -852,13 +852,7 @@ send_event :: proc(
 ) {
 	was_handled: b32
 	dom_err(
-		sciter.api().SciterSendEvent(
-			sciter.Helement(element),
-			u32(code),
-			sciter.Helement(source),
-			reason,
-			&was_handled,
-		),
+		engine().SciterSendEvent(sciter.Helement(element), u32(code), sciter.Helement(source), reason, &was_handled),
 	) or_return
 	return bool(was_handled), nil
 }
@@ -870,7 +864,7 @@ post_event :: proc(
 	source: Element = nil,
 	reason: uintptr = 0,
 ) -> Error {
-	return dom_err(sciter.api().SciterPostEvent(sciter.Helement(element), u32(code), sciter.Helement(source), reason))
+	return dom_err(engine().SciterPostEvent(sciter.Helement(element), u32(code), sciter.Helement(source), reason))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -924,7 +918,7 @@ send_mouse :: proc(
 	was: b32
 	// The group is passed as the *mask*, not the enum's ordinal - `Event_Group.MOUSE` is 0 and would be
 	// `.INVALID_PARAMETER`. Only the mouse and key masks are accepted; anything else is refused.
-	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.MOUSE}, &params, &was)) or_return
+	dom_err(engine().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.MOUSE}, &params, &was)) or_return
 	return bool(was), nil
 }
 
@@ -949,7 +943,7 @@ send_key :: proc(
 		alt_state = modifiers,
 	}
 	was: b32
-	dom_err(sciter.api().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.KEY}, &params, &was)) or_return
+	dom_err(engine().SciterTraverseUIEvent(transmute(u32)sciter.Event_Groups{.KEY}, &params, &was)) or_return
 	return bool(was), nil
 }
 
@@ -1030,6 +1024,6 @@ fire_event :: proc(event: Fired_Event, post := false) -> (handled: bool, err: Er
 	}
 
 	was_handled: b32
-	dom_err(sciter.api().SciterFireEvent(&params, b32(post), &was_handled)) or_return
+	dom_err(engine().SciterFireEvent(&params, b32(post), &was_handled)) or_return
 	return bool(was_handled), nil
 }

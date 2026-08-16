@@ -25,6 +25,11 @@ maintained. For the current numbers, `just stats`.
 Angle 9 was written after the first eight and reviews the same tree with their fixes applied, so its
 findings are the ones that survived that pass rather than a second opinion on it.
 
+**[`10-threading.md`](10-threading.md) is not part of this review.** It is a separate pass dated
+2026-08-16 over the threading subsystem, which landed on 2026-08-15 — a day *after* the nine closed, and
+so was reviewed by none of them. Seven findings, three of them major; five are fixed, and the two still
+open both need a measurement this machine cannot make.
+
 The engine and toolchain behaviour this review measured is **not** kept here: each fact was written
 where it applies — `rules.md`, `gotchas.md`, and the doc comments on the wrappers concerned — which is
 where someone hits it. A handoff note holding a second copy was deleted once the last of them landed.

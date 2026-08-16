@@ -219,7 +219,7 @@ set_global_asset :: proc(asset: ^Asset) -> Error {
 	if asset == nil {
 		return .Asset_Failed
 	}
-	if !sciter.api().SciterSetGlobalAsset(&asset.base) {
+	if !engine().SciterSetGlobalAsset(&asset.base) {
 		return .Asset_Failed
 	}
 	return nil
@@ -231,7 +231,7 @@ release_global_asset :: proc(asset: ^Asset) -> Error {
 	if asset == nil {
 		return .Asset_Failed
 	}
-	if !sciter.api().SciterReleaseGlobalAsset(&asset.base) {
+	if !engine().SciterReleaseGlobalAsset(&asset.base) {
 		return .Asset_Failed
 	}
 	return nil
@@ -244,7 +244,7 @@ release_global_asset :: proc(asset: ^Asset) -> Error {
 // This is the raw `^sciter.Som_Asset_T` rather than an `Asset`: it belongs to the engine, not to this
 // package, and what it can do is whatever its own passport says. Reach it through `asset.isa`.
 element_asset :: proc(element: Element, behavior: string) -> (asset: ^sciter.Som_Asset_T, err: Error) {
-	dom_err(sciter.api().SciterGetElementAsset(sciter.Helement(element), u64(atom(behavior)), &asset)) or_return
+	dom_err(engine().SciterGetElementAsset(sciter.Helement(element), u64(atom(behavior)), &asset)) or_return
 	return asset, nil
 }
 

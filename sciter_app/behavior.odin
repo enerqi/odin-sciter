@@ -37,7 +37,7 @@ import sciter ".."
 // host attached through `SC_ATTACH_BEHAVIOR`. `element_asset` in `som.odin` is the other half of the
 // picture: what a *SOM* asset the element carries exposes.
 control_type :: proc(element: Element) -> (type: sciter.Ctl_Type, err: Error) {
-	dom_err(sciter.api().SciterControlGetType(sciter.Helement(element), &type)) or_return
+	dom_err(engine().SciterControlGetType(sciter.Helement(element), &type)) or_return
 	return type, nil
 }
 
@@ -143,7 +143,7 @@ call_behavior_method :: proc(element: Element, params: rawptr) -> (handled: bool
 	if params == nil {
 		return false, sciter.Scdom_Result.INVALID_PARAMETER
 	}
-	r := sciter.api().SciterCallBehaviorMethod(sciter.Helement(element), (^sciter.Method_Params)(params))
+	r := engine().SciterCallBehaviorMethod(sciter.Helement(element), (^sciter.Method_Params)(params))
 	// `OK_NOT_HANDLED` is a success that means "no behavior wanted it", which is exactly the
 	// distinction `handled` carries - so it is read here, before `dom_err` folds it into nil.
 	return r == .OK, dom_err(r)

@@ -86,7 +86,7 @@ g_request_api: ^sciter.Sciter_Request_Api
 request_api :: proc(loc := #caller_location) -> ^sciter.Sciter_Request_Api {
 	guard_engine_thread(loc)
 	if g_request_api == nil && sciter.loaded() {
-		g_request_api = sciter.api().GetSciterRequestAPI()
+		g_request_api = engine().GetSciterRequestAPI()
 	}
 	fmt.assertf(g_request_api != nil, "sciter.load() must be called before any request call", loc = loc)
 	return g_request_api

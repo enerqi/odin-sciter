@@ -23,7 +23,7 @@ Value :: sciter.Value
 // Zeroes a Value into the undefined state. A zeroed Value is already valid, so this matters mainly for
 // reusing one that has been cleared.
 value_init :: proc(v: ^Value) {
-	sciter.api().ValueInit(v)
+	engine().ValueInit(v)
 }
 
 // Releases whatever the Value holds and returns it to undefined. Safe to call twice.
@@ -34,12 +34,12 @@ value_clear :: proc(v: ^Value) {
 			track_release_counted(.Value)
 		}
 	}
-	sciter.api().ValueClear(v)
+	engine().ValueClear(v)
 }
 
 // Takes a second reference to `src`. Both `dst` and `src` then owe a clear.
 value_copy :: proc(dst: ^Value, src: ^Value, loc := #caller_location) -> Error {
-	err := value_err(sciter.api().ValueCopy(dst, src))
+	err := value_err(engine().ValueCopy(dst, src))
 	when ODIN_DEBUG {
 		// A second reference, so a second clear is owed.
 		if err == nil && value_owns_reference(dst) {
@@ -61,19 +61,19 @@ value_copy :: proc(dst: ^Value, src: ^Value, loc := #caller_location) -> Error {
 // rebuilt - walk it with `value_each` and construct a new one - or kept from being shared in the first
 // place. `value_copy` shares; `value_parse` of the same text does not.
 value_isolate :: proc(v: ^Value) -> Error {
-	return value_err(sciter.api().ValueIsolate(v))
+	return value_err(engine().ValueIsolate(v))
 }
 
 value_equal :: proc(a: ^Value, b: ^Value) -> bool {
 	// ValueCompare reports equality as OK_TRUE, which is -1, not as OK.
-	return sciter.api().ValueCompare(a, b) == .OK_TRUE
+	return engine().ValueCompare(a, b) == .OK_TRUE
 }
 
 // What the Value holds. `units` further qualifies it and its meaning depends on the type - it is a
 // VALUE_UNIT_TYPE for .LENGTH, a VALUE_UNIT_TYPE_OBJECT for .OBJECT, and so on, which is why it comes
 // back as a bare integer.
 value_type :: proc(v: ^Value) -> (type: sciter.Value_Type, units: u32) {
-	sciter.api().ValueType(v, &type, &units)
+	engine().ValueType(v, &type, &units)
 	return
 }
 
@@ -102,29 +102,29 @@ value_is_error :: proc(v: ^Value) -> bool {
 // Each returns a Value the caller owns and must `value_clear`.
 
 value_from_bool :: proc(b: bool) -> (v: Value) {
-	sciter.api().ValueIntDataSet(&v, 1 if b else 0, .BOOL, 0)
+	engine().ValueIntDataSet(&v, 1 if b else 0, .BOOL, 0)
 	return
 }
 
 value_from_int :: proc(i: i32) -> (v: Value) {
-	sciter.api().ValueIntDataSet(&v, i, .INT, 0)
+	engine().ValueIntDataSet(&v, i, .INT, 0)
 	return
 }
 
 value_from_i64 :: proc(i: i64) -> (v: Value) {
-	sciter.api().ValueInt64DataSet(&v, i, .BIG_INT, 0)
+	engine().ValueInt64DataSet(&v, i, .BIG_INT, 0)
 	return
 }
 
 value_from_f64 :: proc(f: f64) -> (v: Value) {
-	sciter.api().ValueFloatDataSet(&v, f, .FLOAT, 0)
+	engine().ValueFloatDataSet(&v, f, .FLOAT, 0)
 	return
 }
 
 // The engine copies the string, so `s` does not have to outlive the call.
 value_from_string :: proc(s: string, loc := #caller_location) -> (v: Value) {
 	w := utf16_from_string(s, context.temp_allocator)
-	sciter.api().ValueStringDataSet(&v, raw_data(w), u32(len(w) - 1), 0)
+	engine().ValueStringDataSet(&v, raw_data(w), u32(len(w) - 1), 0)
 	// A constructed string owns engine memory exactly as a returned one does, and `value_clear`
 	// releases it either way - so the ledger has to see both halves or it drifts negative.
 	return tracked(v, loc)
@@ -132,7 +132,7 @@ value_from_string :: proc(s: string, loc := #caller_location) -> (v: Value) {
 
 // A byte blob - image data, a file's contents. The engine copies it.
 value_from_bytes :: proc(b: []u8, loc := #caller_location) -> (v: Value) {
-	sciter.api().ValueBinaryDataSet(&v, raw_data(b), u32(len(b)), .BYTES, 0)
+	engine().ValueBinaryDataSet(&v, raw_data(b), u32(len(b)), .BYTES, 0)
 	return tracked(v, loc)
 }
 
@@ -150,7 +150,7 @@ value_make_array :: proc(length: int) -> (v: Value) {
 		return empty if err == nil else v
 	}
 	undefined: Value
-	sciter.api().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)
+	engine().ValueNthElementValueSet(&v, sciter.Int(length - 1), &undefined)
 	return tracked(v)
 }
 
@@ -191,7 +191,7 @@ value_from :: proc {
 // `value_clear` like any other.
 value_parse :: proc(s: string, how := sciter.Value_String_Cvt_Type.JSON_LITERAL) -> (v: Value, err: Error) {
 	w := utf16_from_string(s, context.temp_allocator)
-	value_err(sciter.api().ValueFromString(&v, raw_data(w), u32(len(w) - 1), how)) or_return
+	value_err(engine().ValueFromString(&v, raw_data(w), u32(len(w) - 1), how)) or_return
 	if value_is_error(&v) {
 		return tracked(v), .Parse_Failed
 	}
@@ -211,7 +211,7 @@ value_to_bool :: proc(v: ^Value) -> (b: bool, err: Error) {
 		return i != 0, nil
 	}
 	i: sciter.Int
-	value_err(sciter.api().ValueIntData(v, &i)) or_return
+	value_err(engine().ValueIntData(v, &i)) or_return
 	return i != 0, nil
 }
 
@@ -220,7 +220,7 @@ value_to_bool :: proc(v: ^Value) -> (b: bool, err: Error) {
 // so a number that made the round trip through an `i64` anywhere in its life reads back as zero here.
 // Use `value_to_i64`, which handles both, unless the type is known to be `.INT`.
 value_to_int :: proc(v: ^Value) -> (i: i32, err: Error) {
-	value_err(sciter.api().ValueIntData(v, &i)) or_return
+	value_err(engine().ValueIntData(v, &i)) or_return
 	return i, nil
 }
 
@@ -228,12 +228,12 @@ value_to_int :: proc(v: ^Value) -> (i: i32, err: Error) {
 // included. A `.FLOAT` or a `.STRING` is `.INCOMPATIBLE_TYPE` rather than being coerced, so this never
 // silently rounds or parses.
 value_to_i64 :: proc(v: ^Value) -> (i: i64, err: Error) {
-	value_err(sciter.api().ValueInt64Data(v, &i)) or_return
+	value_err(engine().ValueInt64Data(v, &i)) or_return
 	return i, nil
 }
 
 value_to_f64 :: proc(v: ^Value) -> (f: f64, err: Error) {
-	value_err(sciter.api().ValueFloatData(v, &f)) or_return
+	value_err(engine().ValueFloatData(v, &f)) or_return
 	return f, nil
 }
 
@@ -242,7 +242,7 @@ value_to_f64 :: proc(v: ^Value) -> (f: f64, err: Error) {
 value_to_string :: proc(v: ^Value, allocator := context.allocator) -> (s: string, err: Error) {
 	chars: [^]u16
 	n: u32
-	value_err(sciter.api().ValueStringData(v, &chars, &n)) or_return
+	value_err(engine().ValueStringData(v, &chars, &n)) or_return
 	return string_from_utf16(chars, uint(n), allocator), nil
 }
 
@@ -257,7 +257,7 @@ value_to_asset :: proc(v: ^Value) -> (asset: ^sciter.Som_Asset_T, err: Error) {
 		return nil, Api_Error.Wrong_Type
 	}
 	i: i64
-	value_err(sciter.api().ValueInt64Data(v, &i)) or_return
+	value_err(engine().ValueInt64Data(v, &i)) or_return
 	return (^sciter.Som_Asset_T)(uintptr(i)), nil
 }
 
@@ -266,7 +266,7 @@ value_to_asset :: proc(v: ^Value) -> (asset: ^sciter.Som_Asset_T, err: Error) {
 // The engine does *not* add_ref here - `value.hpp`'s `wrap_asset` is a bare `ValueInt64DataSet` - so
 // the asset has to outlive the Value.
 value_from_asset :: proc(asset: ^sciter.Som_Asset_T) -> (v: Value) {
-	sciter.api().ValueInt64DataSet(&v, i64(uintptr(asset)), .ASSET, 0)
+	engine().ValueInt64DataSet(&v, i64(uintptr(asset)), .ASSET, 0)
 	return
 }
 
@@ -281,7 +281,7 @@ value_from_asset :: proc(asset: ^sciter.Som_Asset_T) -> (v: Value) {
 value_to_bytes :: proc(v: ^Value) -> (b: []u8, err: Error) {
 	p: [^]u8
 	n: u32
-	value_err(sciter.api().ValueBinaryData(v, &p, &n)) or_return
+	value_err(engine().ValueBinaryData(v, &p, &n)) or_return
 	if p == nil {
 		return nil, nil
 	}
@@ -304,7 +304,7 @@ value_to_display_string :: proc(
 	value_copy(&tmp, v) or_return
 	defer value_clear(&tmp)
 
-	value_err(sciter.api().ValueToString(&tmp, how)) or_return
+	value_err(engine().ValueToString(&tmp, how)) or_return
 	return value_to_string(&tmp, allocator)
 }
 
@@ -317,13 +317,13 @@ value_to_display_string :: proc(
 // Number of elements in an array, or key/value pairs in a map.
 value_len :: proc(v: ^Value) -> (n: int, err: Error) {
 	count: sciter.Int
-	value_err(sciter.api().ValueElementsCount(v, &count)) or_return
+	value_err(engine().ValueElementsCount(v, &count)) or_return
 	return int(count), nil
 }
 
 // The nth element. The result owns a reference; `value_clear` it.
 value_at :: proc(v: ^Value, n: int) -> (element: Value, err: Error) {
-	value_err(sciter.api().ValueNthElementValue(v, sciter.Int(n), &element)) or_return
+	value_err(engine().ValueNthElementValue(v, sciter.Int(n), &element)) or_return
 	return tracked(element), nil
 }
 
@@ -337,19 +337,19 @@ value_at :: proc(v: ^Value, n: int) -> (element: Value, err: Error) {
 // `.INCOMPATIBLE_TYPE`. Arrays are described here as maps keyed by 0..n, and for this one call they
 // are not.
 value_key_at :: proc(v: ^Value, n: int) -> (key: Value, err: Error) {
-	value_err(sciter.api().ValueNthElementKey(v, sciter.Int(n), &key)) or_return
+	value_err(engine().ValueNthElementKey(v, sciter.Int(n), &key)) or_return
 	return tracked(key), nil
 }
 
 // Writes the nth element, growing the array if needed. `element` is copied, not consumed.
 value_set_at :: proc(v: ^Value, n: int, element: ^Value) -> Error {
-	return value_err(sciter.api().ValueNthElementValueSet(v, sciter.Int(n), element))
+	return value_err(engine().ValueNthElementValueSet(v, sciter.Int(n), element))
 }
 
 // The value stored under `key`, which may be a string, an integer, anything. The result owns a
 // reference; `value_clear` it.
 value_get_key :: proc(v: ^Value, key: ^Value) -> (result: Value, err: Error) {
-	value_err(sciter.api().ValueGetValueOfKey(v, key, &result)) or_return
+	value_err(engine().ValueGetValueOfKey(v, key, &result)) or_return
 	return tracked(result), nil
 }
 
@@ -362,7 +362,7 @@ value_get :: proc(v: ^Value, key: string) -> (result: Value, err: Error) {
 
 // Stores `element` under `key`. Neither is consumed.
 value_set_key :: proc(v: ^Value, key: ^Value, element: ^Value) -> Error {
-	return value_err(sciter.api().ValueSetValueToKey(v, key, element))
+	return value_err(engine().ValueSetValueToKey(v, key, element))
 }
 
 // Stores `element` under a string key. `element` is not consumed.
@@ -409,7 +409,7 @@ value_each :: proc(v: ^Value, visit: Value_Visitor, user_data: rawptr = nil) -> 
 		visit     = visit,
 		user_data = user_data,
 	}
-	return value_err(sciter.api().ValueEnumElements(v, each_callback, &sink))
+	return value_err(engine().ValueEnumElements(v, each_callback, &sink))
 }
 
 @(private)
@@ -464,13 +464,13 @@ value_from_function :: proc(
 		ctx       = context,
 		allocator = allocator,
 	}
-	sciter.api().ValueNativeFunctorSet(&v, functor_invoke, functor_release, (^sciter.Void)(functor))
+	engine().ValueNativeFunctorSet(&v, functor_invoke, functor_release, (^sciter.Void)(functor))
 	return tracked(v)
 }
 
 // True if the Value holds a `value_from_function` procedure rather than a script function.
 value_is_function :: proc(v: ^Value) -> bool {
-	return bool(sciter.api().ValueIsNativeFunctor(v))
+	return bool(engine().ValueIsNativeFunctor(v))
 }
 
 @(private)
@@ -517,6 +517,6 @@ value_invoke :: proc(fn: ^Value, this: ^Value = nil, args: []Value = nil) -> (re
 	}
 
 	// The trailing URL is what script sees as the call site in a stack trace.
-	value_err(sciter.api().ValueInvoke(fn, self, u32(len(args)), argv, &result, nil)) or_return
+	value_err(engine().ValueInvoke(fn, self, u32(len(args)), argv, &result, nil)) or_return
 	return tracked(result), nil
 }

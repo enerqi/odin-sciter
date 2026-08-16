@@ -53,7 +53,7 @@ create_window :: proc(opts := Window_Options{}) -> (window: Window, err: Error) 
 		pframe = nil // let the engine choose
 	}
 
-	h := sciter.api().SciterCreateWindow(flags, pframe, nil, nil, rawptr(opts.parent))
+	h := engine().SciterCreateWindow(flags, pframe, nil, nil, rawptr(opts.parent))
 	if h == nil {
 		return nil, .Window_Failed
 	}
@@ -67,7 +67,7 @@ load_html :: proc(window: Window, html: string, base_url := "") -> Error {
 	if base_url != "" {
 		base = raw_data(utf16_from_string(base_url, context.temp_allocator))
 	}
-	ok := sciter.api().SciterLoadHtml(rawptr(window), raw_data(html), u32(len(html)), base)
+	ok := engine().SciterLoadHtml(rawptr(window), raw_data(html), u32(len(html)), base)
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -75,14 +75,14 @@ load_html :: proc(window: Window, html: string, base_url := "") -> Error {
 // `http://` and the engine's own `this://app/` archive scheme all work.
 load_file :: proc(window: Window, url: string) -> Error {
 	w := utf16_from_string(url, context.temp_allocator)
-	ok := sciter.api().SciterLoadFile(rawptr(window), raw_data(w))
+	ok := engine().SciterLoadFile(rawptr(window), raw_data(w))
 	return nil if ok else Api_Error.Load_Failed
 }
 
 // Sets the base URL that relative references in the document resolve against.
 set_home_url :: proc(window: Window, url: string) -> Error {
 	w := utf16_from_string(url, context.temp_allocator)
-	ok := sciter.api().SciterSetHomeURL(rawptr(window), raw_data(w))
+	ok := engine().SciterSetHomeURL(rawptr(window), raw_data(w))
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -113,7 +113,7 @@ set_css :: proc(window: Window, css: string, base_url := "", media_type := "") -
 	if media_type != "" {
 		media = raw_data(utf16_from_string(media_type, context.temp_allocator))
 	}
-	ok := sciter.api().SciterSetCSS(rawptr(window), raw_data(css), u32(len(css)), base, media)
+	ok := engine().SciterSetCSS(rawptr(window), raw_data(css), u32(len(css)), base, media)
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -121,7 +121,7 @@ set_css :: proc(window: Window, css: string, base_url := "", media_type := "") -
 // Only needed when something is driving the engine other than `run` - a custom loop, or a long
 // operation on this thread that has to show progress.
 update_window :: proc(window: Window) {
-	sciter.api().SciterUpdateWindow(rawptr(window))
+	engine().SciterUpdateWindow(rawptr(window))
 }
 
 // The media type the window's `@media` rules are matched against: "screen" (the default), "print",
@@ -133,7 +133,7 @@ update_window :: proc(window: Window) {
 // treat it as a property of the window rather than as a switch.
 set_media_type :: proc(window: Window, media_type: string) -> Error {
 	w := utf16_from_string(media_type, context.temp_allocator)
-	ok := sciter.api().SciterSetMediaType(rawptr(window), raw_data(w))
+	ok := engine().SciterSetMediaType(rawptr(window), raw_data(w))
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -164,7 +164,7 @@ set_media_type :: proc(window: Window, media_type: string) -> Error {
 // A document already laid out keeps the style it resolved, so `update_element(el, true)` on what
 // should change, or a reload, is what makes the switch visible.
 set_media_vars :: proc(window: Window, vars: ^Value) -> Error {
-	ok := sciter.api().SciterSetMediaVars(rawptr(window), vars)
+	ok := engine().SciterSetMediaVars(rawptr(window), vars)
 	return nil if ok else Api_Error.Load_Failed
 }
 
@@ -178,7 +178,7 @@ set_media_vars :: proc(window: Window, vars: ^Value) -> Error {
 // the usual answer: focus arrives with the first interaction.
 focus_element :: proc(window: Window) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetFocusElement(rawptr(window), &he)) or_return
+	dom_err(engine().SciterGetFocusElement(rawptr(window), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -201,7 +201,7 @@ set_focus :: proc(element: Element) -> Error {
 // around what you hover in its tree. `.Not_Found` when there is none, which is the normal state.
 highlighted_element :: proc(window: Window) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetHighlightedElement(rawptr(window), &he)) or_return
+	dom_err(engine().SciterGetHighlightedElement(rawptr(window), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}
@@ -212,7 +212,7 @@ highlighted_element :: proc(window: Window) -> (element: Element, err: Error) {
 // element is this, on screen" - and not a selection: it draws an overlay and leaves no state on the
 // element, so nothing in the document can match on it.
 set_highlighted_element :: proc(window: Window, element: Element) -> Error {
-	return dom_err(sciter.api().SciterSetHighlightedElement(rawptr(window), sciter.Helement(element)))
+	return dom_err(engine().SciterSetHighlightedElement(rawptr(window), sciter.Helement(element)))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -238,7 +238,7 @@ set_highlighted_element :: proc(window: Window, element: Element) -> Error {
 // in this package restores it; `xrandr --output <name> --mode <preferred>` does. Do not call it from a
 // test, and size the window before asking.
 set_window_state :: proc(window: Window, state: sciter.Sciter_Window_State) {
-	sciter.api().SciterWindowExec(rawptr(window), .SET_STATE, uintptr(state), 0)
+	engine().SciterWindowExec(rawptr(window), .SET_STATE, uintptr(state), 0)
 }
 
 // The window's state - but see `set_window_state` for how little of it is reported.
@@ -262,7 +262,7 @@ set_window_state :: proc(window: Window, state: sciter.Sciter_Window_State) {
 // window is alive and a document loads into it - so **do not read `.CLOSED` as "gone"**. Ask the DOM
 // instead: `root` answers `.INVALID_HWND` for a dead handle on both platforms.
 window_state :: proc(window: Window) -> (state: sciter.Sciter_Window_State, ok: bool) {
-	raw := sciter.api().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0)
+	raw := engine().SciterWindowExec(rawptr(window), .GET_STATE, 0, 0)
 	switch sciter.Sciter_Window_State(raw) {
 	case .CLOSED, .HIDDEN, .SHOWN, .MINIMIZED, .MAXIMIZED, .FULL_SCREEN:
 		return sciter.Sciter_Window_State(raw), true
@@ -339,7 +339,7 @@ hide :: proc(window: Window) {
 // Linux it closes regardless. If an application needs a vetoable close, it has to ask the document
 // itself and decide in Odin.
 close :: proc(window: Window, force := true) {
-	sciter.api().SciterWindowExec(
+	engine().SciterWindowExec(
 		rawptr(window),
 		.SET_STATE,
 		uintptr(sciter.Sciter_Window_State.CLOSED),
@@ -358,7 +358,7 @@ request_close :: proc(window: Window) {
 
 // Brings the window forward and gives it focus.
 activate :: proc(window: Window, bring_to_front := true) {
-	sciter.api().SciterWindowExec(rawptr(window), .ACTIVATE, uintptr(1 if bring_to_front else 0), 0)
+	engine().SciterWindowExec(rawptr(window), .ACTIVATE, uintptr(1 if bring_to_front else 0), 0)
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -391,7 +391,7 @@ activate :: proc(window: Window, bring_to_front := true) {
 eval :: proc(window: Window, script: string) -> (result: Value, err: Error) {
 	w := utf16_from_string(script, context.temp_allocator)
 	value_init(&result)
-	ok := sciter.api().SciterEval(rawptr(window), raw_data(w), u32(len(w) - 1), &result)
+	ok := engine().SciterEval(rawptr(window), raw_data(w), u32(len(w) - 1), &result)
 	if !ok {
 		value_clear(&result)
 		return {}, .Eval_Failed
@@ -426,7 +426,7 @@ call :: proc(window: Window, function: string, args: ..Value) -> (result: Value,
 		argv = &args[0]
 	}
 
-	ok := sciter.api().SciterCall(rawptr(window), name, u32(len(args)), argv, &result)
+	ok := engine().SciterCall(rawptr(window), name, u32(len(args)), argv, &result)
 	if !ok {
 		value_clear(&result)
 		return {}, .Call_Failed
@@ -453,7 +453,7 @@ call :: proc(window: Window, function: string, args: ..Value) -> (result: Value,
 set_global :: proc(window: Window, name: string, value: ^Value) -> Error {
 	return dom_err(
 		sciter.Scdom_Result(
-			sciter.api().SciterSetVariable(rawptr(window), to_cstring(name, context.temp_allocator), value),
+			engine().SciterSetVariable(rawptr(window), to_cstring(name, context.temp_allocator), value),
 		),
 	)
 }
@@ -465,7 +465,7 @@ set_global :: proc(window: Window, name: string, value: ^Value) -> Error {
 global :: proc(window: Window, name: string) -> (value: Value, err: Error) {
 	dom_err(
 		sciter.Scdom_Result(
-			sciter.api().SciterGetVariable(rawptr(window), to_cstring(name, context.temp_allocator), &value),
+			engine().SciterGetVariable(rawptr(window), to_cstring(name, context.temp_allocator), &value),
 		),
 	) or_return
 	return tracked(value), nil
@@ -474,7 +474,7 @@ global :: proc(window: Window, name: string) -> (value: Value, err: Error) {
 // The DOM's document element - `<html>`. Every traversal starts here.
 root :: proc(window: Window) -> (element: Element, err: Error) {
 	he: sciter.Helement
-	dom_err(sciter.api().SciterGetRootElement(rawptr(window), &he)) or_return
+	dom_err(engine().SciterGetRootElement(rawptr(window), &he)) or_return
 	if he == nil {
 		return nil, .Not_Found
 	}

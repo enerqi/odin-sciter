@@ -67,8 +67,9 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   [`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md).
 - **New gates in CI**: `just parity --check` (C-API slot coverage against
   [`docs/parity-baseline.txt`](docs/parity-baseline.txt)), `just check-ownership` (allocator ⇒ owned),
-  `just stats --check` (the counts the docs quote), and `just lint` over both packages and all
-  examples. `just example-tests` bisects a test that kills the process, which used to report `exit 134`
+  `just check-affinity` (every engine call goes through `engine()`, so the runtime thread guard can
+  see it — the gap it closes is described under Fixed), `just stats --check` (the counts the docs
+  quote), and `just lint` over both packages and all examples. `just example-tests` bisects a test that kills the process, which used to report `exit 134`
   against a file and name nothing.
 - **Every exported wrapper procedure is now reached by a test.**
 - `released_resources()`, `app_event(n)`, and twelve further `scoped_` constructors.
@@ -105,6 +106,23 @@ never reports a script error through its `Error` (the returned Value carries it)
 borrowed handle is a segfault rather than a leak, inserting a node does not take your reference, and
 answering a `.DELAYED` request twice dies inside the engine. All are now recorded on the procedures
 concerned and in [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md).
+
+- **The thread-affinity guard watches every engine call, not 62% of them.** It sat in the four
+  error-wrapping helpers and the two sub-table accessors, so it only saw a call that returned a result
+  code: 124 of 199 call sites, with `eval`, `call`, `load_html`, `create_window`, every `Value`
+  constructor and the whole windowless surface unwatched. Fifty `value_from_string` calls from a worker
+  thread reported zero violations. The check moved into `engine()`, the package's single route to the
+  engine's function table, so it now runs *before* the call rather than after it. `post_callback` keeps
+  the bare `sciter.api()`, being rule 1's one exception.
+- **The guard no longer blames the wrong thread.** `init` was among the unguarded calls, so the armed
+  thread was whichever thread first reached a *guarded* one — a worker could arm itself as the engine's
+  thread, take no violation for doing so, and the engine's real thread would then trap on its next
+  legitimate call. Measured, then fixed by the same change.
+- **`check_thread_affinity`'s `on` and `strict` are read and written atomically**, like `id` and
+  `violations` already were, instead of through a whole-struct assignment racing the guard's reads.
+
+The findings, the measurements behind them and the two still open are in
+[`docs/review/10-threading.md`](docs/review/10-threading.md).
 
 ### Removed
 
