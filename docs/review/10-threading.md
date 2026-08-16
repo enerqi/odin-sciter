@@ -23,11 +23,14 @@ it is not committed.
 | R10-05 | the guard's own `on`/`strict` state is read and written non-atomically | minor | **fixed** |
 | R10-06 | the rule the guard models is not the rule macOS enforces | minor | open |
 | R10-07 | nothing tests guard *coverage*, and the one test that could is deliberately shaped not to | nit | **fixed** |
+| R10-08 | found by fixing R10-01: the macOS test bootstrap really does use the engine from two threads | major | **fixed** |
 
 ## Status — 2026-08-16, the same day
 
-Five of the seven are closed; the two left open both need a measurement before they need a change, and
-neither can be measured from here (R10-04 wants a live video destination, R10-06 wants a Mac).
+Six of the eight are closed. R10-08 was not in the original seven: it is what the completed guard found
+on its first macOS CI run, an hour after the fix landed. The two left open both need a measurement
+before they need a change, and neither can be measured from here (R10-04 wants a live video
+destination, R10-06 wants a Mac).
 
 `engine()` in `sciter_app/sciter_app.odin` is the fix that carried four of the five: it is now the
 package's only route to the engine's function table, it calls `guard_engine_thread` on the way in, and
@@ -294,6 +297,42 @@ procedures as unguarded until the control case caught it. Any gate written for t
 against a procedure known to be guarded, not only against one known to be bare.
 
 ---
+
+### R10-08 — the macOS test bootstrap uses the engine from two threads, and only the fixed guard could see it  [severity: major, found by fixing R10-01]
+
+**Where:** the `when ODIN_OS == .Darwin && ODIN_TEST` block in 18 examples;
+`docs/MACOS-CHECKLIST.md` section 2.
+
+**What:** the macOS CI job went red on the first run after R10-01 landed, on every example with tests:
+
+```
+sciter_app: called from thread 55503, but the engine belongs to thread 54965
+  at /Users/runner/.../sciter_app/app.odin(221:2)
+* thread #4, stop reason = EXC_BREAKPOINT
+    frame #0: sciter_app::[affinity.odin]::guard_engine_thread
+```
+
+Not a regression, and not a false positive. `darwin_main_thread_bootstrap` is an `@(init)` that calls
+`sciter_app.init()` on the **main** thread, because AppKit aborts the process if the engine's
+`NSApplication` singleton is built anywhere else. Odin's test runner then runs every test on a
+`thread.Pool` worker, at any `ODIN_TEST_THREADS` count. So the engine is initialised on one thread and
+called from another, on every macOS test run, and has been since the bootstrap was written on
+2026-08-15. The old guard could not see it for the reason R10-02 describes: `init` was unguarded, so
+`main` never armed anything and the worker armed itself instead — the two-thread split was
+indistinguishable from a one-thread run.
+
+**Why it matters:** the finding here is not the bootstrap, which is the only arrangement that lets any
+test run at all on macOS. It is that the platform's own CI was the first thing the completed guard
+caught, one run in. Whatever tolerance the engine has for this split, it had never been stated, and
+until 13:46 on 2026-08-16 nobody knew the split was there.
+
+**Fix:** the bootstrap ends with `sciter_app.check_thread_affinity()` — forget the armed thread, keep
+the check on and strict. The first call inside the first test arms the worker; everything after it is
+checked against that. The exemption is exactly the main-to-worker handover the platform forces, and
+nothing wider: `check_thread_affinity(on = false)` would have bought silence on the one platform nobody
+here can watch by hand. Verified by the trick `MACOS-CHECKLIST.md` established for Darwin-only code —
+point the `when` at Windows and run `odin test`, since `odin check` does not enter `when ODIN_TEST`.
+With the re-arm, `eval` passes 34 tests that way; without it, the same binary traps.
 
 ## What was checked and is not a finding
 

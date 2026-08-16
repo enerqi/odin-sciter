@@ -26,17 +26,30 @@
 		// argument containing a `/` as <dir>/<recipe> and searches for the justfile from <dir>, so these work
 		// regardless of which file is active.
 		//
+		// Both project kinds are listed on purpose. `just install-sublime` copies this file into
+		// Sublime's global `Packages/User`, where it matches on `source.odin` and therefore serves every
+		// Odin project on the machine at once - so it cannot be specialised to the project it was
+		// scaffolded from. A variant naming a recipe the current project does not define simply fails
+		// if you pick it; a variant missing from the global copy is gone everywhere.
+		//
+		// executable projects:
 		{ "name": "project - just run (debug)", "shell_cmd": "just \"$folder/run\"" },
 		{ "name": "project - just run_fast_debug", "shell_cmd": "just \"$folder/run_fast_debug\"" },
 		{ "name": "project - just run_release_debug", "shell_cmd": "just \"$folder/run_release_debug\"" },
 		{ "name": "project - just run_release", "shell_cmd": "just \"$folder/run_release\"" },
 		{ "name": "project - just run_release_nochecks", "shell_cmd": "just \"$folder/run_release_nochecks\"" },
-		{ "name": "project - just test", "shell_cmd": "just \"$folder/test\"" },
 		{ "name": "project - just sanitize (address)", "shell_cmd": "just \"$folder/sanitize\"" },
+		{ "name": "project - just diagnose", "shell_cmd": "just \"$folder/diagnose\"" },
+		// library projects:
+		{ "name": "project - just check", "shell_cmd": "just \"$folder/check\"" },
+		{ "name": "project - just example basic", "shell_cmd": "just \"$folder/example\" basic" },
+		{ "name": "project - just examples", "shell_cmd": "just \"$folder/examples\"" },
+		{ "name": "project - just doc", "shell_cmd": "just \"$folder/doc\"" },
+		// either:
+		{ "name": "project - just test", "shell_cmd": "just \"$folder/test\"" },
 		{ "name": "project - just test_sanitize (address)", "shell_cmd": "just \"$folder/test_sanitize\"" },
 		{ "name": "project - just lint", "shell_cmd": "just \"$folder/lint\"" },
 		{ "name": "project - just format", "shell_cmd": "just \"$folder/format\"" },
-		{ "name": "project - just diagnose", "shell_cmd": "just \"$folder/diagnose\"" },
 		{ "name": "project - just clean", "shell_cmd": "just \"$folder/clean\"" },
 		//
 		// current file

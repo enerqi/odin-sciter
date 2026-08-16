@@ -364,6 +364,7 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 | `lib/` | The engine binaries |
 | `examples/` | Runnable examples, one file each, plus `assets/`. `extension.odin` is a shared library, not an application. |
 | `tools/xdnd_source.py` | A minimal X11 drag source, to measure a real system drop against `examples/drag_and_drop.odin` |
+| `justfile` | Every task, plus the pins (engine, odinfmt, bindgen). `ci.just` holds the gates and `release.just` the release surgery; both are `import`ed into one namespace, so `just --list` shows the lot |
 | `docs/` | Plan, findings, and how the research was done |
 
 
@@ -375,6 +376,8 @@ Tasks run with [just](https://just.systems/).
 - `just check` — type check both packages, the guides' snippets and every example
 - `just build-examples` — build and link every example; the coverage `odin check` cannot give you
 - `just bindgen` — regenerate `sciter.odin` from `external/sciter/include`
+- `just doc` — `odin doc` over `sciter_app`, the hand-written API. `just doc .` is the generated
+  binding, which is the raw C surface under its SCFN names
 - `just format` — odinfmt over the four source roots. The formatter is *pinned* (`ols_tag` in the
   justfile) and fetched into `~/.odin-tools` by `just fetch-odinfmt`, because odinfmt versions disagree
   about the same source and CI's verdict is the one that counts. A different odinfmt on your `PATH` is
@@ -404,7 +407,11 @@ Regenerating additionally needs [odin-c-bindgen](https://github.com/karl-zylinsk
 alongside this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing at it. Its two
 Python steps run through uv like every other one.
 
-Two recipes exist for what CI runs, and are worth running by hand after an engine change:
+The gates CI runs live in `ci.just` rather than in the justfile proper — `format-check`,
+`build-examples`, `check-ownership`, `check-affinity`, `parity`, `stats`, `api-map-verify`,
+`leak-check`, `cross-check`, `window-canary`. It is `import`ed, so they are ordinary recipes: `just
+parity` and `just --list` do not know the difference. Two of them are worth running by hand after an
+engine change:
 
 - `just api-map-verify` — `api_map`, with its table asserted rather than read: 189 slots, API version
   10, every non-null slot resolving to its own `…Imp`, and the platform's null list unchanged

@@ -373,8 +373,10 @@ _ :: win
 _ :: posix
 _ :: runtime
 ]]></content>
-	<!-- Optional: Set a tabTrigger to define how to trigger the snippet -->
+	<!-- type the tabTrigger and press Tab; or browse Tools -> Snippets... -->
 	<tabTrigger>main</tabTrigger>
+	<!-- shown beside the trigger in the completion popup -->
+	<description>Odin program skeleton (logging, tracking allocator, backtraces)</description>
 	<!-- Optional: Set a scope to limit where the snippet will trigger -->
 	<scope>source.odin</scope>
 </snippet>

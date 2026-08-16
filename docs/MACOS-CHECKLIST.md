@@ -201,7 +201,7 @@ there — which makes the split real rather than theoretical:
 
 ### What was rolled out
 
-- the bootstrap is in all 17 examples whose tests touch the engine. `archive`, `drag_and_drop` and
+- the bootstrap is in all 18 examples whose tests touch the engine. `archive`, `drag_and_drop` and
   `single_binary` do not get it: their `create_window` is in `main`, their tests never reach the
   singleton, and they were green from the first run. `single_binary` especially must not have it — it
   would load the on-disk engine and quietly stop testing the embedded one
@@ -215,6 +215,36 @@ there — which makes the split real rather than theoretical:
   site prints *what* it skipped, so both lines are true on every platform
 - `graphics.odin` needed `base:runtime` for the bootstrap, used only inside a `when` - so it is
   `@(require) import`, the same trap `api_map.odin` documents for `core:unicode/utf16`
+
+### The bootstrap and the affinity guard, 2026-08-16
+
+**The bootstrap puts the engine on two threads, and now that rule 1 is fully checked the guard says so.**
+It is the same fact this section is about, seen from the other end: the singleton is built on `main`
+because AppKit demands it, every test then runs on a `thread.Pool` worker because the runner demands
+*that*, and those are two different threads. Nothing changed about the arrangement — what changed is
+that `engine()` now guards every call rather than only the ones returning a result code, so
+`sciter_app.init()` inside the bootstrap arms the guard as `main` and the first test call trips it:
+
+```
+sciter_app: called from thread 55503, but the engine belongs to thread 54965
+  at /Users/runner/.../sciter_app/app.odin(221:2)
+* thread #4, stop reason = EXC_BREAKPOINT
+    frame #0: sciter_app::[affinity.odin]::guard_engine_thread
+```
+
+That is a true positive. The split is real, it is unavoidable here, and it was invisible before.
+
+The bootstrap therefore ends with `sciter_app.check_thread_affinity()`, which forgets the armed thread
+without turning the check off. The first call inside the first test arms the worker, and everything
+after it is checked against *that* — so what is exempted is exactly the main-to-worker handover the
+platform forces, and no more. Turning the guard off (`check_thread_affinity(on = false)`, which
+`rules.md` §1 offers for a multi-threaded runner) would have been the bigger hammer and would have cost
+the rest of the coverage on the one platform nobody here can watch by hand.
+
+Two things follow. Applications are unaffected — `main` is the main thread, so a real app builds the
+singleton and calls the engine on one thread. And if the macOS suite is ever run at
+`ODIN_TEST_THREADS > 1` the guard will trap, correctly: that would be several workers sharing an engine,
+which is the thing rule 1 forbids.
 
 Verified before pushing: `just lint`, `just check`, `just cross-check` (all three targets), and the
 Darwin-only blocks compiled *for real* by pointing their `when` at Windows in one file and running

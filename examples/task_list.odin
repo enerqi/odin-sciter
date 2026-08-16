@@ -736,6 +736,13 @@ when ODIN_OS == .Darwin && ODIN_TEST {
 			return
 		}
 		_ = sciter_app.init()
+
+		// And forget the thread that just armed rule 1. That thread is `main`, every test runs on a
+		// `thread.Pool` worker, and the guard would trap each one on its first engine call. The split is
+		// real and unavoidable - AppKit wants main for the singleton, the runner wants a worker for the
+		// tests - so what re-arming buys is the rest of the rule: the first test call arms the worker,
+		// and a later call from anywhere else still traps. docs/MACOS-CHECKLIST.md section 2 has why.
+		sciter_app.check_thread_affinity()
 	}
 }
 

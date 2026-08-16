@@ -99,6 +99,14 @@ target_path(dir, name) := join("target", dir, name)
 # Which value to pick, and the lld-on-macOS and incremental-linking caveats: README, "Choosing a linker".
 linker := env_var_or_default("ODIN_LINKER", if os() == "windows" { "radlink" } else { "default" })
 
+# The gates and the release surgery live in their own files. An import shares one namespace with this
+# one, so `just parity`, `just release` and `just --list` behave exactly as they did when both were part
+# of this file, and everything above - `py`, `linker`, `target_path`, `mktarget_dirs`, `ensure-engine` -
+# resolves from there. `import`, not `import?`: both are committed, and a missing one is a broken
+# checkout rather than a feature you declined.
+import 'ci.just'
+import 'release.just'
+
 # Explicit paths rather than `odinfmt -w .`, because src/prelude.odin is deliberately not a standalone
 # Odin file - it has no `package` line, since bindgen pastes it into sciter.odin under that file's own
 # one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it and fails the whole run.
@@ -116,49 +124,6 @@ format: ensure-odinfmt
 	{{odinfmt_bin}} -w sciter_app
 	{{odinfmt_bin}} -w examples
 	{{odinfmt_bin}} -w docs/snippets
-
-# The gate for the above, and it exists now because the two things that blocked it stopped being true.
-# The note kept in CHANGELOG.md and PLAN-TESTING-AND-EXAMPLES.md was:
-#
-#   `just format` exits 1 on examples/dom_walk.odin (a local named `inline`) and rewrites
-#   custom_loader.odin and extension.odin on every run. Pre-existing; it is why there is no formatter
-#   gate in CI yet.
-#
-# Both were re-tested: `just format` exits 0, and a second run against an already-formatted tree changes
-# nothing. The `inline` local is gone from dom_walk.odin, and the churn on the other two has stopped.
-# **Idempotence is the whole precondition** - a formatter that rewrites a file every run can never be a
-# gate, because the gate fails on a clean checkout.
-#
-# `odinfmt <file>` with no `-w` prints the formatted source to stdout, so this compares that against
-# what is on disk and writes nothing. Bytes, not text: reading in binary keeps a line-ending difference
-# visible instead of letting Python's newline translation hide one on Windows.
-# ---
-# fail if anything is not odinfmt-clean, without writing to it
-[script]
-format-check: ensure-odinfmt
-	import subprocess, sys
-	sys.path.insert(0, ".github/scripts")
-	from justlib import format_sources, parallel
-
-	odinfmt = r"{{odinfmt_bin}}"
-
-	def unformatted(path):
-		want = subprocess.run([odinfmt, path], capture_output=True).stdout
-		with open(path, "rb") as fh:
-			have = fh.read()
-		return path if want != have else None
-
-	files = format_sources()
-	bad = [p for p in parallel(files, unformatted) if p]
-
-	if bad:
-		print(f"not odinfmt-clean ({len(bad)} of {len(files)}):")
-		for p in bad:
-			print(f"    {p}")
-		print()
-		print("Run `just format`.")
-		raise SystemExit(1)
-	print(f"ok: all {len(files)} Odin files are odinfmt-clean")
 
 
 # `-vet-tabs` is the only compiler-side enforcement of .editorconfig's `indent_style = tab`; it is not
@@ -215,14 +180,8 @@ lint *args: ensure-engine
 # README step nobody reads. It was a no-op for as long as `lib/` was committed, and the switch cost the
 # gitignore lines and the CI steps, exactly as predicted: nothing in the build changed.
 #
-# **This used to be two recipes**, `python3` on unix and `python` on Windows, to dodge the fact that
-# neither name is reliably the same interpreter on both. The comment defending that split argued
-# `[script]` could not be used because "a CI runner does not have uv" - which stopped being true when
-# `.github/actions/toolchain` started installing uv on all three platforms by default, before any recipe
-# runs. It also claimed `check-ownership` avoided uv "for the same reason"; `check-ownership` uses uv.
-# A rule with no followers left is not a rule, so this is one recipe on `{{py}}` like the other five, and
-# the path separator goes back to `/` - Windows only rejects a forward slash in *command* position, and
-# here the script is an argument to the interpreter.
+# `/` in the script path is safe here even on Windows: cmd.exe only rejects a forward slash in *command*
+# position, and this one is an argument to the interpreter.
 #
 # `require-uv` is a dependency rather than an assumption because this is the first recipe a fresh clone
 # runs: without it the failure is `No such file or directory (os error 2)`, which names neither uv nor
@@ -346,34 +305,25 @@ run_release name="hello_window" *args: mktarget_dirs ensure-engine
 run_release_nochecks name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
-# `address` (ASan) catches out-of-bounds accesses and use-after-free; `memory` catches reads of
-# uninitialized memory; `thread` catches data races. Only `address` is widely supported - `memory` and
-# `thread` need a clang-ish toolchain and are unavailable on some platforms (notably Windows/MSVC).
-# Built with `-debug` so reports carry file/line info, and to its own output name so it does not clobber
-# the plain debug binary.
+# KIND is `address` (default, ASan: out-of-bounds and use-after-free), `memory` (reads of uninitialized
+# memory) or `thread` (data races); only `address` is widely supported, the other two need a clang-ish
+# toolchain. Built with `-debug` for file/line info, to its own output name so it does not clobber the
+# plain debug binary.
 #
-# KNOW THIS BEFORE TRUSTING A CLEAN RUN: on Windows, `address` does not detect heap errors at all.
-# Odin's allocator calls `HeapAlloc` there (base/runtime/heap_allocator_windows.odin) instead of
-# `malloc`, and ASan's redzones come from intercepting the allocator - so it never sees the allocation
-# and has nothing to guard. Measured by writing one byte past a 16-byte `make([]u8, 16)` at +16, +24,
-# +32, +64 and +256: Linux reports `heap-buffer-overflow` from +24 on, Windows reports nothing at any
-# offset, and at +32 the process died with no ASan output whatsoever. Stack overflows are caught on
-# both, because that instrumentation is compiler-inserted rather than interception-based.
+# ON WINDOWS `address` CATCHES STACK ERRORS BUT NOT HEAP ERRORS - Odin allocates through `HeapAlloc`,
+# which ASan does not intercept, so it never sees the allocation and a clean run there says nothing about
+# your heap. (Probed one byte past a 16-byte allocation at +16, +24, +32, +64, +256: Linux reports
+# `heap-buffer-overflow` from +24 on, Windows at none. +16 is in bounds either way - the allocator hands
+# back more than asked for.) The `interception_win: unhandled instruction` line these builds print is the
+# same limitation announcing itself. Chase a suspected heap bug on Linux, or with the tracking allocator
+# (`-define:TRACKING_ALLOCATOR=backtrace`), which does not depend on ASan.
 #
-# (+16 is not a bug: the allocator hands back more than the 16 bytes asked for, so a write there is
-# still in bounds. Any probe of your own needs to clear that slack before it means anything.)
+# Both sanitizer recipes deliberately omit `-linker:{{linker}}` - do not "fix" the inconsistency. A
+# sanitizer has to interpose on the runtime and not every linker cooperates: `radlink` (this file's
+# Windows default, and bundled with Odin, so it is what you get by accident) links an ASan binary that
+# dies on startup with a bare `0xc000001d` illegal-instruction exception and no usable stack, while
+# `-linker:default` runs it. Link speed is worth nothing on a diagnostic run anyway.
 #
-# The practical reading: on Windows a clean `just sanitize` rules out stack bugs, not heap bugs. Chase
-# a suspected heap bug on Linux, or with the tracking allocator (`-define:TRACKING_ALLOCATOR=backtrace`)
-# which does not depend on ASan. The `interception_win: unhandled instruction` line these builds print
-# is this same limitation announcing itself, not a fault in your code.
-#
-# Both sanitizer recipes deliberately omit `-linker:{{linker}}`: link speed is worth nothing on a
-# diagnostic run, and pinning it here actively broke things. A sanitizer has to interpose on the
-# runtime, which not every linker cooperates with - `radlink` (this file's Windows default, and bundled
-# with Odin, so it is what you get by accident) links an ASan test binary that dies on startup with a
-# bare `0xc000001d` illegal-instruction exception and no usable stack, while `-linker:default` runs it.
-# Letting Odin pick keeps these recipes a signal about your code rather than about the linker.
 # Usage:  just sanitize   or   just sanitize thread -- --my-arg
 # ---
 # run a debug build under a sanitizer (address | memory | thread)
@@ -447,6 +397,43 @@ rerun_release name="hello_window" *args:
 rerun_release_nochecks name="hello_window" *args:
 	{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
+# hyperfine (https://github.com/sharkdp/hyperfine) times whole *processes*, and is installed separately.
+# Over `rerun_release`'s binary rather than `just run_release`: Odin has no build cache, so timing the
+# recipe would mostly time the compiler - build first. `-N` skips the shell hyperfine would otherwise
+# spawn per run, at the cost that the command is split on whitespace rather than parsed: no pipes,
+# redirects or quoted arguments containing spaces.
+#
+# **The example has to exit on its own**, which most of them do not: anything that opens a window runs
+# `sciter_app.run()` until you close it, and hyperfine would sit there for `--warmup 3` plus every
+# measured run waiting for a human. `api_map` is the default because it loads the engine, walks the
+# function table and returns - the same reason it is what `api-map-verify` drives. `eval` and
+# `leak_sweep` are the other two that terminate without a display.
+#
+# Process startup, engine load and teardown are most of what this measures - `api_map` is 18 ms here
+# against a 25 MB libsciter. It times a program, not a procedure.
+#
+# **`/` here, not `target_path`.** Everything else in this file uses `target_path` because cmd.exe
+# rejects a forward slash in command position, but under `-N` hyperfine does not run a shell at all - it
+# spawns the program itself, and its lookup will not resolve `target\release\api_map.exe`, failing with
+# "program not found" on a file that is plainly there. The forward-slash spelling runs on both. Measured;
+# do not "fix" the inconsistency back.
+#
+# Usage:  just time_release                    time api_map's release binary
+#         just time_release eval               ... a different example
+#         just time_release api_map --flag=x   ... passing arguments to the program
+# ---
+# time an example's release binary end to end with hyperfine (needs a prior run_release)
+time_release name="api_map" *args:
+	hyperfine -N --warmup 3 "target/release/{{name}}.exe {{args}}"
+
+# A/B two build profiles in one run - hyperfine prints the ratio between them, which is the number worth
+# knowing about `-no-bounds-check`. Times both binaries, so needs a prior `run_release` AND
+# `run_release_nochecks` of the same example.
+# ---
+# compare an example's release and nochecks binaries with hyperfine
+time_profiles name="api_map" *args:
+	hyperfine -N --warmup 3 "target/release/{{name}}.exe {{args}}" "target/release_nochecks/{{name}}.exe {{args}}"
+
 # run all tests
 alias test := example-tests
 
@@ -519,6 +506,7 @@ install-sublime:
 	for name in (
 		"Odin-skeleton.sublime-snippet",
 		"Just-Odin.sublime-snippet",
+		"Just-Odin-lib.sublime-snippet",
 		"Odin.sublime-build",
 		"OdinJustTarget.sublime-build",
 	):
@@ -653,15 +641,11 @@ bindgen_commit := "12f4e7a"
 #   3. src/postprocess_bindings.py - rewrite `proc "c"` to `proc "system"` for 32-bit Windows
 #   4. odin check, odinfmt, odin check again
 #
-# The formatting pass runs only after the first check passes, so a generation that produced something
-# that does not compile is not also reformatted - the diff you have to read to find out why stays a
-# diff about the generator. The second check is one second and confirms the formatter did not break
-# what the generator got right.
-#
-# It is part of *this* recipe rather than left to `just format` because sciter.odin is generated:
-# bindgen's own line breaking is not odinfmt's, so without this every regeneration lands a few thousand
-# lines of formatting noise on top of whatever actually changed in the API, and `just format` then
-# quietly "changes" a file nobody edited.
+# The odinfmt pass belongs to *this* recipe rather than to `just format` because sciter.odin is
+# generated: bindgen's line breaking is not odinfmt's, so without it every regeneration lands a few
+# thousand lines of formatting noise on top of whatever actually changed in the API. It runs only after
+# the first check passes, so a generation that does not compile is not also reformatted - the diff you
+# have to read stays a diff about the generator. The second check confirms the formatter broke nothing.
 # ---
 # regenerate the bindings from external/sciter/include
 bindgen: require-bindgen-pin ensure-odinfmt
@@ -680,23 +664,13 @@ bindgen: require-bindgen-pin ensure-odinfmt
 @require-bindgen-pin: require-uv
 	{{py}} .github/scripts/check-bindgen-pin.py "{{bindgen_bin}}" {{bindgen_commit}}
 
-# **`check` type checks and does not build.** It used to build and link all 28 examples, which is what
-# `build-examples` below does now. The split is because the name was a lie and the reasons given for it
-# did not survive being measured:
+# **`check` type checks and does not build**, which is roughly twice as fast: measured per example,
+# check 164-183 ms against build 318-345 ms, and 1.2 s against 2.4 s across the whole set in parallel on
+# 24 cores. The gap widens on fewer cores, where the parallelism stops hiding it.
 #
-#   - "`odin check` on a `-file` target is not meaningfully cheaper" - it is about twice as fast.
-#     Measured per example: check 164-183 ms against build 318-345 ms; across the example set in
-#     parallel on 24 cores, 1.2 s against 2.4 s. The gap widens on fewer cores, where the parallelism
-#     stops hiding it.
-#   - "single_binary.odin has a `when` guarded `#panic` that only fires at build time" - that `#panic`
-#     is the *unsupported platform* arm of the `when` chain, so on any supported host it is unreachable
-#     and `odin check` exits 0 on that file. Unsupported platforms are `cross-check`'s business, and it
-#     already skips `single_binary` per target when that platform's engine is not on disk.
-#
-# The one real thing building buys is the link, and that is why `build-examples` still exists rather
-# than being deleted: `odin check` cannot see an undefined symbol. It is a narrow win - two of the
-# thirty examples have a `foreign import`, and `sqlite_extension` opts out on purpose by dlopening
-# `libsqlite3.so.0` rather than linking it - but it is a real one, and CI runs both.
+# What building buys is the *link*, and that is `build-examples` in ci.just: `odin check` cannot see an
+# undefined symbol. A narrow win - two of the thirty examples have a `foreign import` - but a real one,
+# and CI runs both.
 #
 # `-no-entry-point` throughout: the two library packages have no `main`, and the examples do but do not
 # need it entered to type check.
@@ -734,43 +708,22 @@ check: ensure-engine
 	n = len(cmds) - 3
 	print(f"ok: both packages, the doc snippets and {all_}{n} examples type check{tail}")
 
-# The half of the old `check` that needed a compiler back end: every example built and *linked*, which
-# is the only part `odin check` cannot do for you.
+# Writes to stdout; redirect it to keep a copy.
 #
-# One output path per example, and the loop run in parallel. Both halves matter: every example used to
-# link over a single `check.exe`, which serialised the slowest non-test step in CI onto one core and
-# left the *previous* example's binary in place when one failed, so the artifact said nothing about
-# which.
+# `sciter_app` by default because that is the API: the root `package sciter` is bindgen's output, so
+# `odin doc .` prints the raw C surface - 189 function-table slots under their SCFN names, with the
+# header banners the generator carries across. Useful when you are checking what a wrapper wraps, and
+# not what you want when the question is "what can I call".
+#
+# Deliberately NOT `-all-packages`, which documents every package the project *uses*, all of `core:`
+# included, rather than this one.
+#   just doc              # the wrapper API
+#   just doc .            # the generated bindings
 # ---
-# build and link every example - the coverage `check` cannot give you
-[script]
-build-examples: mktarget_dirs ensure-engine
-	import os, subprocess, sys
-	sys.path.insert(0, ".github/scripts")
-	from justlib import EXTENSIONS, example_sources, host_x11_skip, parallel, shared_ext
+# print a package's documentation (sciter_app, or `.` for the generated bindings)
+doc pkg="sciter_app" *args:
+	odin doc {{pkg}} {{args}}
 
-	out = os.path.join("target", "debug", "check")
-	os.makedirs(out, exist_ok=True)
-
-	skip = host_x11_skip()
-	targets = example_sources(skip)
-
-	def build_one(f):
-		name = os.path.basename(f)[:-5]
-		if name in EXTENSIONS:
-			cmd = ["odin", "build", f, "-file", "-build-mode:shared",
-			       f"-out:{os.path.join(out, name + shared_ext())}"]
-		else:
-			cmd = ["odin", "build", f, "-file", f"-out:{os.path.join(out, name + '.exe')}"]
-		print(" ".join(cmd), flush=True)
-		return subprocess.run(cmd).returncode
-
-	if any(parallel(targets, build_one)):
-		raise SystemExit(1)
-
-	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
-	all_ = "" if skip else "all "
-	print(f"ok: {all_}{len(targets)} examples build and link{tail}")
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
 # repository root so the loader finds lib/<platform>/ - see `load` in src/prelude.odin for the full
@@ -840,13 +793,8 @@ extension-run: extension
 
 	scapp_app("extension-app", "odin-ext", "examples/assets/extension/index.htm")
 
-# Run the `@(test)` procs that live inside the examples.
-#
-# ODIN_TEST_THREADS=1 is not optional: Sciter is single-threaded - every ISciterAPI call has to come
-# from the thread that ran SCITER_APP_INIT - and Odin's test runner is parallel by default. Sharing one
-# engine across test threads corrupts its heap rather than failing cleanly.
-#
-# Tests that need a window skip themselves when there is no DISPLAY / WAYLAND_DISPLAY.
+# Runs the `@(test)` procs that live inside the examples. `ODIN_TEST_THREADS=1` for the reason in this
+# section's header. Tests that need a window skip themselves when there is no DISPLAY / WAYLAND_DISPLAY.
 # ---
 # run the tests inside one example, e.g. `just example-test eval`
 #
@@ -879,15 +827,11 @@ example-tests: ensure-engine
 
 	limit = int(os.environ.get("EXAMPLE_TEST_TIMEOUT", "0"))
 
-	# **Naming the test is half of it; the other half is where it died.** A test that aborts without a
-	# message - no malloc error, no C++ `terminating`, no assert - leaves nothing to read, and that is
-	# exactly the case this was written for. `ODIN_TEST_NAMES` is a *compile-time* define, so the binary
-	# the failing run just built is already filtered down to the one test: re-running it under a
-	# debugger costs no rebuild and prints the stack that the process took with it.
-	#
-	# Best-effort by design. No debugger, or a debugger that says nothing useful, changes nothing about
-	# the exit code above - this only ever adds evidence. Same tools as the two window canaries: lldb on
-	# macOS, gdb on Linux, neither on Windows (a crash dump there is a different exercise).
+	# **Naming the test is half of it; the other half is where it died.** A test that aborts with no
+	# message leaves nothing to read. `ODIN_TEST_NAMES` is a *compile-time* define, so the binary the
+	# failing run just built is already filtered to the one test - re-running it under a debugger costs
+	# no rebuild and prints the stack. Best-effort: no debugger changes nothing about the exit code, this
+	# only ever adds evidence.
 	def trace(name, test, limit):
 		exe = os.path.join("target", "debug", f"{name}_test.exe")
 		# Windows is excluded rather than left to `shutil.which`: this machine turned out to have an
@@ -928,16 +872,12 @@ example-tests: ensure-engine
 			failed.append(f"{name}(exit {code})")
 			bisect.append(name)
 
-	# **A test that kills the process takes the report with it.** `odin test` prints its per-test
-	# results as it goes, but stdout is a pipe here rather than a terminal, so it is block-buffered and
-	# an abort discards whatever had not been flushed - which is why a SIGABRT reports `exit 134`
-	# against a *file* and names no test at all. Measured on macOS, where sqlite_extension aborted with
-	# nothing in the log but the runner's start-up lines.
-	#
-	# So re-run the casualties one test per process. Each gets its own `odin test` with a single
-	# ODIN_TEST_NAMES, so the one that dies is the one whose name is on the line above the corpse. It
-	# costs a compile per test and only happens on a run that has already failed, which is the run
-	# where the information is worth more than the minute.
+	# **A test that kills the process takes the report with it.** `odin test` prints results as it goes,
+	# but stdout is a pipe here, so it is block-buffered and an abort discards whatever had not been
+	# flushed - which is why a SIGABRT reports `exit 134` against a *file* and names no test. Measured on
+	# macOS, where sqlite_extension aborted with nothing in the log but the runner's start-up lines. So
+	# re-run the casualties one test per process: the one that dies is the one named on the line above
+	# the corpse. Costs a compile per test, on a run that has already failed.
 	for name in bisect:
 		names = TEST_NAME.findall(open(f"examples/{name}.odin", encoding="utf-8", errors="replace").read())
 		print()
@@ -967,174 +907,6 @@ example-tests: ensure-engine
 # build and run an example, e.g. `just example hello_window`
 alias example := run_debug
 
-# `just example api_map` prints the table and leaves the judging to a human, which is right for a
-# diagnostic and wrong for a gate: docs/UPGRADING.md calls the slot check "the step the whole procedure
-# exists for", and a step whose pass/fail lives in someone's eyes cannot run in CI. This pipes the
-# output through .github/scripts/check-api-map.py, which applies the rules the example's header states
-# - 189 slots, ISciterAPI version 10, every non-null slot resolving to its own name plus `Imp`, and the
-# platform's known null list unchanged. Run it after any engine bump, and edit the script's expectations
-# as the record of what the new engine changed.
-# ---
-# run api_map and assert its table (slots, version, symbols, null list)
-[script]
-api-map-verify: mktarget_dirs
-	import subprocess, sys
-
-	# The two halves are run and joined here rather than with a `|`, so this needs no shell at all and
-	# behaves the same under cmd.exe as under sh.
-	table = subprocess.run(["just", "example", "api_map"], capture_output=True, text=True)
-	if table.returncode != 0:
-		sys.stderr.write(table.stderr)
-		raise SystemExit(table.returncode)
-
-	check = subprocess.run(
-		[sys.executable, ".github/scripts/check-api-map.py"], input=table.stdout, text=True
-	)
-	raise SystemExit(check.returncode)
-
-
-# exercise the resource-owning paths and fail if anything is still held by the engine at exit
-#
-# Needs -debug: sciter_app/tracking.odin compiles to nothing without it, and the sweep says so rather
-# than passing vacuously. Not part of `example-tests` because it is a program, not a test file - see the
-# header of examples/leak_sweep.odin for why the check cannot live in a test binary.
-leak-check: mktarget_dirs ensure-engine
-	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
-	{{ target_path("debug", "leak_sweep.exe") }}
-
-
-# ---
-# assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
-check-ownership:
-	{{py}} .github/scripts/check-ownership.py
-
-
-# Rule 1's static half. `guard_engine_thread` is the runtime check and it only sees calls that reach it,
-# so this asserts that they all do: `engine()` is the package's only route to the function table, and a
-# bare `sciter.api()` anywhere else is a call the guard cannot see. That is not hypothetical - it is how
-# the guard shipped, watching 124 of 199 call sites while `eval`, `call` and every `Value` constructor
-# went unwatched. No engine and no display needed.
-# ---
-# assert the thread-affinity rule in docs/rules.md section 1: every engine call goes through engine()
-check-affinity:
-	{{py}} .github/scripts/check-affinity.py
-
-
-# The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
-# slots the engine has - it catches a reordered or removed one. It cannot catch an *added* one: a newer
-# SDK regenerates into `sciter.odin` as fields nothing wraps, and coverage degrades one upgrade at a
-# time with no signal. This measures the headers against `sciter_app` and diffs the unwrapped set
-# against docs/parity-baseline.txt, so a new slot is a one-line diff during the upgrade rather than a
-# surprise afterwards. No engine and no display needed - it reads headers and .odin files.
-# ---
-# C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
-parity *args:
-	{{py}} .github/scripts/parity.py {{args}}
-
-
-# The counts the documentation quotes about itself - examples, tests, wrapper procs, and how many of
-# those a test reaches. `--check` fails when README.md or docs/PLAN.md disagree with the measurement,
-# which is how they came to claim 337 tests against an actual 366. Same counting rule as `parity`:
-# `\.name\b`, not `\.name(`, because a wrapper is as often stored or forwarded as called.
-# ---
-# suite and coverage counts; `just stats --check` asserts the docs still agree
-stats *args:
-	{{py}} .github/scripts/stats.py {{args}}
-
-
-# The precondition every windowed test has and none of them states. A machine with no working EGL/GLES
-# cannot create a Sciter window, and the engine's failure path faults rather than returning - so the
-# suite reports twenty-odd identical segfaults inside `create_window` and takes the full
-# EXAMPLE_TEST_TIMEOUT per example to do it. This asks the question once, in seconds, and prints the
-# renderer diagnosis when the answer is no. Read the script's header before running it: an `SW_MAIN`
-# window mode-sets the X display to its own size, so this belongs under Xvfb or Xephyr, not on your
-# desktop session.
-#
-# `[linux]` and `[macos]` rather than one `[unix]` recipe, because the two scripts share only their
-# contract - build `hello_window`, run it under a short timeout, exit 124 means the window lived. The
-# evidence they print when the answer is no has nothing in common: gdb/ldd/EGL ICDs/xdpyinfo on Linux,
-# lldb/otool/codesign/lipo on macOS. One script with a platform switch would be two scripts in a
-# trench coat.
-# ---
-# [under Xvfb only] can the engine create a window on this machine?
-[linux]
-window-canary: mktarget_dirs
-	.github/scripts/window-canary.sh
-
-# ---
-# can the engine create a window on this machine?
-[macos]
-window-canary: mktarget_dirs
-	.github/scripts/macos-canary.sh
-
-# The cheap half of a port, and the half that rots silently: nothing here builds for Windows or macOS
-# day to day, so an example that stops type checking there is invisible until someone has the machine.
-#
-# **`darwin_arm64` is in the list because that is what CI's macOS runner is.** `macos-14` and later are
-# Apple silicon, so checking only `darwin_amd64` would leave the architecture the mac job actually
-# builds on unchecked - and the vendored dylib is universal, so both slices are real targets rather
-# than one being theoretical. Three targets is still seconds; the engine is never loaded here.
-#
-# Two examples are excluded, for a stated reason rather than because they failed:
-#
-#   integration, native_child  raw Xlib. They are the two halves of "a Sciter view and a native window
-#                              in each other's frame", and on Linux that means X11 - `vendor:x11/xlib`
-#                              declares nothing off Linux. The Windows equivalents would be different
-#                              programs, not the same program compiled elsewhere.
-#
-# `single_binary` is a conditional third. It `#load`s the target platform's engine into the executable,
-# and `#load` is a *compile-time* read of a real file - so checking it for `windows_amd64` needs
-# `lib/windows/x64/sciter.dll` on this disk. No engine is committed any more and `just fetch-engine`
-# installs only the host's, so on a CI runner two of the three are absent. It is skipped per target when
-# its file is missing, with a line saying so rather than silently, and checked when it is there - which
-# is the normal case on a development machine that has fetched more than one.
-#
-# Nothing is lost by that skip: all three platform jobs run `just check`, which builds `single_binary`
-# natively against the engine they just fetched. This recipe is for the code that *nothing* builds
-# elsewhere, and that file is not it.
-# ---
-# type check both packages, the snippets and every portable example for windows and macOS
-[script]
-cross-check: ensure-engine
-	import os, sys
-	sys.path.insert(0, ".github/scripts")
-	from justlib import X11_ONLY, odin_check_cmds, parallel, try_run
-
-	# What `single_binary` #loads for each target, and therefore what has to be on disk to check it.
-	engine_for = {
-		"windows_amd64": "lib/windows/x64/sciter.dll",
-		"darwin_amd64": "lib/macosx/libsciter.dylib",
-		"darwin_arm64": "lib/macosx/libsciter.dylib",
-	}
-
-	targets = ("windows_amd64", "darwin_amd64", "darwin_arm64")
-
-	# `X11_ONLY` unconditionally here, unlike `check`'s host-dependent skip: these targets are Windows
-	# and macOS whatever machine the recipe runs on, and `vendor:x11/xlib` declares nothing for either.
-	jobs = []
-	for target in targets:
-		skip = set(X11_ONLY)
-		engine = engine_for[target]
-		if not os.path.exists(engine):
-			skip.add("single_binary")
-			print(f"{target}: single_binary skipped, it #loads {engine} and that is not on disk")
-		jobs += [(target, c) for c in odin_check_cmds(skip, target)]
-
-	# One flat parallel pass over all three targets rather than three sequential loops. This was ~93
-	# `odin check` invocations run one at a time; the compiler releases the GIL for the whole of each,
-	# so they thread. `try_run` for the same reason as in `check`: a target that fails should not hide
-	# what the other two would have said, which is three pushes to find out otherwise.
-	codes = parallel([c for _, c in jobs], try_run)
-	bad = [(t, c) for (t, c), code in zip(jobs, codes) if code]
-
-	if bad:
-		print()
-		print(f"FAILED to type check ({len(bad)}):")
-		for t, c in bad:
-			print(f"    {t}: {' '.join(c)}")
-		raise SystemExit(1)
-
-	print(f"ok: both packages, the doc snippets and every portable example type check for {', '.join(targets)}")
 
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
 # a separate application that attaches over a socket, so it is run *alongside* your app, not by it:

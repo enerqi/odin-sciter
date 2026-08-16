@@ -121,6 +121,15 @@ concerned and in [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md).
 - **`check_thread_affinity`'s `on` and `strict` are read and written atomically**, like `id` and
   `violations` already were, instead of through a whole-struct assignment racing the guard's reads.
 
+- **The macOS test bootstrap re-arms the guard**, and the reason is a finding of its own: the completed
+  check went red on macOS CI on its first run, because `darwin_main_thread_bootstrap` builds the
+  engine's AppKit singleton on the **main** thread — which AppKit requires — while Odin's runner runs
+  every test on a pool worker. That two-thread split is real, has been there since the bootstrap was
+  written, and was invisible while `init` went unguarded. The bootstrap now ends with
+  `sciter_app.check_thread_affinity()`: the armed thread is forgotten, the check stays on and strict,
+  and the first test call arms the worker. What is exempted is the main-to-worker handover the platform
+  forces, and nothing else. [`docs/MACOS-CHECKLIST.md`](docs/MACOS-CHECKLIST.md) section 2.
+
 The findings, the measurements behind them and the two still open are in
 [`docs/review/10-threading.md`](docs/review/10-threading.md).
 

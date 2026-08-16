@@ -16,8 +16,7 @@ set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 # Newest just feature used below is user-defined functions (1.49). Keep the README and `odin-skel doctor` in step.
 set minimum-version := "1.49.0"
 
-main_name := "${1:main.exe}"
-test_main_name := "${2:test-main.exe}"
+test_main_name := "${1:test-main.exe}"
 
 # `join`, not the `/` operator: `/` always emits a forward slash, and cmd.exe rejects a forward-slash
 # path in *command* position ("'target' is not recognized") even quoted.
@@ -31,7 +30,7 @@ target_path(dir, name) := join("target", dir, name)
 # Override for one command without editing this file - for `-lto`, which on Windows *requires* lld, or
 # for a machine that has mold when the project default does not assume it:
 #
-#     ODIN_LINKER=lld just run_release -lto:thin
+#     ODIN_LINKER=lld just test -lto:thin
 #
 # An env var rather than a recipe argument because `odin` errors on a repeated flag ("Previous flag set:
 # 'linker'"), so a `-linker:` passed through a recipe's `*args` would collide with the one added below.
@@ -75,45 +74,6 @@ lint *args:
 @mktarget_dirs:
 	for %d in (debug fast_debug release_debug release release_nochecks) do @if not exist target\%d md target\%d || exit /b 1
 
-# `-debug` implies `-o:none`, so this is the fastest to compile and the friendliest to step through.
-# (-keep-executable so `rerun_debug` can skip recompiling)
-# ---
-# run with debug build
-run_debug *args: mktarget_dirs
-	odin run . -debug -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("debug", main_name) }} {{args}}
-
-alias run := run_debug
-
-# `-o:minimal` is one rung above the `-debug` default of `-o:none`: still quick to compile and mostly
-# faithful to step through, but noticeably faster at runtime.
-# (-keep-executable so `rerun_fast_debug` can skip recompiling)
-# ---
-# run with debug info and light optimizations
-run_fast_debug *args: mktarget_dirs
-	odin run . -debug -o:minimal -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("fast_debug", main_name) }} {{args}}
-
-# Release codegen with debug info retained: for profiling and for chasing bugs that only appear under optimization
-# Slowest to compile, and the debugger will jump around inlined/reordered code.
-# (-keep-executable so `rerun_release_debug` can skip recompiling)
-# ---
-# run with full optimizations AND debug info
-run_release_debug *args: mktarget_dirs
-	odin run . -debug -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_debug", main_name) }} {{args}}
-
-# run with optimizations (-keep-executable so `rerun_release` can skip recompiling)
-run_release *args: mktarget_dirs
-	odin run . -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release", main_name) }} {{args}}
-
-# `run_release` plus every runtime safety check compiled out: `-no-bounds-check` (slice/array indexing),
-# `-disable-assert` (the built-in `assert`) and `-no-type-assert` (union/any type assertions). Those
-# checks are what turn a memory-corrupting bug into a clean panic, so a fault here is undefined
-# behaviour rather than a readable message - benchmark against `run_release` before adopting it, and
-# keep a checked build in your test matrix. `-o:aggressive` exists too but Odin flags it as risky.
-# (-keep-executable so `rerun_release_nochecks` can skip recompiling)
-# ---
-# run with optimizations and ALL runtime safety checks removed
-run_release_nochecks *args: mktarget_dirs
-	odin run . -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", main_name) }} {{args}}
 
 # Outside the kind markers on purpose: `test_sanitize` below ships in every project, so these notes must
 # not be stripped along with the exe-only `sanitize`.
@@ -131,11 +91,59 @@ run_release_nochecks *args: mktarget_dirs
 # bare `0xc000001d` illegal-instruction exception and no usable stack, while `-linker:default` runs it.
 # Link speed is worth nothing on a diagnostic run anyway.
 
-# Usage:  just sanitize   or   just sanitize thread -- --my-arg
+# There is no binary of this project to run, so the inner loop is a type check plus the tests, and the
+# examples are what prove the package is usable from outside it.
+
+# What `just run` is to a program: the fast "does it still compile" loop. Deliberately without the vet and
+# style flags `lint` carries - those are worth a separate, slower pass rather than noise between an edit
+# and knowing whether it type checks. `odin check .` covers the root package, which for a single-package
+# library is all of it; once there are subpackages, an aggregator example sweeps them (see the README).
 # ---
-# run a debug build under a sanitizer (address | memory | thread)
-sanitize kind="address" *args: mktarget_dirs
-	odin run . -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{main_name}}") }} {{args}}
+# type check the library
+check *args:
+	odin check . -no-entry-point {{args}}
+
+# `-file` is not optional here: without it odin reads examples/ as one package and the several `main`
+# procedures in it collide. It is also what makes the examples' `".."` import resolve to this directory.
+# Usage:  just example basic
+# ---
+# build and run one example from examples/
+example name *args: mktarget_dirs
+	odin run examples/{{name}}.odin -file -debug -microarch:native -linker:{{linker}} -out:{{ target_path("debug", f"example-{{name}}.exe") }} {{args}}
+
+# An example is documentation, and documentation stops being true the moment the API moves under it. This
+# is the cheap guard against that. A `[script]` because just has no loop and cmd.exe is a poor place for one.
+# ---
+# type check every example in examples/
+[script]
+examples:
+	import glob, subprocess, sys
+
+	files = sorted(glob.glob("examples/*.odin"))
+	if not files:
+		sys.exit("no examples found in examples/")
+
+	for path in files:
+		# flush=True because python fully buffers stdout when it is a pipe (CI logs, `just examples > f`),
+		# which would land these lines after the compiler's stderr and lose which example broke.
+		print("checking " + path, flush=True)
+		# `-no-entry-point` so an aggregator example works: a `package all` file of `@(require) import ".."`
+		# lines has no `main`, and is how a library with subpackages type checks its whole tree (README).
+		# Harmless for the ordinary `package main` examples, not being asked for a binary here either.
+		result = subprocess.run(
+			["odin", "check", path, "-file", "-no-entry-point", "-vet", "-vet-cast", "-strict-style", "-vet-tabs"]
+		)
+		if result.returncode != 0:
+			sys.exit(result.returncode)
+	print("checked " + str(len(files)) + " example(s)")
+
+# Writes to stdout; redirect it to keep a copy. Deliberately NOT `-all-packages`, which documents every
+# package the project *uses* - all of `core:` included - rather than this one.
+# ---
+# print the library's documentation
+doc *args:
+	odin doc . {{args}}
+
 
 # See the notes above for platform support, the Windows heap caveat and why no linker is pinned.
 # Usage:  just test_sanitize   or   just test_sanitize thread
@@ -144,51 +152,6 @@ sanitize kind="address" *args: mktarget_dirs
 test_sanitize kind="address" *args: mktarget_dirs
 	odin test . -debug -file -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{test_main_name}}") }} {{args}}
 
-# Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `run_debug`/`run` build.
-# ---
-# re-run the last debug binary WITHOUT recompiling
-rerun_debug *args:
-	{{ target_path("debug", main_name) }} {{args}}
-
-alias rerun := rerun_debug
-
-# re-run the last fast_debug binary without recompiling. Requires a prior `run_fast_debug` build.
-rerun_fast_debug *args:
-	{{ target_path("fast_debug", main_name) }} {{args}}
-
-# re-run the last release_debug binary without recompiling. Requires a prior `run_release_debug` build.
-rerun_release_debug *args:
-	{{ target_path("release_debug", main_name) }} {{args}}
-
-# re-run the last release binary without recompiling. Requires a prior `run_release` build.
-rerun_release *args:
-	{{ target_path("release", main_name) }} {{args}}
-
-# re-run the last nochecks binary without recompiling. Requires a prior `run_release_nochecks` build.
-rerun_release_nochecks *args:
-	{{ target_path("release_nochecks", main_name) }} {{args}}
-
-# hyperfine (https://github.com/sharkdp/hyperfine) times whole *processes*, and is installed separately -
-# `just doctor` reports whether it is there. Over `rerun_release`'s binary rather than `just run_release`:
-# Odin has no build cache, so timing the recipe would mostly time the compiler - build first. `-N` skips
-# the shell hyperfine would otherwise spawn per run, at the cost that the command is split on whitespace
-# rather than parsed: no pipes, redirects or quoted arguments containing spaces. Process startup (~31ms
-# here) swamps anything smaller - for per-procedure numbers add the harness, `odin-skel add bench`.
-# See the README, "Timing a recipe" and "Benchmarking".
-#
-# Usage:  just time_release            time the release binary
-#         just time_release --flag=x   ... passing arguments to the program
-# ---
-# time the release binary end to end with hyperfine (needs a prior run_release/build)
-time_release *args:
-	hyperfine -N --warmup 3 "{{ target_path("release", main_name) }} {{args}}"
-
-# A/B two build profiles in one run - hyperfine prints the ratio between them, which is the number worth
-# knowing about `-no-bounds-check`. Times both binaries, so needs a prior `run_release` AND `run_release_nochecks`.
-# ---
-# compare the release and nochecks binaries with hyperfine
-time_profiles *args:
-	hyperfine -N --warmup 3 "{{ target_path("release", main_name) }} {{args}}" "{{ target_path("release_nochecks", main_name) }} {{args}}"
 
 # run all tests
 test *args: mktarget_dirs
@@ -215,9 +178,6 @@ clean:
 	if exist target rmdir /s /q target
 	just mktarget_dirs
 
-# build with some verbose diagnostics
-diagnose *args: mktarget_dirs
-	odin build . -debug -microarch:native -show-more-timings -show-debug-messages -show-timings -linker:{{linker}} -out:{{ target_path("debug", main_name) }} {{args}}
 
 
 # Cross platform: Sublime then offers them in every window. The `.sublime-project` file is
@@ -344,9 +304,9 @@ ols-config *pairs:
 		print("wrote ols.json -> " + entry["name"] + " collection at " + entry["path"])
 ]]></content>
 	<!-- type the tabTrigger and press Tab; or browse Tools -> Snippets... -->
-	<tabTrigger>odin</tabTrigger>
+	<tabTrigger>odinlib</tabTrigger>
 	<!-- shown beside the trigger in the completion popup -->
-	<description>justfile for an Odin program (build tiers, test, lint)</description>
+	<description>justfile for an Odin library (check, example, doc, test)</description>
 	<!-- Optional: Set a scope to limit where the snippet will trigger -->
 	<scope>source.just</scope>
 </snippet>

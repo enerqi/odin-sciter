@@ -27,7 +27,8 @@ findings are the ones that survived that pass rather than a second opinion on it
 
 **[`10-threading.md`](10-threading.md) is not part of this review.** It is a separate pass dated
 2026-08-16 over the threading subsystem, which landed on 2026-08-15 — a day *after* the nine closed, and
-so was reviewed by none of them. Seven findings, three of them major; five are fixed, and the two still
+so was reviewed by none of them. Eight findings, four of them major — the eighth is what the repaired
+thread guard caught on macOS CI an hour after landing; six are fixed, and the two still
 open both need a measurement this machine cannot make.
 
 The engine and toolchain behaviour this review measured is **not** kept here: each fact was written
