@@ -17,18 +17,24 @@ reason; the uv interpreter is for the developer-machine recipes that can assume 
 same 25 015 296 bytes as `6.0.4.9-bis`, with a different SHA-256 - measured, by fetching both. A check
 on the length would install the wrong engine and report success.
 
-**Two sources, because no engine is committed any more.** While the binaries were in git, upstream
+**Three sources, because no engine is committed any more.** While the binaries were in git, upstream
 withdrawing a tag was survivable: the bytes were in history. They are not, so a single source is a
-single point of failure for every past commit as well as this one. Two environment variables answer
-that, in order of precedence:
+single point of failure for every past commit as well as this one. Tried in this order:
 
-    SCITER_ENGINE_URL       a complete URL for this one file - a release asset, a corporate mirror, a
-                            file:// path on a machine with no route to gitlab.com
-    SCITER_ENGINE_BASE      replaces the base below; the `/<tag>/bin/<rel>` shape is kept
+    SCITER_ENGINE_URL       a complete URL for this one file - a corporate mirror, a file:// path on a
+                            machine with no route to gitlab.com
+    SCITER_ENGINE_BASE      replaces BASE below; the `/<tag>/bin/<rel>` shape is kept
+    MIRROR                  our own release assets, which need no environment variable at all
 
-Both are verified against the same SHA-256, so a mirror can be untrusted without being unsafe: the
-worst a bad one can do is fail the check. `docs/UPGRADING.md` makes uploading the three binaries as
-release assets a step of cutting a release, which is what makes SCITER_ENGINE_URL point at something.
+All are verified against the same SHA-256, so a mirror can be untrusted without being unsafe: the
+worst a bad one can do is fail the check.
+
+**The third source is the one that survives upstream moving a tag**, and it is deliberately last:
+GitLab is upstream and stays the primary. It also has to work without being configured - an
+environment variable nobody knows to set is not a fallback - so `docs/UPGRADING.md` makes uploading
+the three binaries a step of cutting a release, and the URL is derived from the pinned tag here
+rather than written down anywhere a reader has to find. Until those assets exist for a given pin it
+404s and costs one line of output.
 """
 
 import hashlib
@@ -39,6 +45,12 @@ import urllib.request
 
 BASE = "https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw"
 
+# Our own release assets. The tag is `engine-<upstream tag>` and not a bindings version, so this URL
+# moves when the *pin* moves and not when a release is cut against the same engine; the assets are flat
+# because the three basenames (.so, .dll, .dylib) are already distinct, so one namespace holds every
+# platform. Both halves have to stay in step with what `gh release create` is given in UPGRADING.md.
+MIRROR = "https://github.com/enerqi/odin-sciter/releases/download/engine-{tag}/{name}"
+
 
 def sources(tag, rel):
     """Where to look, most specific first. See the module docstring for why there is more than one."""
@@ -47,6 +59,8 @@ def sources(tag, rel):
         urls.append(os.environ["SCITER_ENGINE_URL"])
     base = os.environ.get("SCITER_ENGINE_BASE", BASE).rstrip("/")
     urls.append(f"{base}/{tag}/bin/{rel}")
+    # `rsplit` rather than os.path.basename: `rel` is always slash-separated, on every platform.
+    urls.append(MIRROR.format(tag=tag, name=rel.rsplit("/", 1)[-1]))
     return urls
 
 

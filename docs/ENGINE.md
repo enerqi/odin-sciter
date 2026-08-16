@@ -1,9 +1,10 @@
 # What the engine is made of
 
-Everything below was measured against the vendored `lib/linux/x64/libsciter.so` (Sciter.JS 6.0.4.9,
-`SCITER_API_VERSION` 10) with `readelf`, `nm`, `strings` and the engine's own runtime reporting. Nothing
-here is quoted from sciter.com. The commands are given so the same page can be filled in for Windows
-when that machine is available — see [Windows, when it is vendored](#windows-when-it-is-vendored).
+Everything below was measured against `lib/linux/x64/libsciter.so` as `just fetch-engine` installs it
+(Sciter.JS 6.0.4.9, `SCITER_API_VERSION` 10) with `readelf`, `nm`, `strings` and the engine's own
+runtime reporting. Nothing here is quoted from sciter.com. **This page is Linux**; the commands are
+given so it can be filled in for the other platforms, and what is and is not established on Windows is
+[at the end](#windows--what-this-page-still-does-not-cover).
 
 It matters for three practical reasons: what has to be installed on a user's machine, what the engine
 will and will not do at runtime, and which failures are the engine's rather than the bindings'.
@@ -479,9 +480,14 @@ Odin test runner catches the signal and then hangs rather than reaping the threa
 example burns its whole timeout. `.github/scripts/window-canary.sh` (`just window-canary`) asks the
 question once, before the suite, and prints the renderer diagnosis when the answer is no.
 
-## Windows, when it is vendored
+## Windows — what this page still does not cover
 
-Nothing here has been run on Windows. The same page can be filled in with:
+Windows x64 is supported and was brought up on a real desktop:
+[`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) has the ISciterAPI table, the example suite, the leak
+sweep and two upstream bugs, all measured. **What has not been repeated there is the composition
+analysis on this page** — the dependency list, the symbol survey, the runtime backend. `just
+fetch-engine` installs `sciter.dll`, so the machine is no longer the obstacle; nobody has run the
+commands. They are:
 
 ```bat
 dumpbin /dependents sciter.dll          :: the NEEDED list above

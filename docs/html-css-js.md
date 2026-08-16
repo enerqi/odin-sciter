@@ -147,7 +147,9 @@ thinks it is** before concluding anything about the event system.
 - **`behavior: button;`** — attaches a *native* controller to an element. This is how `<button>`,
   `<select>`, `<input type=date>` and the rest are implemented, and it is available to your own
   elements. Each behavior contributes methods under its own name (`el.edit.setRange(0, 10)`), which
-  avoids collisions with the standard DOM. The catalogue is `docs/md/behaviors/`.
+  avoids collisions with the standard DOM. The catalogue is `docs/md/behaviors/` **in the Sciter SDK
+  checkout, not in this repository**; what a *host* can reach from Odin is measured in
+  [`BEHAVIORS.md`](./BEHAVIORS.md).
 - **Style sets** — `@set name { ...rules... }`, applied with `style-set: name`. Encapsulated styling
   for a component subtree, closer to shadow DOM than to a class.
 - **CSS constants and mixins** — `@const`, `@mixin`, evaluated at parse time.

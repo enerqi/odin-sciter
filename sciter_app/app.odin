@@ -269,6 +269,10 @@ default_debug_output :: proc "system" (
 ) {
 	context = g_debug_ctx
 
+	// A fixed buffer is safe here because `utf16.decode_to_utf8` bounds-checks its destination: a
+	// message longer than DEBUG_MESSAGE_MAX truncates rather than overflowing, and `written` is the
+	// count that actually fit. Measured, not assumed. This runs on the engine's own callback with no
+	// allocator worth trusting, which is why it is a stack buffer rather than a make().
 	buf: [DEBUG_MESSAGE_MAX]u8
 	msg := ""
 	if text != nil && text_length > 0 {

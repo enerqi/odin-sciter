@@ -273,10 +273,16 @@ area is exactly where they were learned: **probe before documenting**, and **a h
 hypothesis**. Every stage below therefore opens with a cheap measurement whose result is allowed to
 cancel the rest of the stage.
 
-### Stage 1 — the intrinsic behaviors sweep — **done**, [`BEHAVIORS.md`](./BEHAVIORS.md)
+Each stage's status is the line *under* its heading, never in the heading text. Other guides link to
+these stages by anchor, and an anchor is the heading — so a stage that finished used to silently break
+every link into it. Status moves; headings do not.
 
-The largest gap and the one that produces the cookbook. `docs/md/behaviors` documents 39; this
-repository exercised roughly four.
+### Stage 1 — the intrinsic behaviors sweep
+
+**Done** — [`BEHAVIORS.md`](./BEHAVIORS.md).
+
+The largest gap and the one that produces the cookbook. `docs/md/behaviors` in the SDK checkout
+documents 39; this repository exercised roughly four.
 
 **Opened with a probe, not a plan.** `behavior.odin` proved `SciterCallBehaviorMethod` reaches
 `behavior:button` via `do_click`. It did **not** establish that other intrinsic behaviors expose
@@ -303,7 +309,9 @@ sweep is the deliverable and the example is the illustration; if it runs long, c
 the table* — applied. The table plus four tests in `behavior.odin` carry what the example would have
 shown.
 
-### Stage 2 — finish the windowless story — **done**, [`integration.odin`](../examples/integration.odin)
+### Stage 2 — finish the windowless story
+
+**Done** — [`integration.odin`](../examples/integration.odin).
 
 [`EMBEDDING.md`](./EMBEDDING.md) renders, scripts, takes a mouse and a key, and runs on the GPU. Two
 pieces are left, and the third is struck out because it is done:
@@ -335,7 +343,9 @@ and `dom_walk.odin` now pins both collapse rules so it cannot happen a fourth ti
 The one real rule left is smaller and was hiding underneath: **a behavior's event is posted**, so it
 arrives on the next `windowless_heartbeat` rather than inside the call that caused it.
 
-### Stage 3 — the script-bridge pattern for host-less capabilities — **done**, [`script_bridge.odin`](../examples/script_bridge.odin)
+### Stage 3 — the script-bridge pattern for host-less capabilities
+
+**Done** — [`script_bridge.odin`](../examples/script_bridge.odin).
 
 Clipboard, printing, file dialogs, tray icon, menus, audio, gestures, zip, storage — nine capabilities,
 zero API slots, per [the table above](#capabilities-with-no-host-api-at-all).
@@ -364,7 +374,9 @@ Two findings the probe added to the plan's picture:
   `@yaml`, `@debug` and `@storage` all work. Only `@sys` is gated, and it fails by exporting nothing
   but `Error` rather than by refusing.
 
-### Stage 4 — a `JS.runtime` reference — **done**, [`JS-RUNTIME.md`](./JS-RUNTIME.md)
+### Stage 4 — a `JS.runtime` reference
+
+**Done** — [`JS-RUNTIME.md`](./JS-RUNTIME.md).
 
 Documentation only, no code, no engine risk. Fifteen modules — `Asset`, `Audio`, `BJSON`, `Clipboard`,
 `Fetch`, `Intl`, `URL`, `Zip`, `@env`, `@sys`, `@markdown`, `@yaml`, `@debug` — none bindable, all used
@@ -381,7 +393,9 @@ missing features: `performance` is undefined, `@fs` is not a module (the file AP
 `Storage` and `env` are modules rather than globals, and `Window.this.print` does not exist because
 printing is `behavior:pager`.
 
-### Stage 5 — the long tail — **two of three done (2026-08-13)**
+### Stage 5 — the long tail
+
+**Two of three done** (2026-08-13).
 
 - **A `sciter-webview` equivalent** — **the embedding half is done and the browser half is not portable
   here.** [`native_child.odin`](../examples/native_child.odin) puts a native window *inside* a Sciter

@@ -6,11 +6,9 @@ Everything you need to get a window on screen, and what to do when it does not a
 
 - [Odin](https://odin-lang.org/docs/install/) — a recent nightly or release
 - [just](https://just.systems/) — the task runner every command below uses
-- a Linux x64 desktop, for now. Windows and macOS are not vendored or tested yet; see
-  [`deployment.md`](./deployment.md).
-
-The engine itself is vendored in `lib/linux/x64/libsciter.so`, so there is nothing to download and no
-system package to install.
+- Linux x64, Windows x64 or macOS. The first two have been run on real machines; macOS is exercised in
+  CI only. The platform table in [`README.md`](../README.md#finding-the-engine) says exactly what that
+  does and does not prove, and [`deployment.md`](./deployment.md) covers shipping.
 
 ```sh
 git clone --depth 1 https://github.com/enerqi/odin-sciter.git
@@ -20,6 +18,22 @@ just example hello_window
 
 A window opens, rendered by Sciter, with HTML and CSS in it. That example uses the raw generated
 bindings and nothing else, so it is also the shortest complete description of what the wrapper does.
+
+**The first command downloads the engine** — 24 MB on Linux, 19 on Windows, 50 on macOS. No engine is
+committed to this repository, so `just fetch-engine` installs one, verified against a SHA-256 recorded
+in [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md). Every recipe that builds or runs
+anything depends on `just ensure-engine`, so the first build fetches once and later ones do not. There
+is no system package to install.
+
+## Before you write anything: the two pages that are not optional
+
+Skip these and the cost is a debugging session, not a compile error.
+
+- [`rules.md`](./rules.md) — the four contracts that decide whether your program is correct: thread
+  affinity, `Value` ownership, handle lifetimes, and which allocator a call uses. Short, and the one
+  page here that is not optional.
+- [`gotchas.md`](./gotchas.md) — the things that cost a day each. Close every window before you exit,
+  install a debug-output handler on Windows, publish assets before the load and functors after.
 
 ## The smallest program
 
@@ -111,8 +125,8 @@ diagnosis. Point `SCITER_LIB` at the directory holding the library.
 **"Version_Mismatch"** — the library that was found implements a different `ISciterAPI` than these
 bindings were generated from. This is refused rather than tolerated: the struct's field offsets would
 differ, so every call would land in the wrong slot and crash somewhere unrelated. Either use the
-vendored engine, or regenerate the bindings against the headers matching your library
-(`just bindgen`). The pinned version is in
+pinned engine `just fetch-engine` installs, or regenerate the bindings against the headers matching
+your library (`just bindgen`). The pinned version is in
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md).
 
 **The window opens, then segfaults on X11.** Run with `XMODIFIERS=@im=none`. The crash is inside the
@@ -143,8 +157,11 @@ output (above), and check whether relative URLs have a base to resolve against �
 
 **A crash with no obvious cause, after an SDK upgrade.** Run `just example api_map`. It walks all 189
 `ISciterAPI` slots and resolves each function pointer back to the symbol and module it belongs to; the
-expected result is 189 slots, 16 null (platform-padded), 0 mismatches. This is the check that catches
-a header/binary mismatch, and it is how the abandoned GitHub mirror's broken table was found.
+expected result is 189 slots, **0 mismatches**, and the null count for your platform — 16 on Linux and
+macOS, 15 on Windows, which nulls that same list minus `SciterProcND`. The nulls are platform padding
+and are not a fault; the mismatches are. `examples/api_map.odin`'s header comment has the measured list
+per platform. This is the check that catches a header/binary mismatch, and it is how the abandoned
+GitHub mirror's broken table was found.
 
 **`malloc(): unaligned tcache chunk detected` in tests.** Sciter is single-threaded — every
 `ISciterAPI` call must come from the thread that ran `SCITER_APP_INIT` — while Odin's test runner is
@@ -154,15 +171,21 @@ parallel by default. Every test recipe here passes `-define:ODIN_TEST_THREADS=1`
 
 | You want to | Read |
 | --- | --- |
+| **get the four contracts right** | [`rules.md`](./rules.md) |
+| **avoid the footguns that cost a day each** | [`gotchas.md`](./gotchas.md) |
 | understand why the bindings are shaped this way | [`architecture.md`](./architecture.md) |
 | write the UI itself | [`html-css-js.md`](./html-css-js.md) |
 | move data between Odin and script | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) |
 | read and change the document from Odin | [`dom.md`](./dom.md) |
 | react to clicks and keys in Odin | [`events.md`](./events.md) |
+| get work off the UI thread | [`threading.md`](./threading.md) |
 | ship HTML/CSS/images inside the binary | [`resources.md`](./resources.md) |
 | ship the thing | [`deployment.md`](./deployment.md) |
 | look a procedure up | [`api.md`](./api.md) |
 | upgrade the engine, or cut a release | [`UPGRADING.md`](./UPGRADING.md) |
+
+[`README.md`](./README.md) is the full index — every guide, split by audience, with the maintainer
+notes marked as such.
 
 The examples are ordered by difficulty and each is a single self-contained file with the explanation
 in its header comment. `just example NAME` runs one.

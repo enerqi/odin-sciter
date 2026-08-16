@@ -7,15 +7,6 @@ You write your UI in HTML and CSS, script it in JavaScript, and drive it from Od
 browser and not Electron: the whole engine is a single ~25 MB shared library with no Chromium, no
 Node.js, and no separate process. A "hello world" application is one Odin file and one HTML string.
 
-> **Status: early but usable.** The generated bindings are verified slot-by-slot against the shipped
-> engine, there is an Odin-shaped layer on top of them, and 30 examples, 397 tests and twelve
-> guides cover it (`just stats` prints those; they are measured, not maintained by hand). The engine
-> itself is fetched by `just fetch-engine` on every platform rather than committed here. Linux x64 and
-> Windows x64 have been run on real machines; macOS is exercised in CI
-> only — nobody here owns a Mac, and the table below says exactly what that does and does not prove.
-> See [`docs/PLAN.md`](docs/PLAN.md) for exactly what is done and what is not, and
-> [`CHANGELOG.md`](CHANGELOG.md) for what a release contains.
-
 There are two packages, and you can mix them freely.
 
 **`sciter_app`** is the one to write against. Snake_case, Odin `string`s, error enums:
@@ -54,10 +45,14 @@ nothing else, if you want to see what the wrapper is doing.
 
 ## Quick start
 
-You need [Odin](https://odin-lang.org/docs/install/) and [just](https://just.systems/).
+You need [Odin](https://odin-lang.org/docs/install/), [just](https://just.systems/) and
+[uv](https://docs.astral.sh/uv/getting-started/installation/). uv is not optional and not only for
+regenerating: every Python step here runs through it — fetching the engine included — so a clean clone
+needs it before the first build. `just fetch-engine` checks for it and prints the install command
+rather than failing as "os error 2".
 
 ```sh
-git clone --depth 1 https://github.com/enerqi/odin-sciter.git
+git clone https://github.com/enerqi/odin-sciter.git
 cd odin-sciter
 just example hello_window
 ```
@@ -65,17 +60,15 @@ just example hello_window
 A window opens with HTML and CSS rendered by Sciter. **The first command downloads the engine** — 24 MB
 on Linux, 19 on Windows, 50 on macOS — because no engine is committed to this repository. There is
 nothing to install and nothing to remember: `just fetch-engine` verifies the download against a recorded
-SHA-256, and every recipe that builds or runs anything depends on `just ensure-engine`, so the first
-build fetches once and later ones do not. The clone itself is ~2 MB.
+SHA-256, and every recipe that builds or runs anything *against the engine* depends on
+`just ensure-engine`, so the first build fetches once and later ones do not. The clone itself is ~2 MB.
 
 That is a deliberate trade against "works offline from a clean clone": a binary does not
 delta-compress, so committing three engines meant ~40 MB of permanent history per engine bump, forever.
 The arithmetic, and why not git-lfs, is in [`docs/UPGRADING.md`](docs/UPGRADING.md). If you need an
 offline or air-gapped checkout, fetch once and copy `lib/` across, or point `SCITER_ENGINE_URL` at your
-own mirror — the hash check is what makes an untrusted mirror safe.
-
-**On X11, run that with `XMODIFIERS=@im=none`** if it segfaults — the engine, not your build. Details
-two paragraphs down.
+own mirror — the hash check is what makes an untrusted mirror safe. If upstream's URL is unreachable or
+its tag has moved, the fetch falls back to this repository's own release assets without being asked to.
 
 If it does not load, the error lists every path it tried. Point it at a library explicitly with:
 
@@ -189,6 +182,9 @@ SDK. Re-pack it after editing anything under `examples/assets/app/`:
 SCITER_SDK=/path/to/sciter-js-sdk just pack
 ```
 
+`packfolder` is one of four SDK tools these recipes can use — see
+[The SDK is optional](#the-sdk-is-optional) for the full list and what each is worth.
+
 
 ## Shipping one file
 
@@ -253,21 +249,44 @@ just extension                                   # -> target/debug/odin-ext.so
 SCITER_SDK=/path/to/sciter-js-sdk just extension-run   # runs it under scapp
 ```
 
-`scapp` is not vendored here, hence `SCITER_SDK`.
+`scapp` is not vendored here, hence `SCITER_SDK` — see [The SDK is optional](#the-sdk-is-optional).
+
+
+## The SDK is optional
+
+**You do not need a Sciter SDK checkout to use these bindings.** The engine is fetched by hash, the
+headers are vendored here, and every core recipe — `just example`, `check`, `build-examples`, `lint`,
+`cross-check`, `test`, `example-tests`, `bindgen` — works without one. That is the point of
+`just fetch-engine`.
+
+Four recipes want the SDK's own **tools**, which are separate executables that are deliberately not
+vendored (they are not part of the C ABI these bindings target, and they are large). Point
+`SCITER_SDK` at a checkout to use them:
+
+| Recipe | SDK tool | What you get, and whether you need it |
+| --- | --- | --- |
+| `just inspector` | `inspector` | The DevTools-style DOM tree, style viewer, console and debugger, attached to a running window over a socket. **The most useful of the four** — this is how you debug a document. See [`examples/inspector.odin`](examples/inspector.odin) |
+| `just pack` | `packfolder` | Re-packs `examples/assets/app/` into `app.pak`. Only needed if you *edit* those assets: the 2 KB `.pak` is committed, so `just example archive` builds from a clean checkout without it |
+| `just extension-run` | `scapp` | Runs [`examples/extension.odin`](examples/extension.odin) the way the engine actually loads an extension — `scapp` owns `main`, your Odin is the shared library. Building the extension (`just extension`) needs no SDK; only *running it this way* does |
+| `just extension-sqlite` | `scapp` | The same for the SQLite extension |
+
+```sh
+SCITER_SDK=/path/to/sciter-js-sdk just inspector
+```
+
+Without it those four exit with a message naming the variable rather than a confusing failure. Get a
+checkout with `git clone --depth 1 https://gitlab.com/sciter-engine/sciter-js-sdk` — use `--depth 1`,
+because the full history is ~4 GB of committed platform binaries. What is and is not vendored here, and
+why, is in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md).
 
 
 ## Finding the engine
 
-`sciter.load()` searches, in order:
-
-1. an explicit path passed to `load("...")` — a file or a directory
-2. the `SCITER_LIB` environment variable — a file or a directory
-3. the directory containing the running executable
-4. `lib/<platform>/` relative to the working directory (where this repository keeps its copy)
-5. the system library search path (`LD_LIBRARY_PATH`, `PATH`, `DYLD_LIBRARY_PATH`)
-
-On failure it returns the full candidate list, so print it — that is the fastest way to see what went
-wrong.
+`sciter.load()` searches five places in order — an explicit path, `SCITER_LIB`, the executable's own
+directory, `lib/<platform>/` relative to the working directory, then the system library search path —
+and on failure returns the full candidate list, so print it. That is the fastest way to see what went
+wrong. The list, and what to do with it,
+is in [`docs/getting-started.md`](docs/getting-started.md#where-the-engine-is-looked-for).
 
 | Platform | File | Fetched into | Green in CI | Looked at by a human |
 | --- | --- | --- | --- | --- |
@@ -353,14 +372,16 @@ engine's *source code*, and the right to link it statically, are the paid tiers 
 Tasks run with [just](https://just.systems/).
 
 - `just example NAME` — build and run `examples/NAME.odin`; defaults to `hello_window`
-- `just check` — type check both packages and build every example
+- `just check` — type check both packages, the guides' snippets and every example
+- `just build-examples` — build and link every example; the coverage `odin check` cannot give you
 - `just bindgen` — regenerate `sciter.odin` from `external/sciter/include`
 - `just format` — `odinfmt -w .`
 
 The root package is a library with no `main`, so the usual build-profile recipes are pointed at
 examples instead. Each takes an example name:
 
-- `just run NAME` / `run_release NAME` / `run_release_debug NAME` … — the same profiles, on one example
+- `just run NAME` / `run_release NAME` / `run_release_debug NAME` … — the same profiles, on one example.
+  `just example` and `just run` are two names for the debug one, so `rerun` works after either
 - `just rerun NAME` — re-run the last build without recompiling
 - `just sanitize NAME` — run one example under ASan
 - `just test` / `just test1 EXAMPLE TEST` / `just test_sanitize EXAMPLE` — the tests
@@ -376,9 +397,9 @@ single-threaded — every `ISciterAPI` call has to come from the thread that ran
 while Odin's test runner is parallel by default. Without it the engine's heap gets corrupted instead of
 the tests failing cleanly, which shows up as `malloc(): unaligned tcache chunk detected`.
 
-Regenerating needs [odin-c-bindgen](https://github.com/karl-zylinski/odin-c-bindgen) built alongside
-this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing at it, plus
-[uv](https://docs.astral.sh/uv/) for the two Python steps.
+Regenerating additionally needs [odin-c-bindgen](https://github.com/karl-zylinski/odin-c-bindgen) built
+alongside this repository (`../odin-c-bindgen/bindgen.bin`), or `ODIN_C_BINDGEN` pointing at it. Its two
+Python steps run through uv like every other one.
 
 Two recipes exist for what CI runs, and are worth running by hand after an engine change:
 
@@ -411,31 +432,34 @@ pin, so a breaking engine release is news before it is a problem. See
 
 ## Guides
 
+**[`docs/README.md`](docs/README.md) is the index** — every guide, split by audience, in reading order,
+with the maintainer working notes marked as such. It is the one page to open if you do not yet know
+which page you want.
+
+The five that make up the reading order, in order:
+
 | Guide | |
 | --- | --- |
 | [`getting-started.md`](docs/getting-started.md) | install, the smallest program, and what to do when the window does not appear |
-| [`architecture.md`](docs/architecture.md) | the vtable, dynamic-only loading, threading, and how the bindings are generated |
-| [`ENGINE.md`](docs/ENGINE.md) | what the engine is built from — Skia, QuickJS, its own X11/Wayland layer — and what it loads at runtime |
-| [`html-css-js.md`](docs/html-css-js.md) | what Sciter's HTML/CSS/JS is and is not — flow layout, behaviors, the runtime |
-| [`reactor.md`](docs/reactor.md) | Reactor — JSX, `patch()` reconciliation, components, lifecycle and Signals, with the traps measured against the engine |
-| [`calling-between-odin-and-js.md`](docs/calling-between-odin-and-js.md) | `eval`, `call`, native functors, and the `Value` lifetime rules |
-| [`dom.md`](docs/dom.md) | element handles, selectors, traversal, text and attributes, state, geometry |
-| [`events.md`](docs/events.md) | subscriptions, propagation phases, typed parameters, timers, synthesised events |
-| [`graphics.md`](docs/graphics.md) | images, paths, text and the 2D renderer, and painting inside a `DRAW` event |
-| [`resources.md`](docs/resources.md) | the `SC_LOAD_DATA` host callback, `packfolder` archives, one-binary shipping |
-| [`deployment.md`](docs/deployment.md) | what to ship per platform, the attribution you owe, upgrading the engine |
+| [`architecture.md`](docs/architecture.md) | the two packages, the vtable, dynamic-only loading, and how the bindings are generated |
+| [`rules.md`](docs/rules.md) | **the four contracts that decide whether your program is correct** — thread affinity, `Value` ownership, handle lifetimes, allocators. The one page that is not optional |
+| [`gotchas.md`](docs/gotchas.md) | **the things that cost a day each** — measured, and none of it derivable from the headers |
 | [`api.md`](docs/api.md) | the `sciter_app` API, area by area |
-| [`BEHAVIORS.md`](docs/BEHAVIORS.md) | the engine's 39 intrinsic behaviors from the host side — which publish a callable interface, their properties and methods, and the arity rule that is a segfault if you get it wrong |
-| [`JS-RUNTIME.md`](docs/JS-RUNTIME.md) | what the script runtime carries beyond browser JavaScript, and which of it a host should use instead of doing the job in Odin |
-| [`EMBEDDING.md`](docs/EMBEDDING.md) | the windowless mode — rendering into a buffer or texture you own, so Sciter can be a pane inside someone else's frame loop |
-| [`UPGRADING.md`](docs/UPGRADING.md) | version and tag policy, the engine upgrade procedure, and the repository-size budget |
-| [`WINDOWS-CHECKLIST.md`](docs/WINDOWS-CHECKLIST.md) | what is already done for the Windows port, and the list to work through on the machine |
 
-Every Odin code block in those guides lives in [`docs/snippets/`](docs/snippets/) as well, and is type
-checked by `just check` — documentation drifts silently otherwise.
+Every Odin code block in the guides that teach the API lives in [`docs/snippets/`](docs/snippets/) as
+well, and is type checked by `just check` — documentation drifts silently otherwise. Two kinds of block
+are deliberately absent and say so where they are: raw-Xlib listings, which do not type check off Linux
+and would break `just cross-check`, and the code in the maintainer notes and the essays
+(`RESEARCH-METHOD.md`, `WINDOWS-CHECKLIST.md`, `VDOM.md`, `ALTERNATIVES.md` and the like), which is
+illustrative rather than something to paste. The correspondence is maintained by hand;
+`docs/snippets/snippets.odin` names the guide each block came from.
 
 
 ## Further reading
+
+Beyond the reading order — the topic guides (`dom.md`, `events.md`, `threading.md`, `graphics.md`,
+`resources.md`, and the rest), the material about Sciter itself, and the maintainer notes are all
+listed and described in [`docs/README.md`](docs/README.md). A few worth naming here:
 
 - [`CHANGELOG.md`](CHANGELOG.md) — what each release contains, and how releases are versioned
 - [`docs/PLAN.md`](docs/PLAN.md) — findings, design decisions, and what is planned next
@@ -443,12 +467,8 @@ checked by `just check` — documentation drifts silently otherwise.
   part that went wrong
 - [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
   desktop UI, what it gives up, and what to watch
-- [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) — ten engine defects written up ready to file,
+- [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) — 12 engine defects written up ready to file,
   and the three that turned out to be this repository's own mistakes
 - [`docs/SDK-PARITY.md`](docs/SDK-PARITY.md) — how these examples, tests and guides line up against
   everything the SDK ships, and which of its 64 script samples have no host API to bind at all
-- [`docs/VDOM.md`](docs/VDOM.md) — a design note for a retained-diff layer over the DOM: what it would
-  cost, when it would pay, and when not to build it. **Nothing built; a decision aid, not a plan**
-- [`docs/FLEURY-UI.md`](docs/FLEURY-UI.md) — the immediate-mode-over-retained-cache architecture the
-  above would be the retained half of
 - [Sciter documentation](https://docs.sciter.com/docs/intro) and [tutorials](https://sciter.com/tutorials/)

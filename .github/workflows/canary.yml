@@ -146,11 +146,18 @@ jobs:
         continue-on-error: true
         run: just api-map-verify
 
-      - name: Type check and build everything
+      - name: Type check everything
         id: check
         if: steps.tags.outputs.new == 'true'
         continue-on-error: true
         run: just check
+
+      # `check` type checks; this links. Both, because a new engine can break either independently.
+      - name: Build and link every example
+        id: build
+        if: steps.tags.outputs.new == 'true'
+        continue-on-error: true
+        run: just build-examples
 
       # Same gate as ci.yml, and worth more here: "the new engine cannot create a window" is exactly
       # the kind of regression this probe exists to catch, and without this it arrives as forty-five
@@ -193,6 +200,7 @@ jobs:
             echo "| \`just bindgen\` | $(status '${{ steps.bindgen.outcome }}') |"
             echo "| \`just api-map-verify\` | $(status '${{ steps.apimap.outcome }}') |"
             echo "| \`just check\` | $(status '${{ steps.check.outcome }}') |"
+            echo "| \`just build-examples\` | $(status '${{ steps.build.outcome }}') |"
             echo "| \`just window-canary\` | $(status '${{ steps.canary.outcome }}') |"
             echo "| \`just example-tests\` | $(status '${{ steps.tests.outcome }}') |"
             echo

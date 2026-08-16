@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The numbers the documentation quotes about itself: how many examples, how many tests, how many of the
-wrapper's exported procs a test actually reaches.
+wrapper's exported procs a test actually reaches, how many documents there are, and how many upstream
+defects are written up.
 
 These were hand-maintained and had drifted - README and PLAN both said 337 tests against an actual
 364-odd, which is the sort of claim a sceptical reader checks first and the sort that quietly undersells
@@ -10,8 +11,13 @@ The counting rule that matters, and the one this repository has already been bit
 matched as `\\.name\\b`, **not** `\\.name(`. The examples frequently store or forward a proc rather than
 calling it on the spot, and the open paren undercounts.
 
+**Quote these as numerals, not words.** `--check` is a regex over the prose, so "twelve guides" is
+invisible to it and drifted for exactly that reason - it survived three counts changing underneath it.
+A number a doc asserts about this repository is either written as a digit and checked here, or it is
+going to be wrong.
+
   stats.py            print the numbers
-  stats.py --check    also verify the numbers quoted in README.md and docs/PLAN.md still match
+  stats.py --check    also verify the numbers quoted in README.md, docs/README.md and docs/PLAN.md
 
 Ported from stats.sh; see parity.py's header for why.
 """
@@ -64,10 +70,20 @@ def main(argv: list[str]) -> int:
 	haystack = "\n".join(sources.values())
 	covered = sum(1 for n in exported if re.search(rf"\.{re.escape(n)}\b", haystack))
 
+	# Every .md under docs/, excluding the index itself and the review set - the index counts what it
+	# indexes, and docs/review/ is a dated audit rather than documentation of the library.
+	doc_files = sorted(glob.glob(os.path.join(ROOT, "docs", "*.md")))
+	docs = len([p for p in doc_files if os.path.basename(p) != "README.md"])
+
+	# Numbered `## N.` headings in the defect register, stopping at the "Not defects" section.
+	defects = len(re.findall(r"^## \d+\. ", read(os.path.join(ROOT, "docs", "UPSTREAM-DEFECTS.md")), re.M))
+
 	print(f"examples:            {len(example_files)} files, {test_files} with tests")
 	print(f"tests:               {tests} @(test) procs")
 	print(f"wrapper procs:       {len(exported)} exported")
 	print(f"reached from a test: {covered}")
+	print(f"docs:                {docs} besides docs/README.md")
+	print(f"upstream defects:    {defects} written up")
 
 	if "--check" not in argv:
 		return 0
@@ -80,15 +96,24 @@ def main(argv: list[str]) -> int:
 			print(f"{relpath} does not quote the current {what} ({pattern})")
 			fail = True
 
-	check("README.md", "test count", rf"\b{tests}\b")
+	# Each check is anchored to a file that actually makes the claim. `README.md` used to carry a status
+	# blockquote with the test, example and doc counts in it; when that was removed, the checks for it
+	# started failing against prose that no longer existed. The rule that keeps this honest: a check
+	# belongs where the sentence is, and a claim that moves takes its check with it. Do not "fix" a
+	# failure here by making the pattern optional - a check that passes when the text is absent is the
+	# same blind spot as the hand-maintained counts this script replaced.
 	check("docs/PLAN.md", "test count", rf"\b{tests}\b")
 	check("docs/PLAN.md", "coverage", rf"\b{covered}\b of its \b{len(exported)}\b|{covered} of its {len(exported)}")
+	check("docs/PLAN.md", "example count", rf"\b{len(example_files)} examples\b")
+	check("docs/PLAN.md", "doc count", rf"\b{docs} documents\b")
+	check("docs/README.md", "doc count", rf"\b{docs} files besides this index\b")
+	check("README.md", "upstream defect count", rf"\b{defects} engine defects\b")
 
 	if fail:
 		print()
 		print("Update the docs, or the code changed the numbers - either way they are meant to agree.")
 		return 1
-	print("README.md and docs/PLAN.md agree with the measurement")
+	print("README.md, docs/README.md and docs/PLAN.md agree with the measurement")
 	return 0
 
 

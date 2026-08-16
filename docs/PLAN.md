@@ -2,14 +2,14 @@
 
 Status as of 2026-08-12: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and twenty-five examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and 30 examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
 the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
 background threads, drag-and-drop, graphics (both a custom-painted element and a gallery covering the
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 397 `@(test)` procs, and the twelve guides in `docs/` are written. Coverage of
+`just example-tests` runs 397 `@(test)` procs, and `docs/` holds 30 documents besides its index. Coverage of
 the wrapper is 402 of its 402 exported procedures called from a test. The five that closed that gap -
 `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members - each
 turned up something the headers do not say, which is the argument for closing coverage gaps rather than
@@ -21,12 +21,17 @@ to be passing 0 for a parameter the C header calls `N/A` and the SDK's C++ layer
 so `close` was really `request_close`, and on Windows nothing was ever destroyed. Covering it measured
 the difference: `request_close` leaves the window alive even when the document refuses nothing.
 
-Every number in that paragraph comes from `just stats` (`.github/scripts/stats.py`), and `just stats
---check` fails if this file and `README.md` have drifted from it - which they had, by 29 tests. The
-counting rule is `\.name\b` and not `\.name(`: the examples store and forward wrappers as often as
-they call them, and matching the open paren undercounts. `close` is now among the covered ones: there is exactly one order in which
-a secondary window can be closed without crashing the engine - hide, pump, close - and
-`examples/workbench.odin` pins it. What remains
+Every count in that paragraph comes from `just stats` (`.github/scripts/stats.py`) — examples, tests,
+coverage and documents — and `just stats --check` fails if this file, `README.md` or `docs/README.md`
+has drifted from it, which they had, by 29 tests. The 189 slots are the exception and come from a
+different runnable check, `just api-map-verify`. **Write these as digits.** `--check` is a regex over
+the prose, so "twelve guides" was invisible to it and drifted through three separate recounts for
+exactly that reason.
+
+The counting rule is `\.name\b` and not `\.name(`: the examples store and forward wrappers as often as
+they call them, and matching the open paren undercounts. `close` is now among the covered ones: there
+is exactly one order in which a secondary window can be closed without crashing the engine - hide,
+pump, close - and `examples/workbench.odin` pins it. What remains
 was Windows, and **Windows x64 has now been pinned and run on a real machine** - the whole example
 suite, the ISciterAPI table (gated in CI), the inspector, native extensions, ASan and the leak sweep.
 What that run found, what it fixed, and the two things still open are in
@@ -162,11 +167,11 @@ They cover different things, and conflating them is easy:
   what these bindings are generated from, and it is why generating them is unencumbered.
 - **The Sciter Engine EULA** covers the binary itself (`sciter.dll` / `libsciter.so` /
   `libsciter.dylib`). It is *not* BSD. Terra Informatica retains copyright and grants free use in
-  commercial and non-commercial applications, subject to one concrete obligation:
-
-  > Your application shall include link to Terra Informatica site in "About" dialog or similar place in
-  > your application. Text of the link: This Application (or Component) uses Sciter Engine
-  > (http://sciter.com/), copyright Terra Informatica Software, Inc.
+  commercial and non-commercial applications, subject to one concrete obligation — an attribution line
+  in your About dialog. **The exact text you owe, quoted, is in
+  [`deployment.md`](./deployment.md), which is the page that owns this**; it is not repeated here,
+  because an attribution string copied into three files is a string that eventually differs in three
+  files.
 
 The repository has **no engine source** — `include/` and `bin/` only. Access to the sources, and the
 right to link statically, are the paid tiers at <https://sciter.com/prices/>.
@@ -500,9 +505,10 @@ types that are already right, or the same conversions get written twice.
    native functors, DOM access (elements *and* nodes), event handler registration, engine options, and
    the `.DELAYED` half of the host callback. `Value` is reference-counted with explicit
    `ValueInit`/`ValueClear`/`ValueCopy`, and the tests concentrate there.
-9. ~~**Examples and guides** — §9~~ **done**: all twenty-three examples run, and the eleven guides are
-   written — the last of them, [`ENGINE.md`](./ENGINE.md), measured from the shipped binary rather than
-   written against the headers.
+9. ~~**Examples and guides** — §9~~ **done**: the twenty-three examples and eleven guides that existed
+   when this item closed all ran and were written — the last guide, [`ENGINE.md`](./ENGINE.md), measured
+   from the shipped binary rather than written against the headers. Both have grown since; the counts at
+   the top of this file are the current ones.
 10. **Cross-platform** — ~~vendor the Windows binary and verify there~~ **done**, on a real desktop;
     macOS is fetched by hash and brought up in CI, because there is no Mac here and `macos-14` is the closest
     thing to one. Prepared without either machine: everything type checks for `windows_amd64`,

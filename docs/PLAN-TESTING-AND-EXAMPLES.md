@@ -26,7 +26,7 @@ House rules that will otherwise cost you time. All of these are load-bearing.
   straight from the C headers. See [`RESEARCH-METHOD.md`](./RESEARCH-METHOD.md).
 - **Do not `git commit`.** The repository owner curates commits. Leave the tree dirty and report what
   changed.
-- **Windowed runs need `XMODIFIERS=@im=none`** on X11 — the vendored engine segfaults in `XSetICFocus`
+- **Windowed runs need `XMODIFIERS=@im=none`** on X11 — the engine segfaults in `XSetICFocus`
   otherwise. Treat `timeout N ./target/debug/x.exe` returning 124 as the pass.
 - **`just format` exits 1**, on `examples/dom_walk.odin` — a local variable named `inline`, which
   odinfmt's parser rejects and the compiler does not. Pre-existing. It also rewrites
@@ -355,6 +355,11 @@ survive.
 Done when all of these hold. **All of them do, as of 2026-08-12** — the boxes are ticked with what was
 run rather than with an opinion.
 
+**The figures below are what was measured on that date, and they are lower than today's.** They are
+kept as run rather than refreshed, because a ticked box is a record of a check passing and rewriting it
+would destroy that. For the current numbers run `just stats`, which is the only place they are
+maintained.
+
 - [x] the scan in §1 reports **zero** never-called procedures, or every remaining one has a comment in
       its wrapper saying why it cannot be reached here (touch hardware, platform-only, needs a network).
       *Every name the scan still lists is a proc-group member reached through its group; 310 of 347
@@ -362,8 +367,9 @@ run rather than with an opinion.
 - [x] `just check` passes — both packages, `docs/snippets`, every example
 - [x] `just example-tests` is green in one run on a quiet machine — *321 tests, 18 files*
 - [x] `odin check -target:windows_amd64` and `-target:darwin_amd64` pass for `sciter_app`, the snippets
-      and every new example. *The one failure on both is `single_binary`, which is a deliberate
-      `#panic`: it embeds the engine and only the Linux binary is vendored.*
+      and every new example. *The one failure on both was `single_binary`, which `#load`s the target
+      platform's engine and so needs that platform's binary on disk. `just cross-check` now skips it
+      per target when the file is absent and checks it when `just fetch-engine` has installed it.*
 - [x] every new example runs: `XMODIFIERS=@im=none timeout 15 ./target/debug/NAME.exe`, exit 124
 - [x] `just test_sanitize eval` is clean after Batch E — 27/27, and `workbench` is clean under ASan too,
       which is what covers the search thread. **It needed a fix to the recipe rather than to the code**:

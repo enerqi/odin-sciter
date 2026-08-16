@@ -84,10 +84,14 @@ against them too. Regenerate with `sha256sum lib/linux/x64/libsciter.so`.
 
 **These hashes are now load-bearing in a way they were not while the binaries were committed.** Upstream
 withdrawing or moving a tag used to be survivable, because the bytes were in git history; they are not
-any more. `fetch-engine.py` therefore takes `SCITER_ENGINE_URL` (a complete URL for one file) and
-`SCITER_ENGINE_BASE` (an alternative base), both verified against the same hash, so a mirror can be
-untrusted without being unsafe - the worst a bad one can do is fail the check. Uploading the three
-binaries as release assets is a step of cutting a release for exactly this reason.
+any more. `fetch-engine.py` therefore tries three sources, all verified against the same hash, so a
+mirror can be untrusted without being unsafe - the worst a bad one can do is fail the check:
+`SCITER_ENGINE_URL` (a complete URL for one file), `SCITER_ENGINE_BASE` (an alternative base), and then
+this repository's own release assets at
+`https://github.com/enerqi/odin-sciter/releases/download/engine-<tag>/<filename>`. That third one takes
+no configuration - the URL is built from the pinned tag - which is what makes it a fallback for a fresh
+clone rather than for whoever already knows about it. Publishing the three binaries under an
+`engine-<tag>` release is a step of cutting a release for exactly this reason.
 
 The justfile's `engine_sha256` is per-platform for the same reason this table has a row per file: the
 pin is on the binary, not on the tag. One shared hash made `just fetch-engine` on Windows compare

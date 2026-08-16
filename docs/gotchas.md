@@ -158,6 +158,25 @@ Three things are required, and the third is the one everyone misses:
 With 1 and 2 and not 3 the inspector waits forever on "Waiting for a connection with Sciter's view",
 which reads as a problem with 1 or 2. `examples/inspector.odin` had this bug and it had never worked.
 
+## 10. A `switch` on an event code needs a default arm, or it drops every application event
+
+`sciter.Behavior_Events` is an enum, and it is a **partial** naming of a `UINT` space rather than a
+closed set. `FIRST_APPLICATION_EVENT_CODE` is the floor above which an application defines its own
+codes, and the docs tell you to use it — so your own events reach a handler as
+`sciter.Behavior_Events(MY_CODE)`, a legal value with no enum member behind it.
+
+```odin
+switch be.code {
+case .BUTTON_CLICK: ...
+case .SELECT_VALUE_CHANGED: ...
+case:               // <- without this arm, every application-defined event is silently ignored
+}
+```
+
+The enum is still the right binding — it names what upstream names and stays open where upstream is
+open — but nothing in the type says the set is partial, and a `switch` that looks exhaustive is not.
+`-vet` may also object to the conversion.
+
 ---
 
 ## Where the knowledge actually lives

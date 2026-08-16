@@ -24,6 +24,7 @@ Recipes run with the repository root as the working directory, which is what `ju
 
 from __future__ import annotations
 
+import glob
 import os
 import subprocess
 import sys
@@ -41,6 +42,35 @@ X11_ONLY = ("integration", "native_child")
 # Not applications: native extensions loaded by `sciter.loadLibrary(...)` from script. No `main`, so
 # they build as shared libraries.
 EXTENSIONS = ("extension", "sqlite_extension")
+
+# Everything with source to type check that is not an example: the generated bindings, the ergonomic
+# layer, and every Odin block in the guides. `check` and `cross-check` walk the same three, and used to
+# spell them out separately - which is how one of them ends up checking something the other does not.
+PACKAGES = (".", "sciter_app", "docs/snippets")
+
+
+def host_x11_skip() -> tuple[str, ...]:
+	"""`X11_ONLY` off Linux, nothing on it - for checks aimed at the machine they run on."""
+	return () if sys.platform.startswith("linux") else X11_ONLY
+
+
+def example_sources(skip: "tuple[str, ...] | set[str]" = ()) -> list[str]:
+	"""Every `examples/*.odin`, minus `skip` given as bare names (no directory, no extension)."""
+	skip = set(skip)
+	return [f for f in sorted(glob.glob("examples/*.odin")) if os.path.basename(f)[:-5] not in skip]
+
+
+def odin_check_cmds(skip: "tuple[str, ...] | set[str]" = (), target: str | None = None) -> list[list[str]]:
+	"""`odin check` command lines for both packages, the guides' snippets and every example.
+
+	One definition of "everything that type checks", shared by `check` (no target) and `cross-check`
+	(one call per target). `-no-entry-point` throughout: the packages have no `main`, and the examples
+	have one but do not need it entered to type check.
+	"""
+	suffix = [f"-target:{target}"] if target else []
+	cmds = [["odin", "check", p, "-no-entry-point", *suffix] for p in PACKAGES]
+	cmds += [["odin", "check", f, "-file", "-no-entry-point", *suffix] for f in example_sources(skip)]
+	return cmds
 
 
 def die(message: str) -> "NoReturn":  # noqa: F821

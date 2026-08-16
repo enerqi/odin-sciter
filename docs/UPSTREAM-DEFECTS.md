@@ -9,9 +9,9 @@ route to a fix** — see [`ALTERNATIVES.md`](./ALTERNATIVES.md#vendor-risk-and-b
 Nothing here has been filed yet; this repository has no account on that tracker. Anyone who does can
 lift these verbatim.
 
-**Common preamble for every report:** Sciter.JS 6.0.4.9-bis, Linux x64, vendored binary from the SDK
-release; reproduced from Odin bindings that call `ISciterAPI` directly, so every symptom is one C call
-away from the engine.
+**Common preamble for every report:** Sciter.JS 6.0.4.9-bis, Linux x64, the unmodified binary from the
+SDK release; reproduced from Odin bindings that call `ISciterAPI` directly, so every symptom is one C
+call away from the engine.
 
 ---
 

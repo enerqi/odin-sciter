@@ -74,6 +74,10 @@ rules below are not avoidable, and `defer value_clear` is the discipline that pa
 inside the engine (a string, an array, a map, a script object). `sciter_app.Value` *is* `sciter.Value`,
 so the two packages pass them back and forth without conversion.
 
+The ownership rules are restated here because this is where you meet them; **their home is rule 2 of
+[`rules.md`](./rules.md)** — if the two ever disagree, that page is right. What follows this list, and
+is not there, is the conversion story: what turns into what, in which direction.
+
 The rules are the C API's, and this package does not hide them:
 
 - a `Value` must be `value_init`ed before first use, **or zeroed, which is the same thing**
@@ -392,8 +396,11 @@ borrowed like every other handle — `use_element` it if it has to outlive the `
 
 ### Objects, not just functions
 
-A functor gives script a function. **SOM** gives it an object — properties it can read and write,
-methods it can call — which is what a document written against an application's model wants.
+A functor gives script a function. **SOM** — Sciter Object Model, the engine's protocol for exposing a
+native object to script, and nothing to do with the DOM — gives it an object: properties it can read
+and write, methods it can call, which is what a document written against an application's model wants.
+[`architecture.md`](./architecture.md#the-vocabulary) has the rest of the words;
+[`api.md`](./api.md#som--somodin) has where that expansion comes from, since upstream never states it.
 
 ```odin
 get_count :: proc(asset: ^sciter_app.Asset) -> (sciter_app.Value, bool) {

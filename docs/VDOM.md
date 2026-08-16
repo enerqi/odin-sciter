@@ -1,12 +1,28 @@
 # A retained-diff layer, if we want one
 
-**Status: design note, nothing built.** This describes a layer that does not exist, so that the decision
-to build it — or not to — can be made against something concrete rather than a vibe. Nothing in
-`sciter_app` depends on any of it, and nothing here is a commitment.
+**Status: design note, nothing built — and on the evidence since, probably not worth building.** This
+describes a layer that does not exist, so that the decision to build it — or not to — can be made
+against something concrete rather than a vibe. Nothing in `sciter_app` depends on any of it, and
+nothing here is a commitment.
 
-It is written for someone who has not yet built much on Sciter, which is the honest position at the
-time of writing. So it leads with the problem, is explicit about when the answer is "don't", and ends
-with a way to tell later rather than now.
+**The short version, if you read nothing else.** This note predicted six costs that a re-render-the-lot
+approach would impose. [`examples/workbench.odin`](../examples/workbench.odin) was then built as the
+hard case — 10,000 rows, virtualised, editable, live-updating, an Odin-painted widget per row, no
+script — and **five of the six never bit**. The one that did (focus destroyed by a re-render) has a
+model-side workaround that handles everything but the caret. Virtualisation turned out to be the better
+first move and is a tenth of the size: ~40 lines, and it removes the parse cost and the scroll cost
+together. So the trigger for building anything here narrowed to one case — *a text field the user is
+actively typing into, inside a region something else re-renders* — and the recommendation settles at
+option 2 of the build order ("keyed identity, no diff"), not at a diff. [What actually
+hurt](#what-actually-hurt) is the measurement; [What this
+changes](#what-this-changes) is the revised recommendation.
+
+Kept because the reasoning is the record: the cheap experiment was run, it contradicted the note that
+proposed it, and that is the argument for not building the layer rather than for building it later.
+
+The rest is written for someone who has not yet built much on Sciter, which was the honest position at
+the time of writing. So it leads with the problem, is explicit about when the answer is "don't", and
+ends with a way to tell later rather than now.
 
 ---
 

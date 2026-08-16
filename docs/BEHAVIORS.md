@@ -8,6 +8,9 @@ its opening probe.
 `element.edit.selectRange(0, 4)`. Nothing upstream says whether a host can reach them. It can: **most
 of them publish a SOM asset, and a passport with real properties and callable methods behind it.**
 
+*Asset*, *passport* and *SOM* are Sciter's words, defined together in
+[`architecture.md`](./architecture.md#the-vocabulary) if this is the first page you have opened.
+
 Everything below came from one probe document holding one element per behavior, loaded into a
 windowless view, with every behavior name tried as an asset interface name against every element — so
 the mapping is measured, not guessed. Signatures were cross-checked against the engine binary's own

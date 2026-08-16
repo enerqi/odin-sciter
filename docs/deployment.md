@@ -189,8 +189,9 @@ The upgrade procedure:
 
 1. drop in the new headers and binary
 2. `just bindgen` — regenerate `sciter.odin`
-3. **`just example api_map`** — 189 slots, 16 null, 0 mismatches. This is the check.
-4. `just check` and `just example-tests`
+3. **`just example api_map`** — 189 slots, 0 mismatches, and your platform's null count: 16 on Linux
+   and macOS, 15 on Windows. This is the check.
+4. `just check`, `just build-examples` and `just example-tests`
 5. run the windowed examples
 
 Step 3 is not optional and it is not a formality. `ISciterAPI` is an ordered struct of function

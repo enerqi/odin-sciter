@@ -104,8 +104,13 @@ jobs:
       - name: Check the ownership rule
         run: just check-ownership
 
-      - name: Type check and build everything
+      - name: Type check everything
         run: just check
+
+      # `check` type checks; this links. `odin check` cannot see an undefined symbol, and that is the
+      # whole reason both steps exist - see the comment on `build-examples` in the justfile.
+      - name: Build and link every example
+        run: just build-examples
 
       # Is there a working renderer at all? The engine draws through EGL/GLESv2, so on a runner with no
       # GPU everything below depends on llvmpipe being reachable. Printed before the tests rather than
@@ -234,8 +239,13 @@ jobs:
 
       # Checklist step 4. `single_binary.odin`'s `when` now covers windows_amd64, and `just check` skips
       # the two raw-Xlib examples off Linux - without that skip this step could never have passed.
-      - name: Type check and build everything
+      - name: Type check everything
         run: just check
+
+      # `check` type checks; this links. `odin check` cannot see an undefined symbol, and that is the
+      # whole reason both steps exist - see the comment on `build-examples` in the justfile.
+      - name: Build and link every example
+        run: just build-examples
 
       # Checklist step 5. The display gate is right for this platform: `have_display` in the examples
       # returns true unconditionally `when ODIN_OS == .Windows`, because DISPLAY and WAYLAND_DISPLAY are
@@ -322,8 +332,13 @@ jobs:
       - name: Verify the ISciterAPI table
         run: just api-map-verify
 
-      - name: Type check and build everything
+      - name: Type check everything
         run: just check
+
+      # `check` type checks; this links. `odin check` cannot see an undefined symbol, and that is the
+      # whole reason both steps exist - see the comment on `build-examples` in the justfile.
+      - name: Build and link every example
+        run: just build-examples
 
       # The precondition for everything below. On Linux this catches a missing renderer; here the
       # question is whether a process in this runner's launchd session can talk to WindowServer at all.

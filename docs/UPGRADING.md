@@ -4,18 +4,21 @@ Version policy, the upgrade procedure, and what to do about the repository growi
 
 ## Policy
 
-**Vendor, by default.** The engine binary and the headers live in this repository, so
-`git clone && just example hello_window` works with no network, no SDK, and no `fetch` step. That is
-the single biggest thing that makes a bindings library approachable, and it is worth the bytes. The
-cost is real and is budgeted for below.
+**Vendor the headers; fetch the engine.** `external/sciter/include` is in this repository — that is what
+the bindings are generated from, it is BSD, and it is text that diffs. The engine binary is not, on any
+platform: it is pinned by SHA-256 and installed by `just fetch-engine`, which `ensure-engine` runs
+before the first build. So `git clone && just example hello_window` works with no SDK and no manual
+step, but not with no network. The reasoning, and what that cost, is in
+[the engine decision](#the-engine-decided---fetch-on-every-platform-and-history-was-rewritten-to-match)
+below.
 
-**Pin one version at a time.** The working tree holds exactly one engine build per platform, named in
+**Pin one version at a time.** Exactly one engine build per platform is pinned, named in
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md) with its SHA-256. Upstream tags roughly
 weekly; that is not an upgrade cadence, it is a changelog. Upgrade when there is a reason — a fix you
 need, a platform you are adding, or a version that has been stable for a while — not on a schedule.
 
 **Follow upstream's version in our tags.** A release of these bindings is tagged with the engine
-version it vendors:
+version it pins:
 
 ```
 v6.0.4.9          # bindings for engine 6.0.4.9
@@ -31,8 +34,6 @@ repository's packaging detail and do not change the engine's API version.
 
 The Odin ecosystem has no package manager to satisfy, so the tag is for humans and for
 `git checkout`. No `latest` tag, no moving tags.
-
-## Cutting a release
 
 ## The engine: decided - fetch, on every platform, and history was rewritten to match
 
@@ -101,12 +102,15 @@ or a human comparing `ls -l` - would install the wrong engine and report success
 surface later as something inexplicable in `api_map`. The tag suffix is part of the engine's identity and
 the hash is what decides; `just fetch-engine --check` runs in CI for that reason.
 
+## Cutting a release
+
 A release here is a git tag and nothing else — there is no package manager to publish to, and Odin
 consumers vendor or submodule the repository or import it by path.
 
-1. `just check` — both packages, the guides' snippets, all twenty-one examples
+1. `just check` — both packages, the guides' snippets, every example — then `just build-examples`,
+   which is the half that links
 2. `just test` — every `@(test)`, and `just test_sanitize eval` for the `Value` refcounting under ASan
-3. `just example api_map` — 189 slots, 0 mismatches, against the engine actually vendored
+3. `just example api_map` — 189 slots, 0 mismatches, against the engine actually installed
    and `just parity --check` — the slots the new headers declare against the ones `sciter_app` wraps,
    diffed against `docs/parity-baseline.txt`. `api_map` catches a slot that moved or vanished; this is
    the one that catches a slot that *appeared*, which is how coverage otherwise rots one SDK at a time
@@ -122,17 +126,37 @@ consumers vendor or submodule the repository or import it by path.
    git push origin v6.0.4.9
    ```
 
-8. **attach the three engine binaries as release assets.** Not optional, and not the same thing as
-   vendoring them: nothing is in git history any more, so upstream withdrawing or moving a tag would
-   otherwise leave every commit of this repository unbuildable, past ones included. A GitHub release
-   allows 2 GB per asset and the three are 90 MB. `fetch-engine.py` reads `SCITER_ENGINE_URL` (a
-   complete URL for one file) and `SCITER_ENGINE_BASE` (an alternative base), and verifies whatever
-   arrives against the same SHA-256, so pointing a build at the assets is one environment variable and
-   an untrusted mirror cannot do worse than fail the check:
+8. **publish the three engine binaries as release assets, if this pin has none yet.** Not optional, and
+   not the same thing as vendoring them: nothing is in git history any more, so upstream withdrawing or
+   moving a tag would otherwise leave every commit of this repository unbuildable, past ones included.
+   A GitHub release allows 2 GB per asset and the three are 90 MB.
+
+   **They hang off their own tag, `engine-<upstream tag>`, not off the bindings tag from step 7.** The
+   assets are a byte-for-byte mirror of what upstream shipped, so the thing that should move the URL is
+   the *pin* moving, not a release being cut. Cutting `v6.0.5` bindings against the same engine
+   therefore makes this step a no-op — check whether `engine-6.0.4.9-bis` already has its three assets
+   and stop if it does. It is `fetch-engine.py`'s third source, derived from `engine_tag` rather than
+   configured, so a fresh clone gets the fallback without anyone setting an environment variable; the
+   two that exist (`SCITER_ENGINE_URL`, a complete URL for one file, and `SCITER_ENGINE_BASE`, an
+   alternative base) are for a corporate mirror or an air-gapped machine. All three are verified
+   against the SHA-256 in `VENDORED.md`, so an untrusted source cannot do worse than fail the check.
 
    ```sh
-   gh release upload v6.0.4.9 \
-       lib/linux/x64/libsciter.so lib/windows/x64/sciter.dll lib/macosx/libsciter.dylib
+   gh release create engine-6.0.4.9-bis \
+       lib/linux/x64/libsciter.so lib/windows/x64/sciter.dll lib/macosx/libsciter.dylib \
+       --target master --title "Sciter engine 6.0.4.9-bis" --notes-file notes.md
+   ```
+
+   The notes carry the SHA-256 table and the EULA's attribution line — the engine is not BSD, and
+   redistributing it is exactly what the EULA contemplates *provided* that line travels with it. See
+   [`VENDORED.md`](../external/sciter/VENDORED.md#licensing).
+
+   Then prove the loop closes, rather than reading the release page: point the variable at the asset
+   you just uploaded and make the fetch actually take it.
+
+   ```sh
+   SCITER_ENGINE_URL=https://github.com/enerqi/odin-sciter/releases/download/engine-6.0.4.9-bis/libsciter.so \
+       just fetch-engine --force
    ```
 
 ## Upgrade procedure
@@ -174,7 +198,10 @@ check whether the underlying problem is gone (delete the patch) or moved (update
 just example api_map
 ```
 
-Expected: **189 slots, 16 null (platform-padded), 0 mismatches**, every non-null slot resolving to its
+Expected: **189 slots, 0 mismatches**, and the null count for the platform you are on — 16 on Linux and
+macOS, 15 on Windows, which nulls that same list minus `SciterProcND`. Nulls are platform padding, so
+the count differing by platform is not a fault; `examples/api_map.odin`'s header comment has the
+measured list for each. Every non-null slot resolves to its
 own name plus the engine's `Imp` suffix. A different slot count is a real API change and means reading
 the diff of `sciter-x-api.h`. A *mismatch* means the generated struct and the binary disagree about
 field offsets, and nothing else in the suite will tell you that — every call would simply land in the
@@ -183,7 +210,8 @@ wrong function.
 **7. Check and test.**
 
 ```sh
-just check          # both packages, the guides' snippets, all examples
+just check          # type check: both packages, the guides' snippets, all examples
+just build-examples # and the half that links
 just example-tests  # every example's tests
 just test_sanitize eval    # Value refcounting under ASan
 ```
@@ -288,10 +316,12 @@ contents on demand.
 **3. Never keep two engine versions in the tree.** Replace the file; do not add
 `lib/linux/x64/libsciter-6.0.5.so` beside the old one. The tag says which engine a checkout carries.
 
-**4. Record SHA-256 in `VENDORED.md` for every vendored binary.** Cheap now, and it is the
-precondition for switching strategies later without a flag day: a `just fetch-sdk` that downloads and
-verifies against those hashes can be added at any point, and the vendored copy simply becomes the
-default rather than the only option.
+**4. Record SHA-256 in `VENDORED.md` for every engine binary.** This was written as cheap insurance and
+as the precondition for switching strategies later without a flag day — and it is the mitigation that
+paid, because that switch is exactly what happened. `just fetch-engine` downloads against those hashes
+and refuses a mismatch, so recording them was the whole cost of moving from "committed" to "fetched",
+and it is what makes an untrusted mirror (`SCITER_ENGINE_URL`) safe. Keep recording them: the hash is
+the pin.
 
 **5. Set a threshold, and act on it rather than drifting.** This was written as "when `.git` passes
 ~500 MB, squash onto an orphan branch". It was acted on at 41 MB instead, and with a `filter-repo`
@@ -334,7 +364,10 @@ just check
 Two things that are easy to miss:
 
 - **`.git/filter-repo/commit-map`** maps every old SHA to its new one. Any document that quotes a commit
-  hash - `docs/review/HANDOFF.md` quotes thirteen - is fiction until it is rewritten from that file.
+  hash is fiction until it is rewritten from that file. This bit once: a handoff note carrying a table of
+  thirteen SHAs had to be repaired after the rewrite, and was later deleted for the same reason — a doc
+  whose content is commit hashes is a doc that git already stores and that breaks every time history
+  moves. Prefer naming what changed over naming the commit that changed it.
 - a force-push does not delete anything from GitHub. Old objects stay addressable by SHA until their
   garbage collection runs. This is size hygiene for clones, not erasure.
 
@@ -358,9 +391,9 @@ everything else is a documented fallback, not a rejection on principle.
 | **6** | **`git filter-repo` rewrite dropping the binaries** ← *done once, 2026-08-15* | dropped them retroactively: 41 MB → ~2 MB | no | rewrites every SHA, force-push, breaks forks and existing clones |
 | 7 | Vendor compressed (`libsciter.so.zst`, decompressed by `just`) | ~9 MB instead of ~11 MB per platform-bump | after a decompress step | extra build step; `#load` and `single_binary` want the raw file |
 | 8 | Binaries on an orphan `binaries` branch in this repo | unchanged server-side, excluded from `--single-branch` clones | only if the user fetches that branch | surprising, and two-step |
-| **9** | **Our own GitHub Releases + pinned SHA-256** ← *current, as the second source* | **zero** | no — first run downloads | network failure mode on first run; we host and version the assets |
+| **9** | **Our own GitHub Releases + pinned SHA-256** ← *current, as the last source, tried automatically* | **zero** | no — first run downloads | network failure mode on first run; we host and version the assets |
 | 10 | Hybrid: Linux committed, Windows/macOS on releases | ~11 MB per bump | Linux only | two mechanisms to maintain |
-| **11** | **Fetch straight from upstream's GitLab archive, pinned SHA** ← *current* | **zero** | no | upstream URLs can move - which is why row 9 is the standing fallback, via `SCITER_ENGINE_URL` |
+| **11** | **Fetch straight from upstream's GitLab archive, pinned SHA** ← *current* | **zero** | no | upstream URLs can move - which is why row 9 sits behind it, tried without being asked for |
 | 12 | Git LFS | pointers only | no — LFS fetch on clone | quota and bandwidth billing, server support required |
 | 13 | Submodule pointing at a binaries repo | zero here | no | submodule failure modes in everyone's first five minutes; the other repo grows identically |
 | 14 | Sibling repo, tags in lockstep, no submodule | zero here | no | manual pairing, version-skew risk |
@@ -395,5 +428,6 @@ binary landing — 41 MB of `.git` for a repository whose source is under 2 MB �
 than it looked: not "clone and run", but "clone and run *with no network*".
 
 Row 11 with row 9 behind it is where that lands. The pin lives in `VENDORED.md`, upstream is the
-primary source, our own release assets are the fallback when upstream moves, and both are verified
-against the same hash.
+primary source, our own release assets are the fallback when upstream moves — reached from the pinned
+tag rather than from an environment variable, because a fallback nobody knows to configure is not one —
+and every source is verified against the same hash.

@@ -191,7 +191,8 @@ SCITER_SDK=/path/to/sciter-js-sdk just pack     # examples/assets/app/ -> exampl
 
 `packfolder <folder> <out> -binary` is the underlying command. It is not vendored here, hence
 `SCITER_SDK`; the resulting 2 KB `app.pak` **is** committed, so `just example archive` builds from a
-clean checkout with no SDK present.
+clean checkout with no SDK present. An SDK checkout is optional throughout — it buys four recipes and
+nothing else, listed in [`README.md`](../README.md#the-sdk-is-optional).
 
 ```odin
 RESOURCES :: #load("assets/app.pak")

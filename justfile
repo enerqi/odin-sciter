@@ -25,6 +25,13 @@ set lazy
 # with the bare `[script]` attribute (no interpreter argument) to pick this up.
 set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 
+# The same interpreter, for the recipes that run a *committed script file* rather than an inline
+# `[script]` body. `set script-interpreter` only applies to inline bodies, so without this the file-based
+# recipes would each spell the invocation out - and the one that did spell it out its own way
+# (`fetch-engine`, as `python3` on unix and `python` on Windows) needed two platform recipes and a
+# comment explaining a rule the others no longer followed. One spelling, one place to change it.
+py := "uv run --no-project -p 3.14 python"
+
 # Set by the newest just feature used below - currently user-defined functions (1.49), for
 # `target_path`. Older features it also needs: `join()` 1.37, f-strings 1.44, `set lazy` 1.47.
 # Without this an old just reports a plain syntax error at the offending line, which reads like a
@@ -152,32 +159,40 @@ format:
 # lint checks for style and potential bugs. No code generation
 [script]
 lint *args: ensure-engine
-	import glob, os, sys
+	import sys
 	sys.path.insert(0, ".github/scripts")
-	from justlib import VET, X11_ONLY, run
+	from justlib import VET, example_sources, host_x11_skip, parallel, try_run
 
 	args = r"""{{args}}""".split()
-
-	run(["odin", "check", ".", *VET, *args])
-	run(["odin", "check", "sciter_app", *VET, *args])
 
 	# The examples are 23k of the repository's ~34k lines, and they used to be excluded here - which
 	# meant the vet flags covered the third of the code least likely to be read closely. They pass now;
 	# the whole cleanup was 25 findings, all unused imports, unused locals and shadowed `err`s.
 	#
-	# `-no-entry-point` for all of them: `extension.odin` and `sqlite_extension.odin` are native
-	# extensions built as shared libraries and have no `main`, and the flag is harmless for the rest.
-	# The X11-only pair does not compile off Linux at all - see justlib - so there is nothing for the vet
-	# flags to say about it there.
-	skip = () if sys.platform.startswith("linux") else X11_ONLY
-	examples = [f for f in sorted(glob.glob("examples/*.odin"))
-	            if os.path.basename(f)[:-5] not in skip]
-	for f in examples:
-		run(["odin", "check", f, "-file", *VET, *args])
+	# `-no-entry-point` is in VET for all of them: `extension.odin` and `sqlite_extension.odin` are
+	# native extensions built as shared libraries and have no `main`, and the flag is harmless for the
+	# rest. The X11-only pair does not compile off Linux at all - see justlib - so there is nothing for
+	# the vet flags to say about it there.
+	#
+	# Parallel and keep-going, for the same reasons as `check`: vet findings come in batches, and one
+	# file's worth at a time is the slow way to clear them.
+	skip = host_x11_skip()
+	cmds = [["odin", "check", p, *VET, *args] for p in (".", "sciter_app")]
+	cmds += [["odin", "check", f, "-file", *VET, *args] for f in example_sources(skip)]
+
+	codes = parallel(cmds, try_run)
+	bad = [c for c, code in zip(cmds, codes) if code]
+
+	if bad:
+		print()
+		print(f"FAILED -vet ({len(bad)}):")
+		for c in bad:
+			print(f"    {' '.join(c)}")
+		raise SystemExit(1)
 
 	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
 	all_ = "" if skip else "all "
-	print(f"ok: both library packages and {all_}{len(examples)} examples pass -vet{tail}")
+	print(f"ok: both library packages and {all_}{len(cmds) - 2} examples pass -vet{tail}")
 
 
 # The engine, fetched instead of vendored - see `docs/UPGRADING.md` on the repository-size decision.
@@ -187,25 +202,48 @@ lint *args: ensure-engine
 # README step nobody reads. It was a no-op for as long as `lib/` was committed, and the switch cost the
 # gitignore lines and the CI steps, exactly as predicted: nothing in the build changed.
 #
-# **`python3` rather than the `[script]` interpreter at the top of this file.** `[script]` runs through
-# `uv`, which a CI runner does not have: the first version of this recipe failed on the Linux job with
-# `No such file or directory (os error 2)` before it downloaded anything. `check-ownership` uses plain
-# `python3` for the same reason - the uv interpreter is for recipes that can assume a developer machine,
-# and anything CI or a first build depends on cannot.
+# **This used to be two recipes**, `python3` on unix and `python` on Windows, to dodge the fact that
+# neither name is reliably the same interpreter on both. The comment defending that split argued
+# `[script]` could not be used because "a CI runner does not have uv" - which stopped being true when
+# `.github/actions/toolchain` started installing uv on all three platforms by default, before any recipe
+# runs. It also claimed `check-ownership` avoided uv "for the same reason"; `check-ownership` uses uv.
+# A rule with no followers left is not a rule, so this is one recipe on `{{py}}` like the other five, and
+# the path separator goes back to `/` - Windows only rejects a forward slash in *command* position, and
+# here the script is an argument to the interpreter.
+#
+# `require-uv` is a dependency rather than an assumption because this is the first recipe a fresh clone
+# runs: without it the failure is `No such file or directory (os error 2)`, which names neither uv nor
+# what to do about it.
 #
 # `--check` verifies what is already on disk, which is the useful mode in CI and after an upgrade.
 # `--force` re-fetches over a file that is already there.
 # ---
 # download the pinned engine into lib/, verified against its SHA-256
-[unix]
-fetch-engine *args:
-	python3 .github/scripts/fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
+fetch-engine *args: require-uv
+	{{py}} .github/scripts/fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
 
-# `python` rather than `python3`: the launcher on Windows is `python.exe` (or the `py` launcher), and
-# `python3` exists only if someone made it. GitHub's windows-2022 image ships Python on PATH.
+# uv is a hard prerequisite, not a developer convenience: every Python recipe here runs through it, and
+# `fetch-engine` is one, so a clean clone cannot build without it. This turns "some tool exited 2" into a
+# sentence naming the tool and the command that installs it.
+#
+# It does NOT install uv for you. This repository's pitch is that its supply chain is short and its trust
+# decisions are visible, and a build recipe that silently pipes a remote installer into a shell is the
+# opposite of that. The command is printed; running it is yours.
+#
+# Shell rather than `[script]`, necessarily: a `[script]` guard for uv would run through uv.
+# ---
+# fail with instructions if uv is missing
+[unix]
+@require-uv:
+	command -v uv >/dev/null 2>&1 || { \
+	  echo "uv is not on PATH, and every Python recipe here runs through it."; \
+	  echo "Install it with:  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+	  echo "or see https://docs.astral.sh/uv/getting-started/installation/"; \
+	  exit 1; }
+
 [windows]
-fetch-engine *args:
-	python .github\scripts\fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
+@require-uv:
+	where uv >nul 2>&1 || (echo uv is not on PATH, and every Python recipe here runs through it. & echo Install it with:  irm https://astral.sh/uv/install.ps1 ^| iex & echo or see https://docs.astral.sh/uv/getting-started/installation/ & exit /b 1)
 
 # Fetch only if it is not there. A stat, not a hash - this runs before every build, and `just
 # fetch-engine --check` is the one that verifies.
@@ -250,7 +288,7 @@ fetch-engine *args:
 # (-keep-executable so `rerun_debug` can skip recompiling)
 # ---
 # run with debug build
-run_debug name="hello_window" *args: mktarget_dirs
+run_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
 alias run := run_debug
@@ -260,7 +298,7 @@ alias run := run_debug
 # (-keep-executable so `rerun_fast_debug` can skip recompiling)
 # ---
 # run with debug info and light optimizations
-run_fast_debug name="hello_window" *args: mktarget_dirs
+run_fast_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -o:minimal -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("fast_debug", name + ".exe") }} {{args}}
 
 # Release codegen with debug info retained: for profiling and for chasing bugs that only appear under
@@ -268,11 +306,11 @@ run_fast_debug name="hello_window" *args: mktarget_dirs
 # (-keep-executable so `rerun_release_debug` can skip recompiling)
 # ---
 # run with full optimizations AND debug info
-run_release_debug name="hello_window" *args: mktarget_dirs
+run_release_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_debug", name + ".exe") }} {{args}}
 
 # run with optimizations (-keep-executable so `rerun_release` can skip recompiling)
-run_release name="hello_window" *args: mktarget_dirs
+run_release name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release", name + ".exe") }} {{args}}
 
 # `run_release` plus every runtime safety check compiled out: `-no-bounds-check` (slice/array indexing),
@@ -283,7 +321,7 @@ run_release name="hello_window" *args: mktarget_dirs
 # (-keep-executable so `rerun_release_nochecks` can skip recompiling)
 # ---
 # run with optimizations and ALL runtime safety checks removed
-run_release_nochecks name="hello_window" *args: mktarget_dirs
+run_release_nochecks name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
 # `address` (ASan) catches out-of-bounds accesses and use-after-free; `memory` catches reads of
@@ -317,7 +355,7 @@ run_release_nochecks name="hello_window" *args: mktarget_dirs
 # Usage:  just sanitize   or   just sanitize thread -- --my-arg
 # ---
 # run a debug build under a sanitizer (address | memory | thread)
-sanitize name="hello_window" kind="address" *args: mktarget_dirs
+sanitize name="hello_window" kind="address" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}.exe") }} {{args}}
 
 # same sanitizer options as `sanitize`; see its notes for platform support and the linker note.
@@ -595,43 +633,87 @@ bindgen_bin := env_var_or_default("ODIN_C_BINDGEN", join(justfile_directory(), "
 # ---
 # regenerate the bindings from external/sciter/include
 bindgen:
-	uv run --no-project -p 3.14 python src/flatten_headers.py
+	{{py}} src/flatten_headers.py
 	{{bindgen_bin}} .
-	uv run --no-project -p 3.14 python src/postprocess_bindings.py sciter.odin
+	{{py}} src/postprocess_bindings.py sciter.odin
 	odin check . -no-entry-point
 	odinfmt -w sciter.odin
 	odin check . -no-entry-point
 
-# `-no-entry-point` for the two library packages, which have no `main`. The examples do have one, and
-# are checked by building them - `odin check` on a `-file` target is not meaningfully cheaper.
+# **`check` type checks and does not build.** It used to build and link all 28 examples, which is what
+# `build-examples` below does now. The split is because the name was a lie and the reasons given for it
+# did not survive being measured:
+#
+#   - "`odin check` on a `-file` target is not meaningfully cheaper" - it is about twice as fast.
+#     Measured per example: check 164-183 ms against build 318-345 ms; across the example set in
+#     parallel on 24 cores, 1.2 s against 2.4 s. The gap widens on fewer cores, where the parallelism
+#     stops hiding it.
+#   - "single_binary.odin has a `when` guarded `#panic` that only fires at build time" - that `#panic`
+#     is the *unsupported platform* arm of the `when` chain, so on any supported host it is unreachable
+#     and `odin check` exits 0 on that file. Unsupported platforms are `cross-check`'s business, and it
+#     already skips `single_binary` per target when that platform's engine is not on disk.
+#
+# The one real thing building buys is the link, and that is why `build-examples` still exists rather
+# than being deleted: `odin check` cannot see an undefined symbol. It is a narrow win - two of the
+# thirty examples have a `foreign import`, and `sqlite_extension` opts out on purpose by dlopening
+# `libsqlite3.so.0` rather than linking it - but it is a real one, and CI runs both.
+#
+# `-no-entry-point` throughout: the two library packages have no `main`, and the examples do but do not
+# need it entered to type check.
 #
 # `docs/snippets` is every Odin code block in the guides, wrapped just enough to compile. Documentation
 # drifts silently, so it is checked like anything else.
 # ---
-# type check both packages and the guides' snippets, and build every example
+# type check both packages, the guides' snippets and every example
 [script]
-check: mktarget_dirs ensure-engine
-	import glob, os, subprocess, sys
+check: ensure-engine
+	import sys
 	sys.path.insert(0, ".github/scripts")
-	from justlib import EXTENSIONS, X11_ONLY, parallel, run, shared_ext
+	from justlib import host_x11_skip, odin_check_cmds, parallel, try_run
 
-	run(["odin", "check", ".", "-no-entry-point"])
-	run(["odin", "check", "sciter_app", "-no-entry-point"])
-	run(["odin", "check", "docs/snippets", "-no-entry-point"])
+	# The X11-only pair does not build off Linux - see justlib. Without this skip the Windows CI job can
+	# never pass, which is most of what that job is.
+	skip = host_x11_skip()
+	cmds = odin_check_cmds(skip)
 
-	# One output path per example, and the loop run in parallel. Both halves matter: every example used
-	# to link over a single `check.exe`, which serialised the slowest non-test step in CI onto one core
-	# and left the *previous* example's binary in place when one failed, so the artifact said nothing
-	# about which. Building rather than `odin check`ing is deliberate - single_binary.odin has a `when`
-	# guarded `#panic` that only fires at build time, and linking is what proves an example is shippable.
+	# `try_run` rather than `run`: report every file that does not type check, not just the first. A
+	# compiler error is usually one edit's worth of fallout across several files, and finding them one
+	# run at a time is the slow way to do it.
+	codes = parallel(cmds, try_run)
+	bad = [c for c, code in zip(cmds, codes) if code]
+
+	if bad:
+		print()
+		print(f"FAILED to type check ({len(bad)}):")
+		for c in bad:
+			print(f"    {' '.join(c)}")
+		raise SystemExit(1)
+
+	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
+	all_ = "" if skip else "all "
+	n = len(cmds) - 3
+	print(f"ok: both packages, the doc snippets and {all_}{n} examples type check{tail}")
+
+# The half of the old `check` that needed a compiler back end: every example built and *linked*, which
+# is the only part `odin check` cannot do for you.
+#
+# One output path per example, and the loop run in parallel. Both halves matter: every example used to
+# link over a single `check.exe`, which serialised the slowest non-test step in CI onto one core and
+# left the *previous* example's binary in place when one failed, so the artifact said nothing about
+# which.
+# ---
+# build and link every example - the coverage `check` cannot give you
+[script]
+build-examples: mktarget_dirs ensure-engine
+	import os, subprocess, sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import EXTENSIONS, example_sources, host_x11_skip, parallel, shared_ext
+
 	out = os.path.join("target", "debug", "check")
 	os.makedirs(out, exist_ok=True)
 
-	# The X11-only pair does not build off Linux - see justlib. Without this skip the Windows CI job can
-	# never pass `just check`, which is most of what that job is.
-	skip = () if sys.platform.startswith("linux") else X11_ONLY
-	targets = [f for f in sorted(glob.glob("examples/*.odin"))
-	           if os.path.basename(f)[:-5] not in skip]
+	skip = host_x11_skip()
+	targets = example_sources(skip)
 
 	def build_one(f):
 		name = os.path.basename(f)[:-5]
@@ -648,7 +730,7 @@ check: mktarget_dirs ensure-engine
 
 	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
 	all_ = "" if skip else "all "
-	print(f"ok: both packages and the doc snippets type check, {all_}{len(targets)} examples build{tail}")
+	print(f"ok: {all_}{len(targets)} examples build and link{tail}")
 
 # Examples are single files that import the root package, so each builds with `-file`. Run from the
 # repository root so the loader finds lib/<platform>/ - see `load` in src/prelude.odin for the full
@@ -727,8 +809,14 @@ extension-run: extension
 # Tests that need a window skip themselves when there is no DISPLAY / WAYLAND_DISPLAY.
 # ---
 # run the tests inside one example, e.g. `just example-test eval`
-example-test name="eval" *args: mktarget_dirs
-	odin test examples/{{name}}.odin -file -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
+#
+# `-keep-executable` because `odin test` deletes the binary after running it, and `example-tests`'
+# `trace()` re-runs that binary under lldb/gdb to get a backtrace out of a test that aborted without a
+# message. Without this flag the file is always gone by the time `trace` looks, its `os.path.exists`
+# guard is always false, and the whole debugger path is unreachable on every platform - which is what it
+# was. Measured: run this recipe and `target/debug/<name>_test.exe` does not exist afterwards.
+example-test name="eval" *args: mktarget_dirs ensure-engine
+	odin test examples/{{name}}.odin -file -debug -keep-executable -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
 
 # Runs every example's tests and keeps going, rather than stopping at the first failure: one example
 # faulting is a fact about that example, and finding out which of the other twenty-three also fault
@@ -830,9 +918,14 @@ example-tests: ensure-engine
 		raise SystemExit(1)
 	print("ok: every example's tests passed")
 
+# `example` is the name the docs use and `run_debug` is the name the build-profile family uses, and they
+# were two recipes writing the *same* `target/debug/NAME.exe` with different flags. That is worse than
+# duplication: `example` lacked `-keep-executable`, and `odin run` deletes the executable afterwards by
+# default - so the workflow README documents, `just example NAME` then `just rerun NAME`, could not work,
+# and whichever of the two you ran last silently decided what `rerun` found. One recipe, two names.
+# ---
 # build and run an example, e.g. `just example hello_window`
-example name="hello_window" *args: mktarget_dirs ensure-engine
-	odin run examples/{{name}}.odin -file -debug -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
+alias example := run_debug
 
 # `just example api_map` prints the table and leaves the judging to a human, which is right for a
 # diagnostic and wrong for a gate: docs/UPGRADING.md calls the slot check "the step the whole procedure
@@ -860,7 +953,6 @@ api-map-verify: mktarget_dirs
 	raise SystemExit(check.returncode)
 
 
-# ---
 # exercise the resource-owning paths and fail if anything is still held by the engine at exit
 #
 # Needs -debug: sciter_app/tracking.odin compiles to nothing without it, and the sweep says so rather
@@ -874,7 +966,7 @@ leak-check: mktarget_dirs ensure-engine
 # ---
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
 check-ownership:
-	uv run --no-project -p 3.14 python .github/scripts/check-ownership.py
+	{{py}} .github/scripts/check-ownership.py
 
 
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
@@ -886,7 +978,7 @@ check-ownership:
 # ---
 # C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
 parity *args:
-	uv run --no-project -p 3.14 python .github/scripts/parity.py {{args}}
+	{{py}} .github/scripts/parity.py {{args}}
 
 
 # The counts the documentation quotes about itself - examples, tests, wrapper procs, and how many of
@@ -896,7 +988,7 @@ parity *args:
 # ---
 # suite and coverage counts; `just stats --check` asserts the docs still agree
 stats *args:
-	uv run --no-project -p 3.14 python .github/scripts/stats.py {{args}}
+	{{py}} .github/scripts/stats.py {{args}}
 
 
 # The precondition every windowed test has and none of them states. A machine with no working EGL/GLES
@@ -953,9 +1045,9 @@ window-canary: mktarget_dirs
 # type check both packages, the snippets and every portable example for windows and macOS
 [script]
 cross-check: ensure-engine
-	import glob, os, sys
+	import os, sys
 	sys.path.insert(0, ".github/scripts")
-	from justlib import X11_ONLY, run
+	from justlib import X11_ONLY, odin_check_cmds, parallel, try_run
 
 	# What `single_binary` #loads for each target, and therefore what has to be on disk to check it.
 	engine_for = {
@@ -965,20 +1057,32 @@ cross-check: ensure-engine
 	}
 
 	targets = ("windows_amd64", "darwin_amd64", "darwin_arm64")
+
+	# `X11_ONLY` unconditionally here, unlike `check`'s host-dependent skip: these targets are Windows
+	# and macOS whatever machine the recipe runs on, and `vendor:x11/xlib` declares nothing for either.
+	jobs = []
 	for target in targets:
 		skip = set(X11_ONLY)
-		print(f"--- {target}")
 		engine = engine_for[target]
 		if not os.path.exists(engine):
 			skip.add("single_binary")
-			print(f"    single_binary: skipped, it #loads {engine} and that is not on disk")
-		run(["odin", "check", ".", "-no-entry-point", f"-target:{target}"])
-		run(["odin", "check", "sciter_app", "-no-entry-point", f"-target:{target}"])
-		run(["odin", "check", "docs/snippets", "-no-entry-point", f"-target:{target}"])
-		for f in sorted(glob.glob("examples/*.odin")):
-			if os.path.basename(f)[:-5] in skip:
-				continue
-			run(["odin", "check", f, "-file", "-no-entry-point", f"-target:{target}"])
+			print(f"{target}: single_binary skipped, it #loads {engine} and that is not on disk")
+		jobs += [(target, c) for c in odin_check_cmds(skip, target)]
+
+	# One flat parallel pass over all three targets rather than three sequential loops. This was ~93
+	# `odin check` invocations run one at a time; the compiler releases the GIL for the whole of each,
+	# so they thread. `try_run` for the same reason as in `check`: a target that fails should not hide
+	# what the other two would have said, which is three pushes to find out otherwise.
+	codes = parallel([c for _, c in jobs], try_run)
+	bad = [(t, c) for (t, c), code in zip(jobs, codes) if code]
+
+	if bad:
+		print()
+		print(f"FAILED to type check ({len(bad)}):")
+		for t, c in bad:
+			print(f"    {t}: {' '.join(c)}")
+		raise SystemExit(1)
+
 	print(f"ok: both packages, the doc snippets and every portable example type check for {', '.join(targets)}")
 
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is

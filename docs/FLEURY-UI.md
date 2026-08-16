@@ -165,7 +165,7 @@ there's nothing behind them to summarize honestly:
 ## How this relates to what's in ALTERNATIVES.md
 
 This is the architecture behind picking **Dear ImGui-family** over **Slint** in
-[`ALTERNATIVES.md`](./ALTERNATIVES.md#four-axes) done properly: Fleury's system is still immediate-mode
+[`ALTERNATIVES.md`](./ALTERNATIVES.md#native-access-real-widgets-and-no-htmlcssjs) done properly: Fleury's system is still immediate-mode
 at the call site (Part 2's whole pitch), so it keeps ImGui's FFI simplicity — one function call per
 widget, no markup, no VM — while the hash-keyed cache buys back the persistent state (animation,
 scroll position, focus, and per Part 7's teaser, higher-level entities like tabs) that a naive immediate

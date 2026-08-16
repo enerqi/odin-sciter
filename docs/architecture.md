@@ -3,6 +3,24 @@
 Why these bindings look the way they do. Everything here follows from one fact about Sciter, and it is
 worth understanding before writing much against it.
 
+## The vocabulary
+
+Sciter's own words, because the guides use them without stopping and none of them mean quite what a
+browser or a general C API would suggest. Each links to where it is actually covered.
+
+| Term | What it means here |
+| --- | --- |
+| **`ISciterAPI`** | the one C struct of function pointers the engine exports. Every call in these bindings is a field of it — [One entry point](#one-entry-point) |
+| **behavior** | a *native* controller attached to an element, by CSS (`behavior: button`) or by the host. It is how `<button>`, `<select>` and `<input>` are implemented, and it is available to your own elements — [`html-css-js.md`](./html-css-js.md#sciter-only-css-worth-knowing), [`BEHAVIORS.md`](./BEHAVIORS.md) |
+| **SOM** | **S**citer **O**bject **M**odel — the engine's protocol for exposing a native object to script as a real object: properties script can read and write, methods it can call. Not the DOM. Upstream never expands the acronym; [`api.md`](./api.md#som--somodin) shows where the reading comes from |
+| **asset** | one such native object, on either side of the boundary: an Odin struct published to script, or a handle onto something the engine owns (an intrinsic behavior's interface, a `<video>` rendering site) — [`api.md`](./api.md#som--somodin) |
+| **passport** | an asset's self-description — the list of properties and methods it publishes, and their arity. Reading somebody else's passport is how [`BEHAVIORS.md`](./BEHAVIORS.md) was measured |
+| **functor** | a plain Odin procedure published to script as a callable function, with no object around it — [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) |
+| **`Value`** | 16 bytes of plain data that may own a reference to something inside the engine — a string, an array, a map, a script object. The currency of every crossing, and the subject of rule 2 — [`rules.md`](./rules.md) |
+| **atom** | an interned name, as a `u64`. The engine's currency for identifiers on the SOM side — [`api.md`](./api.md#atoms--atomodin) |
+| **expando** | the script-side object hanging off a DOM element, where script's own properties on that element live — [`dom.md`](./dom.md) |
+| **windowless** | the engine rendering into a surface you own instead of opening a window of its own — [`EMBEDDING.md`](./EMBEDDING.md) |
+
 ## One entry point
 
 The Sciter shared library exports **exactly one symbol you can use**:
@@ -55,7 +73,11 @@ symbol and module it belongs to — `dladdr` on Linux and macOS, dbghelp plus `V
 ```
 
 Every non-null slot resolves to its own name plus the engine's `Imp` suffix — 189 checked, 0
-mismatches. Run `just example api_map` after any SDK upgrade. This is not paranoia: the abandoned
+mismatches. **The slot count and the mismatch count are the same everywhere; the null count is not.**
+Linux and macOS null the same 16, Windows nulls 15 of those — all but `SciterProcND` — because a null
+is platform padding rather than a fault. `examples/api_map.odin`'s header comment carries the measured
+list per platform, and `just api-map-verify` asserts the one for the platform it runs on. Run
+`just example api_map` after any SDK upgrade. This is not paranoia: the abandoned
 GitHub mirror of the SDK ships a header declaring two functions its own committed binary does not
 implement, and calling them reads past the end of the real table and jumps into whatever data follows.
 

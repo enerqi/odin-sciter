@@ -5,8 +5,10 @@ of documentation, and the build/CI around them. Nine angles, each in its own fil
 to `file:line` and — where it concerns the C API — checked against the vendored headers rather than
 against memory.
 
-`BRIEF.md` is the shared brief the angles were written to: ground rules, output format, severity
-definitions.
+**This review is closed.** Every finding is fixed and every recommendation implemented; what is kept
+here is the reasoning and the rejected alternatives, which the code does not record. It is an archive,
+not a work queue — the counts and file:line references below are as they were on 2026-08-13 and are not
+maintained. For the current numbers, `just stats`.
 
 | # | angle | file | findings |
 |---|---|---|---:|
@@ -22,13 +24,15 @@ definitions.
 
 Angle 9 was written after the first eight and reviews the same tree with their fixes applied, so its
 findings are the ones that survived that pass rather than a second opinion on it.
-[`HANDOFF.md`](HANDOFF.md) is the state of the work: what landed, what is open, and the engine and
-toolchain behaviour that was measured rather than read out of a header.
+
+The engine and toolchain behaviour this review measured is **not** kept here: each fact was written
+where it applies — `rules.md`, `gotchas.md`, and the doc comments on the wrappers concerned — which is
+where someone hits it. A handoff note holding a second copy was deleted once the last of them landed.
 
 ## Status — the original six are fixed
 
-Every item this section used to list has landed, along with the rest of angles 1–8
-(`all-fixes.patch`, applied) and all ten of angle 9's findings.
+Every item this section used to list has landed, along with the rest of angles 1–8 and all ten of
+angle 9's findings. The combined patch is not kept in the tree; it is commit `743a5b0`.
 
 | was | now |
 |---|---|
@@ -128,4 +132,11 @@ only behaves under the heap.
 - Did not evaluate Windows or macOS behaviour, only the paths and the type-check story.
 
 Nothing in this directory changes any source, doc or config file. Findings are ordered most-severe-first
-within each angle; severities are defined in [`BRIEF.md`](BRIEF.md).
+within each angle, against the severity guide the angles were written to:
+
+- **critical** — memory corruption, UB, crash, data loss, or a documented claim that is false in a way
+  that will bite a user immediately.
+- **major** — wrong results in a reachable case, a leak, a missing API that blocks real use, a doc
+  section that is materially misleading.
+- **minor** — inefficiency, awkward API, missing test for a real branch, incomplete doc.
+- **nit** — naming, comment wording, cosmetic inconsistency.

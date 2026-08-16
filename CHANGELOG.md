@@ -1,16 +1,19 @@
 # Changelog
 
-Releases are named after the Sciter engine they vendor, because that is the question anyone reading a
-tag actually has. `v6.0.4.9` is the first release against engine 6.0.4.9; `v6.0.4.9-2` would be a
-second release of the bindings against the same engine. The policy, and the upgrade procedure behind
-it, are in [`docs/UPGRADING.md`](docs/UPGRADING.md).
+Releases are named after the Sciter engine they pin, because that is the question anyone reading a tag
+actually has. `v6.0.4.9` is the first release against engine 6.0.4.9; `v6.0.4.9-2` would be a second
+release of the bindings against the same engine. No engine is committed here — the pin is a version and
+a SHA-256 in [`external/sciter/VENDORED.md`](external/sciter/VENDORED.md), and `just fetch-engine`
+installs against it. The policy, and the upgrade procedure behind it, are in
+[`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ## Unreleased
 
 Fixes and hardening from a whole-repository review, [`docs/review/`](docs/review/). Headings follow
 [Keep a Changelog](https://keepachangelog.com/); the v6.0.4.9 entry below predates that and is a
 feature inventory rather than a diff, because it is the first release and there was nothing to diff
-against.
+against. Neither section has shipped — v6.0.4.9 is written up ready to tag, and this section is what
+has landed on top of it since.
 
 ### Fixed
 
@@ -131,11 +134,12 @@ against.
   `git clone` alone no longer runs an example offline; `ensure-engine` fetches on the first build, which
   is why nothing in the build needed changing. [`docs/UPGRADING.md`](docs/UPGRADING.md) carries the
   arithmetic, the runbook that was used, and why not Git LFS.
-- **`fetch-engine.py` takes a second source.** With the binaries out of history, upstream withdrawing a
-  tag would leave every past commit unbuildable. `SCITER_ENGINE_URL` (a complete URL for one file) and
-  `SCITER_ENGINE_BASE` (an alternative base) are tried in that order, both verified against the same
-  hash — so a mirror can be untrusted without being unsafe, and uploading the three binaries as release
-  assets is now a step of cutting a release.
+- **`fetch-engine.py` takes three sources.** With the binaries out of history, upstream withdrawing a
+  tag would leave every past commit unbuildable. `SCITER_ENGINE_URL` (a complete URL for one file),
+  `SCITER_ENGINE_BASE` (an alternative base) and this repository's own `engine-<tag>` release assets
+  are tried in that order, all verified against the same hash — so a mirror can be untrusted without
+  being unsafe. The third needs no environment variable, since its URL is built from the pinned tag,
+  and publishing the three binaries under that tag is now a step of cutting a release.
 - **Both "is the engine vendored?" CI gates are gone**, with the binaries they guarded: an answer that
   is now always "no" would skip every runtime step and report the job green. The macOS one could never
   fire in the first place — it globbed `lib/macosx/*/libsciter.dylib`, an architecture subdirectory that
@@ -374,10 +378,10 @@ against.
 
 - The timer tests in `examples/events.odin` flake under load.
 
-## Unreleased — v6.0.4.9
+## v6.0.4.9 — the first release, unreleased
 
 First release. Odin bindings for [Sciter.JS](https://sciter.com/) 6.0.4.9, `SCITER_API_VERSION` 10,
-vendored from [gitlab.com/sciter-engine/sciter-js-sdk](https://gitlab.com/sciter-engine/sciter-js-sdk)
+pinned to [gitlab.com/sciter-engine/sciter-js-sdk](https://gitlab.com/sciter-engine/sciter-js-sdk)
 tag `6.0.4.9-bis`.
 
 ### Packages

@@ -1108,3 +1108,48 @@ threading_work :: proc(app: ^Threading_App) {
 	}
 	sciter_app.post_callback(app.window, FINISHED, 0) // ran to the end
 }
+
+// ---------------------------------------------------------------------------------------------------
+// EMBEDDING.md, block 1 — the whole windowless loop
+
+embedding_windowless :: proc() {
+	DOC :: "<html><body>windowless</body></html>"
+
+	view, _ := sciter_app.create_windowless({width = 320, height = 240})
+	sciter_app.load_html(view.window, DOC, "about:blank")
+	sciter_app.windowless_heartbeat(&view)
+	sciter_app.paint_windowless(&view) // view.pixels is now RGBA
+}
+
+// EMBEDDING.md's second block is raw Xlib and is deliberately not here: `just cross-check` type checks
+// this file for windows_amd64 and darwin, and `vendor:x11/xlib` declares nothing off Linux. It is the
+// same exclusion `integration` and `native_child` get, for the same reason.
+
+// ---------------------------------------------------------------------------------------------------
+// BEHAVIORS.md, blocks 1 and 2 — driving an intrinsic behavior's asset, and asking its arity first
+
+behaviors_asset :: proc(input: sciter_app.Element) {
+	asset, _ := sciter_app.element_asset(input, "edit") // interface name, not tag name
+	mode, _ := sciter_app.asset_get(asset, "selectionEnd") // a property
+	n := sciter_app.value_from_string("hello")
+	_, _ = sciter_app.asset_call(asset, "insertText", {n})
+
+	arity, ok := sciter_app.asset_method_arity(asset, "showPopup") // 1, true
+
+	_, _, _ = mode, arity, ok
+}
+
+// ---------------------------------------------------------------------------------------------------
+// gotchas.md, blocks 1 and 2 — the teardown order that survives, and the one line that makes the
+// engine's diagnostics visible
+
+gotchas_teardown :: proc(window: sciter_app.Window) {
+	sciter_app.hide(window)
+	sciter_app.heartbeat() // the pump is what takes it off the paint list
+	sciter_app.close(window)
+	sciter_app.heartbeat()
+}
+
+gotchas_debug_output :: proc() {
+	sciter_app.set_default_debug_output() // before loading any document
+}

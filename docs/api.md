@@ -46,10 +46,11 @@ and `archive_item` hand back memory the engine owns.
 converts; `utf16_from_string`, `string_from_utf16` and `string_from_utf16_cstring` are exported for
 when you drop to the raw table.
 
-**Values.** Ownership rules are in
-[`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md#value) and are not repeated in
-every signature: anything a procedure returns as a `Value` owns a reference and needs `value_clear`;
-anything you pass in is not consumed.
+**Values.** Ownership is rule 2 in [`rules.md`](./rules.md), which is the page that owns it, and it is
+not repeated in every signature: anything a procedure returns as a `Value` owns a reference and needs
+`value_clear`; anything you pass in is not consumed. Every producer has a `scoped_` twin that releases
+at the end of scope. [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md#value) covers
+the type itself — what converts to what, and in which direction.
 
 **Callbacks.** Every handler struct you hand to the engine — `Event_Handler`, `Host_Handler` — has its
 address stored by the engine, so it must not move and must outlive the attachment. Each captures the
