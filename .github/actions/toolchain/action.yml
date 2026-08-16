@@ -9,6 +9,15 @@
 # carries a build date that is NOT derivable from the release tag (`dev-2026-08` unpacks
 # `odin-linux-amd64-nightly+2026-08-06/`), while just's has its binary at the root. `unpack_into`
 # below handles both by looking at what came out rather than assuming.
+#
+# **Everything installs under `~/.odin-tools/<tool>/<version>/`**, the same root and the same
+# version-in-the-path scheme `just fetch-odinfmt` uses - so CI and a developer machine lay their tools
+# out identically, and `~/.odin-tools` is the one place to look or delete. It used to be a flat
+# `~/.odin-sciter-tools/<tool>/`: project-named, so unshareable with any other Odin checkout, and
+# unversioned, so the directory could hold a version nobody asked for with nothing in the path to say
+# so. That is the failure the odinfmt pin was added to prevent, and this action was still an example
+# of it. odinfmt lands in the same tree from `just fetch-odinfmt`, so the cache below now carries it
+# too, at no extra configuration.
 name: toolchain
 description: Install Odin, just and uv - pinned, cached, no marketplace actions. odinfmt comes from `just fetch-odinfmt`.
 
@@ -50,14 +59,31 @@ runs:
           echo "odin=$odin"
           echo "odin_ext=$odin_ext"
           echo "just=$just"
-          echo "tools=$HOME/.odin-sciter-tools"
+          echo "tools=$HOME/.odin-tools"
         } >> "$GITHUB_OUTPUT"
 
     - name: Cache toolchain
       id: cache
       uses: actions/cache@v4
       with:
-        path: ~/.odin-sciter-tools
+        path: ~/.odin-tools
+        # **A shorter key than before, which is a hazard worth knowing about.** GitHub's cache service
+        # matches the requested key as a *prefix*, not just exactly - `restore-keys` are additional
+        # prefixes, not the only ones. `actions/cache` then compares what came back against the key you
+        # asked for and reports `cache-hit: false` when they differ, *having already restored the
+        # files*. So a key that is a strict prefix of an older one restores that older cache and then
+        # tells you it did not.
+        #
+        # Measured, because it broke this action: dropping the `-ols…-fmt…` components left
+        # `tools-Linux-X64-odin…-just1.55.1`, a prefix of the existing
+        # `tools-Linux-X64-odin…-just1.55.1-olsdev-2026-06-fmttrue`. 66 MB was restored, the unpack step
+        # ran anyway because cache-hit was false, and it died on `mv: cannot overwrite
+        # '~/.odin-sciter-tools/odin/base': Directory not empty` - that being the root at the time.
+        #
+        # Nothing special guards it now, because nothing needs to: the payload lives under
+        # `<tool>/<version>/`, so a restored older cache cannot occupy the directory this run wants,
+        # and `unpack_into` clears its destination regardless. If you ever shorten this key again while
+        # flattening those paths, both of those go away and this comes back.
         key: tools-${{ runner.os }}-${{ runner.arch }}-odin${{ inputs.odin-version }}-just${{ inputs.just-version }}
 
     - name: Download and unpack
@@ -77,6 +103,12 @@ runs:
             *.tar.gz) tar xzf "$archive" -C "$tmp" ;;
             *) echo "::error::unknown archive type $archive"; return 1 ;;
           esac
+          # A clean destination, because `mv` onto a populated one does not merge - it fails with
+          # "Directory not empty" per subdirectory and takes the job with it. This step already
+          # believes it is installing from scratch (it only runs on a cache miss), so anything already
+          # there is either a partial restore or a re-run, and in both cases the archive wins.
+          # `$dest` is always "$TOOLS/<tool>/<version>" and `set -u` catches an unset one.
+          rm -rf "$dest"
           mkdir -p "$dest"
           # shellcheck disable=SC2012
           if [ "$(ls -1 "$tmp" | wc -l)" -eq 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then
@@ -93,15 +125,15 @@ runs:
         odin_asset='${{ steps.plat.outputs.odin }}-${{ inputs.odin-version }}.${{ steps.plat.outputs.odin_ext }}'
         curl -fsSL -o "$odin_asset" \
           "https://github.com/odin-lang/Odin/releases/download/${{ inputs.odin-version }}/$odin_asset"
-        unpack_into "$odin_asset" "$TOOLS/odin"
-        chmod +x "$TOOLS/odin/odin" 2>/dev/null || true
+        unpack_into "$odin_asset" "$TOOLS/odin/${{ inputs.odin-version }}"
+        chmod +x "$TOOLS/odin/${{ inputs.odin-version }}/odin" 2>/dev/null || true
 
         just_asset='just-${{ inputs.just-version }}-${{ steps.plat.outputs.just }}'
         if [ "$RUNNER_OS" = "Windows" ]; then just_asset="$just_asset.zip"; else just_asset="$just_asset.tar.gz"; fi
         curl -fsSL -o "$just_asset" \
           "https://github.com/casey/just/releases/download/${{ inputs.just-version }}/$just_asset"
-        unpack_into "$just_asset" "$TOOLS/just"
-        chmod +x "$TOOLS/just/just" 2>/dev/null || true
+        unpack_into "$just_asset" "$TOOLS/just/${{ inputs.just-version }}"
+        chmod +x "$TOOLS/just/${{ inputs.just-version }}/just" 2>/dev/null || true
 
         # odinfmt is deliberately absent - `just fetch-odinfmt` installs the version the justfile pins,
         # into ~/.odin-tools/ols/<tag>/. See the note beside the inputs above.
@@ -128,8 +160,8 @@ runs:
             echo "$1" >> "$GITHUB_PATH"
           fi
         }
-        add_path "$TOOLS/odin"
-        add_path "$TOOLS/just"
+        add_path "$TOOLS/odin/${{ inputs.odin-version }}"
+        add_path "$TOOLS/just/${{ inputs.just-version }}"
 
     # uv is what `set script-interpreter` in the justfile runs, so every `[script]` recipe - `check`,
     # `lint`, `cross-check`, `example-tests` and the rest - needs it. It used to be opt-in for `bindgen`
