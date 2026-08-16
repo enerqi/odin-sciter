@@ -25,7 +25,8 @@ In this order. Each assumes the one before it.
    exit, install a debug-output handler on Windows, publish assets before the load and functors after,
    and the platform differences that run the way round you would not guess. Measured, not guessed, and
    none of it derivable from the headers.
-5. [`api.md`](./api.md) — the reference. What exists, grouped by area.
+5. [`api.md`](./api.md) — the reference. What exists, grouped by area, and complete: every exported
+   procedure is named there or `just check-api-coverage` fails the build.
 
 ## Topic guides
 

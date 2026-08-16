@@ -419,7 +419,8 @@ Python steps run through uv like every other one.
 
 The gates CI runs live in `ci.just` rather than in the justfile proper — `format-check`,
 `build-examples`, `check-ownership`, `check-affinity`, `check-invariants`, `check-doc-ownership`,
-`parity`, `stats`, `api-map-verify`, `leak-check`, `cross-check`, `window-canary`. It is `import`ed, so they are ordinary recipes: `just
+`check-api-coverage`, `parity`, `stats`, `api-map-verify`, `leak-check`, `cross-check`,
+`window-canary`. It is `import`ed, so they are ordinary recipes: `just
 parity` and `just --list` do not know the difference. Two of them are worth running by hand after an
 engine change:
 

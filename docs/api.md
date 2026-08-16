@@ -5,7 +5,9 @@ For the generated `package sciter`, [sciter.com's documentation](https://docs.sc
 1-to-1 — `api.SciterCreateWindow` is `SciterCreateWindow`.
 
 Everything below is in [`sciter_app/`](../sciter_app/), one file per area, and every procedure has a
-doc comment above it. This page is the map, not a replacement for reading them.
+doc comment above it. This page is the map, not a replacement for reading them — but it is a *complete*
+map: `just check-api-coverage` fails the build if an exported procedure is not named here, which is
+what stops this page from quietly falling behind the package. It caught three whole files missing.
 
 ## Conventions
 
@@ -92,6 +94,7 @@ exception are all completely silent.
 | `set_media_vars(window, vars: ^Value) -> Error` | media *flags*: `{dark: true}` makes `@media dark` match. Merges; switches every time. |
 | `update_window(window)` | repaint what is dirty now, rather than at the next turn of the pump |
 | `show` / `hide` / `close` / `activate` | window state; a window is created hidden. **A secondary window is closed by `hide`, a turn of the pump, then `close`** — any other order segfaults the engine |
+| `request_close(window)` | `close` with the force flag off, so script may refuse. **Not portable as a veto**: Linux closes anyway |
 | `window_state(window) -> (state, ok)` / `set_window_state` | `ok` is false when the engine answers something outside the enum — a destroyed window reports `0xFFFFFFFE` |
 | `eval(window, script) -> (Value, Error)` | script in the global scope |
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |
@@ -152,13 +155,89 @@ Native_Function :: proc(args: []Value, user_data: rawptr) -> Value
 `args` is borrowed for the call. The returned `Value` is handed to the engine, which takes ownership —
 do not clear it.
 
+## Giving engine resources back — `scoped.odin`, `value_scope.odin`, `tracking.odin`
+
+Rule 2 says every `Value` that comes out of the engine owes a `value_clear`, and a dropped one is a
+leak Odin's allocator tracking cannot see — measured, 2000 discarded `eval`s of a 100 kB string grow
+the process by 390 MB. These three files are the three ways of not having to remember.
+
+### One scope — the `scoped_` twins
+
+Each is the ordinary procedure wrapped in `@(deferred_out)`, so the result is released at the end of
+the calling scope **whatever the caller does with it** — including `_, _ = scoped_eval(…)`, which is
+the form `@(require_results)` accepts and which leaked in a real example here.
+
+```odin
+v, err := sciter_app.scoped_eval(window, "getRows()")   // released at the end of this scope
+```
+
+Readers: `scoped_eval`, `scoped_eval_element`, `scoped_call`, `scoped_call_method`,
+`scoped_call_function`, `scoped_element_value`, `scoped_expando`, `scoped_global`, `scoped_value_at`,
+`scoped_value_get`, `scoped_value_parse`, `scoped_behavior_value`, `scoped_asset_get`,
+`scoped_asset_call`.
+
+Constructors — the ones that own a reference, since `value_from_int` and friends own nothing:
+`scoped_value_from_string`, `scoped_value_from_bytes`, `scoped_value_make_array`,
+`scoped_value_from_function`, `scoped_element_to_value`, `scoped_node_to_value`,
+`scoped_value_from_image`, `scoped_value_from_path`, `scoped_value_from_text`,
+`scoped_value_from_graphics`.
+
+Elements: `scoped_make_element` and `scoped_clone_element` release the reference they hand back, which
+is correct for build-and-insert as well as for the element thrown away — the document takes its own.
+
+**Use the unscoped procedure when the resource outlives the scope**: anything stored in a struct,
+returned upwards, or handed to the engine to keep. `scoped_value_from_function` is the trap worth
+naming — a functor published with `set_global` must outlive the scope that made it.
+
+### A batch — `Value_Scope`
+
+`@(deferred_out)` releases at the end of the *calling* scope, which for a value produced in a loop body
+is one iteration. A scope covers the pile instead. The zero value is ready to use and allocates nothing
+until the first add.
+
+```odin
+scope: sciter_app.Value_Scope
+defer sciter_app.scope_release(&scope)
+
+rows := sciter_app.scope_add(&scope, sciter_app.eval(window, "getRows()")) or_return
+```
+
+`scope_add(scope, value, err = nil) -> (Value, Error)` wraps any producer and hands the value straight
+back, so `or_return` still works and a failed call's error string is captured too. `scope_release`
+clears everything in reverse order and keeps the list; `scope_destroy` also frees it; `scope_len` is
+for assertions.
+
+### The ledger — `tracking.odin`
+
+`mem.Tracking_Allocator` answers "did I leak Odin memory". This is the same ergonomic for the half it
+cannot see: `Value` references, element and node handles, taken requests, images, paths, texts,
+archives, the graphics state stack, and unanswered `.DELAYED` load requests.
+
+```odin
+sciter_app.track_resources(true)
+defer sciter_app.report_leaked_resources()   // prints what was never released, with its call site
+```
+
+`track_resources(on := true, strict := true)` turns it on and clears it — `strict` traps on the first
+**under-flow**, releasing a handle that was never acquired, which is the mistake that segfaults a
+moment later somewhere else. `report_leaked_resources() -> int` prints and counts what is outstanding.
+`outstanding_resources()` and `released_resources()` return `[Resource_Kind]int` — the second tells
+"balanced" apart from "never exercised", which is what a sweep needs to prove it drove a path at all.
+
+**All of it compiles to nothing without `-debug`**, so a release build carries no map, no lock and no
+branch, and `report_leaked_resources` returns 0 — an `assert(… == 0)` is safe to leave in a test.
+Handles are tracked exactly and name the acquiring site; `Value`s are counted rather than identified,
+because a `Value` is 16 bytes passed by value and has no address to key on. `examples/leak_sweep.odin`
+and `just leak-check` are this API used as a gate.
+
 ## The DOM — `dom.odin`
 
 `Element` (a distinct `sciter.Helement`) and `Node` (`sciter.Hnode`).
 
 | | |
 | --- | --- |
-| `use_element` / `unuse_element` | reference counting, needed only to hold a handle past the current callback |
+| `use_element` / `unuse_element` | reference counting, needed only to hold a handle past the current callback. `use_element` hands back an `Owned_Element`, and `unuse_element` accepts nothing else |
+| `borrow_element(owned) -> Element` | the free cast, for everything that reads, writes or moves an owned element |
 | `select_first(el, selector) -> (Element, Error)` | `.Not_Found` if nothing matched |
 | `select_all(el, selector, allocator) -> ([]Element, Error)` | document order; `delete` the slice |
 | `select_parent(el, selector, depth := 0) -> (Element, Error)` | `closest()`: nearest ancestor **or self**; `depth` counts from the element, 0 is unlimited |
@@ -378,7 +457,9 @@ all. See [`events.md`](./events.md#drag-and-drop).
 Animation frames: `request_animation_frame(el, code, reason)` is script's `requestAnimationFrame` from
 native code — the engine's frame clock, where `set_timer` is a millisecond clock that ticks whether or
 not anything is drawn. `code` arrives as an ordinary `.BEHAVIOR_EVENT`, so use one at or above
-`.FIRST_APPLICATION_EVENT_CODE` (the C API's 0 is `.BUTTON_CLICK`). **The handler's return value
+`.FIRST_APPLICATION_EVENT_CODE` (the C API's 0 is `.BUTTON_CLICK`) — `app_event(n)` is how to spell
+one, and it asserts the floor, because forgetting to add the base collides with an engine event.
+**The handler's return value
 decides whether it happens again** — the `.TIMER` inversion: true re-arms it for the next frame, false
 stops it. Measured, and the engine brackets each request with its own `.ANIMATION` events, `reason = 1`
 before and `reason = 0` after, which *do* bubble to a window handler.
@@ -453,7 +534,7 @@ sciter_app.set_global_asset(asset)      // *before* the document that uses it is
 
 | | |
 | --- | --- |
-| `make_asset_class(name, properties, methods, allocator)` | one per kind; must outlive the engine |
+| `make_asset_class(name, properties, methods, allocator)` / `destroy_asset_class` | one per kind; must outlive the engine, so destroying it belongs at shutdown or nowhere — every asset built from it, and anything script still holds, is dead afterwards |
 | `make_asset(class, user_data, allocator)` / `destroy_asset` | one per object; the engine holds its address, so it must not move |
 | `set_global_asset(asset)` / `release_global_asset(asset)` | publishes it as a global under the class name |
 | `element_asset(el, behavior) -> (^sciter.Som_Asset_T, Error)` | a behavior's own asset — `element_asset(input, "edit")` |
@@ -567,9 +648,10 @@ don't branch on it off Windows without checking what it reports there.
 The engine's own 2D renderer, in a second function table. Full guide:
 [`graphics.md`](./graphics.md).
 
-`Image`, `Graphics`, `Path` and `Text` are distinct handles, all reference counted (`retain_*` /
-`release_*`; releasing nil is not an error). `Color` is built with `rgb` / `rgba`, and `graphics_api()`
-is the raw table.
+`Image`, `Graphics`, `Path` and `Text` are distinct handles, all reference counted: `retain_image` /
+`retain_graphics` / `retain_path` / `retain_text` and `release_image` / `release_graphics` /
+`release_path` / `release_text`, where releasing nil is not an error. `Color` is built with `rgb` /
+`rgba`, and `graphics_api()` is the raw table.
 
 **You never create a `Graphics`** — `gCreate` answers `.NOTSUPPORTED` on this engine. The engine hands
 one to you, either offscreen through `paint_image(image, painter, user)` or onscreen through the
@@ -581,14 +663,16 @@ Images: `create_image`, `image_from_pixels`, `load_image`, `image_from_element`,
 bytes a pixel, which is how the drawing tests assert.
 
 Drawing: `set_fill_color` / `set_line_color` / `set_line_width` / `set_line_join` / `set_line_cap` /
-`set_fill_mode`, the four `set_*_gradient_*`, `save_state` / `restore_state`, `translate` / `scale` /
+`set_fill_mode`, the four gradients — `set_fill_gradient_linear` / `set_fill_gradient_radial` /
+`set_line_gradient_linear` / `set_line_gradient_radial` — `save_state` / `restore_state`, `translate` / `scale` /
 `rotate` / `skew` / `transform`, `world_to_screen` / `screen_to_world`, `draw_line` / `draw_rect` /
 `draw_rounded_rect` / `draw_ellipse` / `draw_arc` / `draw_star` / `draw_polygon` / `draw_polyline` /
 `draw_path` / `draw_image` / `draw_text`, `push_clip_rect` / `push_clip_path` / `pop_clip`, and
 `flush`. Every shape both fills and strokes.
 
-`draw_rounded_rect` is a proc group: `[4]f32` is one radius per corner, `[4][2]f32` the engine's own
-`{rx, ry}` pairs, clockwise from the top-left. `Text_Anchor`'s numbers are a **numeric keypad** - 7/8/9
+`draw_rounded_rect` is a proc group over `draw_rounded_rect_uniform` and `draw_rounded_rect_xy`:
+`[4]f32` is one radius per corner, `[4][2]f32` the engine's own `{rx, ry}` pairs, clockwise from the
+top-left. Call a member directly where the group cannot infer which you meant. `Text_Anchor`'s numbers are a **numeric keypad** - 7/8/9
 is the top row - which is not what reading order suggests.
 
 Five of these do not work on the vendored engine and are documented at their definitions and in
@@ -603,8 +687,10 @@ Text: `create_text(element, text, class_name := "")`, `create_text_with_style(el
 `text_metrics` → `Text_Metrics{min_width, max_width, height, ascent, descent, lines}`, `set_text_box`.
 Text is laid out against an element because that is where the font comes from.
 
-To script: `value_from_graphics` / `value_from_image` / `value_from_path` / `value_from_text` and the
-`value_to_*` inverses.
+To script: `value_from_graphics` / `value_from_image` / `value_from_path` / `value_from_text`, and back
+again with `value_to_graphics` / `value_to_image` / `value_to_path` / `value_to_text`. Each wrap adds a
+reference of the Value's own, so clearing the Value leaves the object usable and still owing its
+`release_*`; the `scoped_value_from_*` twins give back the Value's reference and nothing else.
 
 ## Host callback — `host.odin`
 
@@ -772,10 +858,12 @@ Reading: `request_url`, `request_content_url`, `request_method` (`"GET"`), `requ
 `request_mime`, `request_times` (engine-clock timestamps) and `request_time` → `(elapsed, done)` for
 the duration between them, `request_status` → `(state, status)`, `request_data`, `request_requestor`,
 `request_proxy_host`, `request_proxy_port`, and the three name/value lists — `request_parameters`,
-`request_headers`, `response_headers`, each with `_count` and indexed forms, all returning
-`[]Name_Value` to free with `delete_name_values`. The three lists are numbered independently, so their
-indices are three distinct types — `Parameter_Index`, `Request_Header_Index`, `Response_Header_Index` —
-and one cannot be handed to another's getter.
+`request_headers`, `response_headers` — all returning `[]Name_Value` to free with
+`delete_name_values`. Each list also has a count and an indexed getter for reading one pair without
+building the slice: `request_parameter_count` / `request_parameter`, `request_header_count` /
+`request_header`, `response_header_count` / `response_header`. The three lists are numbered
+independently, so their indices are three distinct types — `Parameter_Index`, `Request_Header_Index`,
+`Response_Header_Index` — and one cannot be handed to another's getter.
 
 Two measured behaviours worth knowing: deferring works for what the document consumes on arrival
 (images, fonts, media) but **not** for `<script src>`, which is fetched and never run if the answer

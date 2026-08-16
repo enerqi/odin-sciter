@@ -125,6 +125,13 @@ jobs:
       - name: Check the owned/borrowed split in doc listings
         run: just check-doc-ownership
 
+      # `stats --check` proves a test reaches every exported procedure; this proves the reference page
+      # names it. Three source files had no section in api.md at all - the scoped_ twins, Value_Scope
+      # and the resource ledger - which is 34 procedures a reader was sent to look up and could not
+      # find. Source plus one markdown file, no engine.
+      - name: Check docs/api.md covers the whole API
+        run: just check-api-coverage
+
       # Formatting is maintained like the type check and the vet flags, not by hand. This needs no
       # engine and writes nothing - `odinfmt` prints to stdout and the recipe compares bytes. It became
       # gateable when the formatter stopped rewriting files on every run; the justfile comment on

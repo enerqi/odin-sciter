@@ -122,6 +122,18 @@ check-ownership:
 	{{py}} .github/scripts/check-ownership.py
 
 
+# `stats --check` asserts a test reaches every exported procedure; this asserts a *reader* can find one.
+# The gap it closed was not a scattering: api.md is one section per source file and three files had no
+# section at all - `scoped.odin`, `value_scope.odin` and `tracking.odin`, which is the whole
+# leak-prevention surface and the whole debug ledger, 340 of 402 procedures mentioned. It wants the
+# literal name, so a family covered by `retain_*` does not count - a reader cannot search for a
+# wildcard either. Source and one markdown file; no engine, no display.
+# ---
+# assert docs/api.md mentions every exported procedure of sciter_app
+check-api-coverage:
+	{{py}} .github/scripts/check-api-coverage.py
+
+
 # The listings inside `//` doc comments are the one kind of Odin in this tree that nothing compiles -
 # `just check` covers the packages and `docs/snippets`, and a comment fragment has no declarations to
 # type check against. Three of them passed an `Owned_Element` where a borrowed `Element` was wanted,

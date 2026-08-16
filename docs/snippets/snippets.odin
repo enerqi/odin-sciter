@@ -688,6 +688,29 @@ dep1 :: proc() {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// api.md, the three ways of giving engine resources back
+
+api_scoped_twin :: proc(window: sciter_app.Window) {
+	v, err := sciter_app.scoped_eval(window, "getRows()") // released at the end of this scope
+	_ = v
+	_ = err
+}
+
+api_value_scope :: proc(window: sciter_app.Window) -> sciter_app.Error {
+	scope: sciter_app.Value_Scope
+	defer sciter_app.scope_release(&scope)
+
+	rows := sciter_app.scope_add(&scope, sciter_app.eval(window, "getRows()")) or_return
+	_ = rows
+	return nil
+}
+
+api_tracking :: proc() {
+	sciter_app.track_resources(true)
+	defer sciter_app.report_leaked_resources() // prints what was never released, with its call site
+}
+
+// ---------------------------------------------------------------------------------------------------
 // api.md, block 2
 
 do_thing :: proc(window: sciter_app.Window) -> sciter_app.Error {

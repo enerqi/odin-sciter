@@ -68,6 +68,13 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   not `sciter_app/` alone, the `-collection:` flag with both import spellings — `sciter:.` for the raw
   bindings, since the bare `sciter:` is a syntax error — and how the engine reaches your users. All of
   it built and run from outside the tree.
+- **`just check-api-coverage`** in CI, and the 62 procedures it found missing from
+  [`docs/api.md`](docs/api.md). The reference is organised one section per source file and **three files
+  had no section at all** — `scoped.odin`, `value_scope.odin` and `tracking.odin`, which is the whole
+  leak-prevention surface and the whole debug ledger, the two APIs `rules.md` sends a reader to look up.
+  340 of 402 procedures were named; it is 402 of 402 now, with the wildcards that used to stand in for
+  families (`retain_*`, "the four `set_*_gradient_*`", "the `value_to_*` inverses") spelled out, because
+  a reader cannot search for a wildcard and no check can see one.
 - **`just check-doc-ownership`** in CI — the listings inside `//` doc comments are the one kind of Odin
   here that nothing compiles, and three of them passed an `Owned_Element` where a borrowed `Element`
   was wanted. The check reads both the producers and the borrow-takers out of `sciter_app/*.odin`, so
