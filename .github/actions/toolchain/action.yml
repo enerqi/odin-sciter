@@ -64,7 +64,7 @@ runs:
 
     - name: Cache toolchain
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.odin-tools
         # **A shorter key than before, which is a hazard worth knowing about.** GitHub's cache service

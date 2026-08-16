@@ -51,7 +51,7 @@ jobs:
     env:
       XDG_SESSION_TYPE: x11
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The pinned tag is recorded in one place and parsed from it, so this job cannot drift from what
       # is actually vendored.
@@ -265,7 +265,7 @@ jobs:
     name: odin-c-bindgen pin drift
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Compare the pin against upstream's default branch
         id: pin
