@@ -1,5 +1,16 @@
 # Angle 11 — invariants with partial enforcement — 2026-08-16
 
+> **Later note, 2026-08-17.** The three checks proposed here shipped as `.github/scripts/check-invariants.py`
+> and have since been rewritten in Odin as `tools/checks/invariants.odin`, one subcommand of
+> `tools/checks`. `just check-invariants` is unchanged. The rewrite was not a translation: parsing rather
+> than grepping showed that rule A had been passing four procedures it should have failed. The old scan
+> took a procedure's body to run to the next column-0 declaration, so it swept up the doc comment above
+> `tracked` — which reads ``a producer reads `return tracked(v), nil` `` — and credited every caller of
+> `value_clear` with a path to the ledger. `behavior_value`, `asset_call` and the two `scoped_` twins had
+> no such path; `tracked()` was added to the two producers, and to `asset_get`'s accessor branch, which
+> has the same hole and which the per-procedure rule still cannot see. Paths named below are the ones
+> that existed when this was written.
+
 A sweep rather than an audit, and it exists because of what [`10-threading.md`](10-threading.md) turned
 out to be. R10-01 was not really a threading bug. It was a *shape*: an invariant with a chokepoint that
 only saw some of the paths, and nothing measuring the fraction. The guard watched 124 of 199 engine call

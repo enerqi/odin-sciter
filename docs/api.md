@@ -98,7 +98,7 @@ any time.
 | `create_window(opts := Window_Options{}) -> (Window, Error)` | `{}` flags means `{.MAIN}`; `0,0` size lets the engine choose. Traps in a debug build if `init` has not run — without it the window opens and the *process* faults at exit |
 | `load_html(window, html: string, base_url := "") -> Error` | UTF-8 HTML. Without a base URL, relative references have nowhere to look. |
 | `load_file(window, url: string) -> Error` | a path, `file://`, `http://`, or `this://app/...` |
-| `set_home_url(window, url) -> Error` | the base for relative references |
+| `set_home_url(window, url) -> Error` | the base that `sciter:` URLs resolve against — **not** the base for ordinary relative references; `load_html`'s `base_url` is that. Measured, see the doc comment |
 | `set_css(window, css, base_url := "", media_type := "") -> Error` | this window's sheet, under the document's own CSS and over the master one |
 | `set_media_type(window, media_type) -> Error` | `"screen"` (default), `"print"`, … — **only the first call on a window takes** |
 | `set_media_vars(window, vars: ^Value) -> Error` | media *flags*: `{dark: true}` makes `@media dark` match. Merges; switches every time. |

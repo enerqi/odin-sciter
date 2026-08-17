@@ -45,9 +45,14 @@ X11_ONLY = ("integration", "native_child")
 EXTENSIONS = ("extension", "sqlite_extension")
 
 # Everything with source to type check that is not an example: the generated bindings, the ergonomic
-# layer, and every Odin block in the guides. `check` and `cross-check` walk the same three, and used to
-# spell them out separately - which is how one of them ends up checking something the other does not.
-PACKAGES = (".", "sciter_app", "docs/snippets")
+# layer, every Odin block in the guides, and the static-check tool. `check` and `cross-check` walk the
+# same list, and used to spell them out separately - which is how one of them ends up checking
+# something the other does not.
+#
+# `tools/checks` is in here because it is Odin this repository owns, and a tool that reads the tree's
+# source has no business being the one part of the tree nothing reads. It has a `main`, which is fine:
+# every command here passes `-no-entry-point`.
+PACKAGES = (".", "sciter_app", "docs/snippets", "tools/checks")
 
 
 # The roots `just format` writes, and therefore the roots `just format-check` reads. One list, so the
@@ -56,7 +61,7 @@ PACKAGES = (".", "sciter_app", "docs/snippets")
 # `src/prelude.odin` is deliberately absent: it has no `package` line, because bindgen pastes it into
 # sciter.odin under that file's own one (see `imports_file` in bindgen.sjson). odinfmt cannot parse it
 # and fails the whole run.
-FORMAT_ROOTS = ("sciter_app", "examples", "docs/snippets")
+FORMAT_ROOTS = ("sciter_app", "examples", "docs/snippets", "tools/checks")
 
 
 def format_sources() -> list[str]:

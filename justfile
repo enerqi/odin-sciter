@@ -3,6 +3,7 @@
 #  - cost: it is a poor language for a multi-line recipe, hence uv -> python preferred for more complex tasks
 set windows-shell := ["cmd.exe", "/c"]
 set shell := ["bash", "-c"]
+set lists  # `[cache(inputs = ...)]` takes a list; see build-checks in ci.just
 set unstable  # [script] feature - https://github.com/casey/just/issues/1479
 set lazy
 
@@ -18,8 +19,10 @@ set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 # comment explaining a rule the others no longer followed. One spelling, one place to change it.
 py := "uv run --no-project -p 3.14 python"
 
-# Newest just feature used below is user-defined functions (1.49). Keep the README and `odin-skel doctor` in step.
-set minimum-version := "1.49.0"
+# Newest just features used below, in order of introduction: user-defined functions (1.49), `set lists`
+# and `split()` (1.53), and cached recipes (1.54) - the last of which is `build-checks` in ci.just, and
+# is what sets this floor. Keep docs/WINDOWS-CHECKLIST.md and `odin-skel doctor` in step.
+set minimum-version := "1.54.0"
 
 # Shared-library extension, for `just extension`. Sciter's loadLibrary() takes a name without one.
 shared_ext := if os() == "windows" { ".dll" } else if os() == "macos" { ".dylib" } else { ".so" }
@@ -83,6 +86,35 @@ odinfmt_bin := join(odin_tools, "ols", ols_tag, "odinfmt" + exe_ext)
 # `-out:` argument, but the `rerun_*` recipes invoke the binary directly, so they need the native
 # separator `join` gives. bash needs no `./` prefix - a path containing a slash is already a path.
 target_path(dir, name) := join("target", dir, name)
+
+# The static-check tool: `tools/checks`, one binary with a subcommand per check. It reads this
+# repository's own Odin through `core:odin/parser`, which is the same parser the compiler front end and
+# ols use, so a question like "what does this procedure return" is a field access rather than a regex.
+#
+# It replaces six Python scripts that between them hand-rolled four partial parsers. One binary rather
+# than six programs because `package sciter_app` is parsed once and every check reads the same index -
+# measured at 0.16 s for four checks against 0.61 s for the four Python equivalents.
+checks_bin := target_path("debug", "checks" + exe_ext)
+
+# The sources `build-checks` is cached against - see the `[cache]` attribute on that recipe in ci.just.
+#
+# Globbed rather than listed, and that is the difference between a cache that is safe and one that is
+# a trap. `[cache(inputs = ...)]` hashes each named file, so a hand-written list goes stale silently
+# the day somebody adds a file to tools/checks: the new check compiles into the binary on one machine
+# and never on CI, and nothing says so. Re-globbing on every evaluation means a new file changes the
+# input *list*, which changes the key. Measured: adding a file invalidates.
+#
+# `set lazy` is why this is affordable at all - the `shell()` call runs only for the recipes that name
+# the variable, not on every `just` invocation. It is still the expensive half of the arrangement:
+# measured at ~113 ms a call, essentially all of it uv's startup, against the ~400 ms `odin build` the
+# cache is there to skip. Across the seven checks that is 0.8 s spent to save 2.4 s, and the whole
+# warm suite runs in 1.1 s. Cheaper spellings exist (`dir /b` on Windows, `ls` elsewhere) and were not
+# taken: they need an `if os()` branch, one of them emits `\r\n`, and neither is worth a second
+# cross-platform quoting hazard for 0.7 s.
+#
+# A `"..."` string, not a `` `...` `` one: backticks are command evaluation in just, so the obvious
+# spelling runs the python before `shell()` ever sees it.
+checks_sources := trim(shell(py + " -c \"import glob;print(' '.join(sorted(glob.glob('tools/checks/*.odin'))))\""))
 
 # Which linker Odin hands the object files to. `-linker:` takes exactly four values: `default` (Odin
 # picks - MSVC `link.exe` on Windows), `lld`, `radlink` (Windows only, bundled with Odin, hence the
@@ -154,8 +186,12 @@ lint *args: ensure-engine
 	#
 	# Parallel and keep-going, for the same reasons as `check`: vet findings come in batches, and one
 	# file's worth at a time is the slow way to clear them.
+	# Not `PACKAGES`: `docs/snippets` is deliberately out, because a guide's snippet is written to read
+	# well and declares things it does not use to make a point. `tools/checks` is in - it is ordinary
+	# Odin this repository owns, and holding the tool that checks the tree to a lower bar than the tree
+	# is the wrong way round.
 	skip = host_x11_skip()
-	cmds = [["odin", "check", p, *VET, *args] for p in (".", "sciter_app")]
+	cmds = [["odin", "check", p, *VET, *args] for p in (".", "sciter_app", "tools/checks")]
 	cmds += [["odin", "check", f, "-file", *VET, *args] for f in example_sources(skip)]
 
 	codes = parallel(cmds, try_run)
@@ -170,7 +206,8 @@ lint *args: ensure-engine
 
 	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
 	all_ = "" if skip else "all "
-	print(f"ok: both library packages and {all_}{len(cmds) - 2} examples pass -vet{tail}")
+	# `- 3` for the two library packages and the check tool, leaving the example count.
+	print(f"ok: both library packages, tools/checks and {all_}{len(cmds) - 3} examples pass -vet{tail}")
 
 
 # The engine, fetched instead of vendored - see `docs/UPGRADING.md` on the repository-size decision.
@@ -458,7 +495,7 @@ test1 example test_name *args: mktarget_dirs ensure-engine
 # simple delete of all debug databases and executables in the target directory
 [unix]
 clean:
-	rm -rf target
+	rm -rf target .justcache
 	just mktarget_dirs
 
 # cmd's equivalent of `rm -rf` is `rmdir /s /q`. Guarded by `if exist` because rmdir prints "The
@@ -469,6 +506,7 @@ clean:
 [windows]
 clean:
 	if exist target rmdir /s /q target
+	if exist .justcache rmdir /s /q .justcache
 	just mktarget_dirs
 
 # It used to build `.`, which cannot work: the root package is `package sciter`, a library with no
@@ -713,8 +751,12 @@ check: ensure-engine
 
 	tail = f" (skipped, X11-only: {' '.join(skip)})" if skip else ""
 	all_ = "" if skip else "all "
-	n = len(cmds) - 3
-	print(f"ok: both packages, the doc snippets and {all_}{n} examples type check{tail}")
+	# One command per entry in `PACKAGES` plus one per example, so subtracting the former leaves the
+	# example count. Derived rather than written as a literal, because `PACKAGES` has grown twice.
+	from justlib import PACKAGES
+
+	n = len(cmds) - len(PACKAGES)
+	print(f"ok: both packages, the doc snippets, tools/checks and {all_}{n} examples type check{tail}")
 
 # Writes to stdout; redirect it to keep a copy.
 #
@@ -864,7 +906,9 @@ example-tests: ensure-engine
 	# steps over any further attributes stacked in between - without it, a test written
 	# `@(test)` / `@(private)` / `name ::` is one the bisect below never re-runs, which is the one place
 	# a missing name costs something. Requiring a declaration to follow is also what keeps prose *about*
-	# `@(test)` from counting, which `stats.py` was doing until this pattern was shared with it.
+	# `@(test)` from counting, which the test counter was doing until this pattern was shared with it.
+	# That counter is now `tools/checks/stats.odin` and asks the parser instead - a `Value_Decl` with a
+	# `test` attribute - so the two no longer have to agree about a regex.
 	TEST_NAME = re.compile(r"@\(test\)\s*(?:@\([^)]*\)\s*)*([A-Za-z_][A-Za-z0-9_]*)\s*::")
 	bisect = []
 

@@ -84,7 +84,18 @@ load_file :: proc(window: Window, url: string) -> Error {
 	return nil if ok else Api_Error.Load_Failed
 }
 
-// Sets the base URL that relative references in the document resolve against.
+// Sets the base that **`sciter:` URLs** resolve against - not the base for ordinary relative
+// references, which is what this used to claim.
+//
+// `SciterSetHomeURL`'s own header says it: set it to `http://sciter.com/modules/` and
+// `<script src="sciter:lib/root-extender.tis">` loads from `http://sciter.com/modules/lib/...`. The
+// `sciter:` scheme is the whole of its reach.
+//
+// **A relative `<link href="hello.css">` in a string document does not resolve through this.**
+// Measured on engine 6.0.4.9, windowless: with a home URL set and nothing else, the engine asks for
+// `//hello.css`, fails with error 2, and the element keeps its default style. `load_html`'s own
+// `base_url` parameter is what resolves relative references, and with it the same document styles
+// correctly. `examples/load_file.odin` has both halves as a test, so the claim cannot drift back.
 set_home_url :: proc(window: Window, url: string) -> Error {
 	w := utf16_from_string(url, context.temp_allocator)
 	ok := engine().SciterSetHomeURL(rawptr(window), raw_data(w))

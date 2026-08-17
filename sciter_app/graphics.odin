@@ -909,7 +909,7 @@ value_from_text :: proc(text: Text) -> (v: Value, err: Error) {
 // That is the opposite of the four `value_from_*` above, and the signature cannot say so the way
 // `Owned_Element` does: `Image`, `Path`, `Text` and `Graphics` are the same type in both directions. It
 // is written here because the ledger records the wrapping and not the unwrapping, which would otherwise
-// look like the omission - `.github/scripts/check-invariants.py` carries the same answer as a listed
+// look like the omission - `tools/checks/invariants.odin` carries the same answer as a listed
 // exemption, so the two cannot drift apart silently.
 //
 // **The dead handle does not report itself.** `image_size` on the image above, after the last reference

@@ -51,10 +51,11 @@ large part of what they demonstrate is unreachable from the host by design — s
 The other parity question, and the one with a countable answer: of the function-table slots the SDK's
 headers declare, how many does `package sciter_app` reach?
 
-Measured by [`.github/scripts/parity.py`](../.github/scripts/parity.py) — `just parity` — which strips
-comments and `#if 0` blocks before matching (two declarations in the headers are disabled upstream and
-would otherwise read as permanent gaps), and matches usage as `.Name` rather than `.Name(` because the
-wrappers often store or forward a slot rather than calling it on the spot.
+Measured by [`tools/checks/parity.odin`](../tools/checks/parity.odin) — `just parity` — which strips
+comments and `#if 0` blocks from the headers before matching (two declarations there are disabled
+upstream and would otherwise read as permanent gaps), and counts a slot as reached when the parsed
+`sciter_app` writes `.Name` anywhere — a mention, not a call, because the wrappers often store or
+forward a slot rather than calling it on the spot.
 
 | table | header | live slots | reached | not reached |
 | --- | --- | ---: | ---: | ---: |

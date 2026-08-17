@@ -368,7 +368,9 @@ asset_call :: proc(
 			value_clear(&result)
 			return {}, .Call_Failed
 		}
-		return result, nil
+		// The method wrote a Value the caller now owns - the `value_clear` on the failure path above is
+		// the same claim - so it is recorded. See `behavior_value` for why this was missing.
+		return tracked(result), nil
 	}
 	return {}, .Not_Found
 }
@@ -399,7 +401,11 @@ asset_get :: proc(asset: ^sciter.Som_Asset_T, property: string) -> (result: Valu
 				value_clear(&result)
 				return {}, .Call_Failed
 			}
-			return result, nil
+			// Recorded for the same reason as `asset_call`. `check-invariants` does not catch this one
+			// and cannot: its rule is per *procedure*, and the `.INT32`/`.STRING` arms below reach the
+			// ledger through `value_from_*`, so `asset_get` as a whole already satisfied it while this
+			// branch alone did not.
+			return tracked(result), nil
 		case .INT32:
 			return value_from_int(def.u._i32), nil
 		case .INT64:

@@ -9,22 +9,26 @@ background threads, drag-and-drop, graphics (both a custom-painted element and a
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 406 `@(test)` procs, and `docs/` holds 30 documents besides its index. Coverage of
+`just example-tests` runs 407 `@(test)` procs, and `docs/` holds 30 documents besides its index. Coverage of
 the wrapper is 403 of its 403 exported procedures called from a test. The five that closed that gap -
 `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members - each
 turned up something the headers do not say, which is the argument for closing coverage gaps rather than
-annotating them; the same pass measured what the three kinds of borrowed `Value` really cost and what a
-node reference really owes. See their doc comments and `docs/rules.md`.
+annotating them. A sixth, `set_home_url`, was only ever *reported* as covered: the count was a text
+search and the sole mention in the examples was a commented-out line. Rewriting the counter to read the
+parsed source dropped it, and the test written to close the gap found that `set_home_url` does not do
+what this repository said it did - see `examples/load_file.odin`. The same pass measured what the three
+kinds of borrowed `Value` really cost and what a node reference really owes. See their doc comments and
+`docs/rules.md`.
 
 `request_close` is the 402nd, and it makes the same argument again: it exists because `close` was found
 to be passing 0 for a parameter the C header calls `N/A` and the SDK's C++ layer uses as a force flag -
 so `close` was really `request_close`, and on Windows nothing was ever destroyed. Covering it measured
 the difference: `request_close` leaves the window alive even when the document refuses nothing.
 
-Every count in that paragraph comes from `just stats` (`.github/scripts/stats.py`) — examples, tests,
+Every count in that paragraph comes from `just stats` (`tools/checks/stats.odin`) — examples, tests,
 coverage and documents — and `just stats --check` fails if this file, `README.md` or `docs/README.md`
 has drifted from it, which they had, by 29 tests. The 189 slots are the exception and come from a
-different runnable check, `just api-map-verify`. **Write these as digits.** `--check` is a regex over
+different runnable check, `just api-map-verify`. **Write these as digits.** `--check` is a text search over
 the prose, so "twelve guides" was invisible to it and drifted through three separate recounts for
 exactly that reason.
 

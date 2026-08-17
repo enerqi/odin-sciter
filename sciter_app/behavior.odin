@@ -86,7 +86,13 @@ behavior_value :: proc(element: Element) -> (value: Value, handled: bool, err: E
 		value_clear(&params.val)
 		return {}, handled, err
 	}
-	return params.val, true, nil
+	// `tracked`, because the sentence above this procedure says the caller owns a reference and the
+	// debug ledger has to agree with it or `just leak-check` reports clean while leaking. This was
+	// missing until `just check-invariants` was rewritten to parse rather than to grep: the old scan
+	// took a procedure's body to run to the next column-0 declaration, swept up the doc comment above
+	// `tracked` itself - which reads "a producer reads `return tracked(v), nil`" - and credited every
+	// caller of `value_clear` with a path to the ledger.
+	return tracked(params.val), true, nil
 }
 
 // Hands a behavior a new value, through the `SET_VALUE` method. The same caveat as `behavior_value`:

@@ -10,7 +10,7 @@ Engine: 6.0.4.9, `bin/windows/x64/sciter.dll`, 19 261 952 bytes,
 
 ## What a Windows machine needs
 
-- **Odin**, **just** ≥ 1.49, and **uv**. That is the whole list. The justfile's multi-step recipes are
+- **Odin**, **just** ≥ 1.54, and **uv**. That is the whole list. The justfile's multi-step recipes are
   `[script]` Python running through `uv run --no-project -p 3.14 python`, and its one-liners run under
   `cmd.exe`, so **nothing here needs bash on Windows** - see `justlib.py`'s header for what forced that.
   The short version is that `bash` on a stock Windows PATH is the WSL launcher, so a shebang recipe

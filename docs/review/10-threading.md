@@ -1,5 +1,10 @@
 # Angle 10 — threading, affinity and the ledger under two threads — 2026-08-16
 
+> **Later note, 2026-08-17.** The gate this review proposed shipped as `.github/scripts/check-affinity.py`
+> and has since been rewritten in Odin as `tools/checks/affinity.odin`, one subcommand of `tools/checks`.
+> `just check-affinity` is unchanged and the measurement is identical — 187 guarded call sites, one
+> documented exception. Paths named below are the ones that existed when this was written.
+
 A separate, later review, not part of the nine dated 2026-08-13. It exists because the subsystem it
 covers landed **after** those closed: `5c99e32` "threading" and `0d2bd9a` "thread affinity" are both
 2026-08-15, and the review's own fix commit `743a5b0` is 2026-08-14. Between that commit and `HEAD` the

@@ -116,10 +116,46 @@ leak-check: mktarget_dirs ensure-engine
 	{{ target_path("debug", "leak_sweep.exe") }}
 
 
+# The static checks below all run out of one binary, `tools/checks`, which parses this repository's own
+# Odin with `core:odin/parser` - see the header of tools/checks/source.odin. They depend on this recipe
+# rather than each calling `odin run`, because ci.yml gives every check its own step - seven separate
+# `just` invocations, on purpose, so a failure names itself in the job list. `just` runs a shared
+# dependency once *per invocation*, which across seven invocations is seven builds; `[cache]` is what
+# makes it one.
+#
+# **Odin has no build cache of its own.** It recompiles and relinks every time, 0.37 s for this
+# package, so without the attribute a build recipe buys nothing over `odin run` (0.40 s) and is less
+# clear. The attribute is the entire reason this recipe exists.
+#
+# **How the invalidation works, because getting it wrong here means a gate that runs a stale binary.**
+# `[cache(inputs = ..., outputs = ...)]` BLAKE3-hashes each named input file and requires each named
+# output to exist; a bare `[cache]` with neither keys on the recipe body alone, which for a build is
+# the worst available behaviour. `inputs` is a *list*, so `set lists` is on, and it is globbed through
+# `checks_sources` rather than written out - see the comment there for why a hand-written list is a
+# trap. Measured, all four cases: no change caches, an edited source rebuilds, a *new* source rebuilds,
+# and a deleted binary rebuilds.
+#
+# `[cache]` is only accepted on a `[script]` recipe, which is why this is one.
+#
+# just's own documentation calls cached recipes "inherently fragile". The mitigation here is that the
+# output is a build artifact under `target/` and `just clean` removes it: if this is ever wrong, the
+# repair is the thing you would have tried anyway.
+# ---
+# build the static-check tool, skipping the build when nothing under tools/checks has changed
+[script]
+[cache(inputs = split(checks_sources, " "), outputs = checks_bin)]
+build-checks: mktarget_dirs
+	import sys
+	sys.path.insert(0, ".github/scripts")
+	from justlib import run
+
+	run(["odin", "build", "tools/checks", "-out:{{checks_bin}}"])
+
+
 # ---
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
-check-ownership:
-	{{py}} .github/scripts/check-ownership.py
+check-ownership: build-checks
+	{{checks_bin}} ownership
 
 
 # `stats --check` asserts a test reaches every exported procedure; this asserts a *reader* can find one.
@@ -130,8 +166,8 @@ check-ownership:
 # wildcard either. Source and one markdown file; no engine, no display.
 # ---
 # assert docs/api.md mentions every exported procedure of sciter_app
-check-api-coverage:
-	{{py}} .github/scripts/check-api-coverage.py
+check-api-coverage: build-checks
+	{{checks_bin}} api-coverage
 
 
 # The listings inside `//` doc comments are the one kind of Odin in this tree that nothing compiles -
@@ -142,9 +178,9 @@ check-api-coverage:
 # fragment that can be checked without a compiler. `--self-test` runs it against that listing.
 # ---
 # assert the owned/borrowed split in the listings inside doc comments and guides
-check-doc-ownership:
-	{{py}} .github/scripts/check-doc-ownership.py --self-test
-	{{py}} .github/scripts/check-doc-ownership.py
+check-doc-ownership: build-checks
+	{{checks_bin}} doc-ownership --self-test
+	{{checks_bin}} doc-ownership
 
 
 # Rule 1's static half. `guard_engine_thread` is the runtime check and it only sees calls that reach it,
@@ -154,8 +190,8 @@ check-doc-ownership:
 # went unwatched. No engine and no display needed.
 # ---
 # assert the thread-affinity rule in docs/rules.md section 1: every engine call goes through engine()
-check-affinity:
-	{{py}} .github/scripts/check-affinity.py
+check-affinity: build-checks
+	{{checks_bin}} affinity
 
 
 # Three more invariants of the same shape, each true today and each held true by nobody: a Value handed
@@ -165,8 +201,8 @@ check-affinity:
 # hole. No engine and no display needed.
 # ---
 # assert the ledger and callback-context invariants: tracked(), track_acquire(), and `context =`
-check-invariants:
-	{{py}} .github/scripts/check-invariants.py
+check-invariants: build-checks
+	{{checks_bin}} invariants
 
 
 # The other half of the same question. `api-map-verify` proves the slots the bindings expect are the
@@ -177,8 +213,8 @@ check-invariants:
 # surprise afterwards. No engine and no display needed - it reads headers and .odin files.
 # ---
 # C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
-parity *args:
-	{{py}} .github/scripts/parity.py {{args}}
+parity *args: build-checks
+	{{checks_bin}} parity {{args}}
 
 
 # The counts the documentation quotes about itself - examples, tests, wrapper procs, and how many of
@@ -187,8 +223,8 @@ parity *args:
 # `\.name\b`, not `\.name(`, because a wrapper is as often stored or forwarded as called.
 # ---
 # suite and coverage counts; `just stats --check` asserts the docs still agree
-stats *args:
-	{{py}} .github/scripts/stats.py {{args}}
+stats *args: build-checks
+	{{checks_bin}} stats {{args}}
 
 
 # The precondition every windowed test has and none of them states. A machine with no working EGL/GLES
