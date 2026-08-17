@@ -403,9 +403,11 @@ Tasks run with [just](https://just.systems/).
 The root package is a library with no `main`, so the usual build-profile recipes are pointed at
 examples instead. Each takes an example name:
 
-- `just run NAME` / `run_release NAME` / `run_release_debug NAME` … — the same profiles, on one example.
-  `just example` and `just run` are two names for the debug one, so `rerun` works after either
-- `just rerun NAME` — re-run the last build without recompiling
+- `just example_debug NAME` / `example_fast_debug` / `example_release_debug` / `example_release` /
+  `example_release_nochecks` — the same build profiles, each on one example. `just example` is the short
+  spelling of `example_debug`, and the only alias in the family
+- `just example_rerun_debug NAME` — re-run the last debug build without recompiling; there is one
+  `example_rerun_*` per profile above
 - `just sanitize NAME` — run one example under ASan
 - `just test` / `just test1 EXAMPLE TEST` / `just test_sanitize EXAMPLE` — the tests
 

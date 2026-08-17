@@ -523,9 +523,10 @@ types that are already right, or the same conversions get written twice.
     [`WINDOWS-CHECKLIST.md`](./WINDOWS-CHECKLIST.md) and [`MACOS-CHECKLIST.md`](./MACOS-CHECKLIST.md);
     what macOS still lacks is a human who has looked at a window.
 11. ~~Native extensions (`SciterLibraryInit`)~~ **done** — not in the original plan. See §11 below.
-12. **Housekeeping** — ~~reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes,
-    `run_*` / `rerun_*` / `sanitize` / `test` recipes~~ **done**: they now take an example name and
-    keep their build profiles. (Done already: `git init`; `.gitignore`
+12. **Housekeeping** — ~~reworking the skeleton's `run_*` / `rerun_*` / `sanitize` / `test` recipes~~
+    **done**: they take an example name and keep their build profiles, and have since been renamed
+    `example_*` / `example_rerun_*` — the root package is a library, so `just run` read as though this
+    project shipped an application. `just example` is the one surviving alias. (Done already: `git init`; `.gitignore`
     negations so the skeleton's `*.so` / `*.dll` / `*.dylib` build-artifact patterns do not silently
     exclude the vendored engine; `.gitattributes` already marks those extensions `binary`.)
 

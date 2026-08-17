@@ -19,10 +19,32 @@ set script-interpreter := ["uv", "run", "--no-project", "-p", "3.14", "python"]
 # comment explaining a rule the others no longer followed. One spelling, one place to change it.
 py := "uv run --no-project -p 3.14 python"
 
-# Newest just features used below, in order of introduction: user-defined functions (1.49), `set lists`
-# and `split()` (1.53), and cached recipes (1.54) - the last of which is `build-checks` in ci.just, and
-# is what sets this floor. Keep docs/WINDOWS-CHECKLIST.md and `odin-skel doctor` in step.
+# Newest just features used below, in order of introduction: `[group]` (1.33), `--groups` (1.47),
+# user-defined functions (1.49), `--list --group` (1.50), `set lists` and `split()` (1.53), and cached
+# recipes (1.54) - the last of which is `build-checks` in ci.just, and is what sets this floor. Keep
+# docs/WINDOWS-CHECKLIST.md and `odin-skel doctor` in step.
 set minimum-version := "1.54.0"
+
+# **Every recipe carries a `[group('...')]`, and a new one should too.** Seven groups, and they are the
+# split this project already made informally - in the recipe names (`example_*`, `example_rerun_*`,
+# `check-*`, `fetch-*`) and in the division between this file and `ci.just`:
+#
+#	examples    launch one: example_*, inspector, diagnose, time_*
+#	test        the test suite and the sanitizers
+#	gates       everything ci.yml runs to pass or fail a change
+#	build       produce an artifact that is not an example: bindings, extensions, the .pak, docs
+#	toolchain   fetch and ensure the pinned tools, make the output directories, clean
+#	release     cut a version
+#	editor      Sublime Text integration
+#
+# `just --groups` lists them, `just --list --group gates` lists one. **Invocation is unchanged** -
+# `just parity` is still `just parity`, which is why this and not `mod`: a module is a real namespace
+# and would break every `run: just <recipe>` line in ci.yml, every inner `just` call (`ensure-engine`
+# shells out to `just fetch-engine`), and every cross-file dependency, since variables, settings and
+# recipes do not cross a module boundary. Measured: a module does not even inherit `set windows-shell`.
+#
+# Nothing enforces the attribute. A recipe written without one is not an error - it lists above the
+# first heading, which is the whole of the feedback you get.
 
 # Shared-library extension, for `just extension`. Sciter's loadLibrary() takes a name without one.
 shared_ext := if os() == "windows" { ".dll" } else if os() == "macos" { ".dylib" } else { ".so" }
@@ -83,7 +105,7 @@ odinfmt_bin := join(odin_tools, "ols", ols_tag, "odinfmt" + exe_ext)
 
 # `join`, not the `/` operator: `/` always emits a forward slash, and cmd.exe rejects a forward-slash
 # path in *command* position ("'target' is not recognized") even quoted. Odin takes either in an
-# `-out:` argument, but the `rerun_*` recipes invoke the binary directly, so they need the native
+# `-out:` argument, but the `example_rerun_*` recipes invoke the binary directly, so they need the native
 # separator `join` gives. bash needs no `./` prefix - a path containing a slash is already a path.
 target_path(dir, name) := join("target", dir, name)
 
@@ -124,7 +146,7 @@ checks_sources := trim(shell(py + " -c \"import glob;print(' '.join(sorted(glob.
 # Override for one command without editing this file - for `-lto`, which on Windows *requires* lld, or
 # for a machine that has mold when the project default does not assume it:
 #
-#     ODIN_LINKER=lld just run_release -lto:thin
+#     ODIN_LINKER=lld just example_release -lto:thin
 #
 # An env var rather than a recipe argument because `odin` errors on a repeated flag ("Previous flag set:
 # 'linker'"), so a `-linker:` passed through a recipe's `*args` would collide with the one added below.
@@ -151,6 +173,7 @@ import 'release.just'
 # about.
 # ---
 # odinfmt every odin file in the project
+[group('gates')]
 format: ensure-odinfmt
 	{{odinfmt_bin}} -w sciter.odin
 	{{odinfmt_bin}} -w sciter_app
@@ -168,6 +191,7 @@ format: ensure-odinfmt
 # ---
 # lint checks for style and potential bugs. No code generation
 [script]
+[group('gates')]
 lint *args: ensure-engine
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -228,6 +252,7 @@ lint *args: ensure-engine
 # `--force` re-fetches over a file that is already there.
 # ---
 # download the pinned engine into lib/, verified against its SHA-256
+[group('toolchain')]
 fetch-engine *args: require-uv
 	{{py}} .github/scripts/fetch-engine.py {{engine_tag}} {{engine_sha256}} {{engine_rel}} {{args}}
 
@@ -243,6 +268,7 @@ fetch-engine *args: require-uv
 # ---
 # fail with instructions if uv is missing
 [unix]
+[group('toolchain')]
 @require-uv:
 	command -v uv >/dev/null 2>&1 || { \
 	  echo "uv is not on PATH, and every Python recipe here runs through it."; \
@@ -255,6 +281,7 @@ fetch-engine *args: require-uv
 # ---
 # fail with instructions if uv is missing
 [windows]
+[group('toolchain')]
 @require-uv:
 	where uv >nul 2>&1 || (echo uv is not on PATH, and every Python recipe here runs through it. & echo Install it with:  irm https://astral.sh/uv/install.ps1 ^| iex & echo or see https://docs.astral.sh/uv/getting-started/installation/ & exit /b 1)
 
@@ -263,12 +290,14 @@ fetch-engine *args: require-uv
 # ---
 # make sure the engine is on disk before anything tries to build against it
 [unix]
+[group('toolchain')]
 @ensure-engine:
 	test -f {{engine_path}} || just fetch-engine
 
 # ---
 # make sure the engine is on disk before anything tries to build against it
 [windows]
+[group('toolchain')]
 @ensure-engine:
 	if not exist {{engine_path}} just fetch-engine
 
@@ -277,6 +306,7 @@ fetch-engine *args: require-uv
 # read one value - see the comment there for the drift that made this necessary.
 # ---
 # download the pinned odinfmt into ~/.odin-tools, verified against its SHA-256
+[group('toolchain')]
 fetch-odinfmt *args: require-uv
 	{{py}} .github/scripts/fetch-odinfmt.py {{ols_tag}} {{ols_plat}} {{ols_sha256}} {{args}}
 
@@ -285,12 +315,14 @@ fetch-odinfmt *args: require-uv
 # ---
 # make sure the pinned odinfmt is installed before formatting with it
 [unix]
+[group('toolchain')]
 @ensure-odinfmt:
 	test -f "{{odinfmt_bin}}" || just fetch-odinfmt
 
 # ---
 # make sure the pinned odinfmt is installed before formatting with it
 [windows]
+[group('toolchain')]
 @ensure-odinfmt:
 	if not exist "{{odinfmt_bin}}" just fetch-odinfmt
 
@@ -299,6 +331,7 @@ fetch-odinfmt *args: require-uv
 # ---
 # ensure the build artifacts top level directory exists
 [unix]
+[group('toolchain')]
 @mktarget_dirs:
 	mkdir -p target/debug target/fast_debug target/release_debug target/release target/release_nochecks
 
@@ -307,47 +340,52 @@ fetch-odinfmt *args: require-uv
 # ---
 # ensure the build artifacts top level directory exists
 [windows]
+[group('toolchain')]
 @mktarget_dirs:
 	for %d in (debug fast_debug release_debug release release_nochecks) do @if not exist target\%d md target\%d || exit /b 1
 
 # `-debug` implies `-o:none`, so this is the fastest to compile and the friendliest to step through.
-# (-keep-executable so `rerun_debug` can skip recompiling)
+# (-keep-executable so `example_rerun_debug` can skip recompiling)
 # ---
 # run with debug build
-run_debug name="hello_window" *args: mktarget_dirs ensure-engine
+[group('examples')]
+example_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
-alias run := run_debug
 
 # `-o:minimal` is one rung above the `-debug` default of `-o:none`: still quick to compile and mostly
 # faithful to step through, but noticeably faster at runtime.
-# (-keep-executable so `rerun_fast_debug` can skip recompiling)
+# (-keep-executable so `example_rerun_fast_debug` can skip recompiling)
 # ---
 # run with debug info and light optimizations
-run_fast_debug name="hello_window" *args: mktarget_dirs ensure-engine
+[group('examples')]
+example_fast_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -o:minimal -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("fast_debug", name + ".exe") }} {{args}}
 
 # Release codegen with debug info retained: for profiling and for chasing bugs that only appear under
 # optimization. Slowest to compile, and the debugger will jump around inlined/reordered code.
-# (-keep-executable so `rerun_release_debug` can skip recompiling)
+# (-keep-executable so `example_rerun_release_debug` can skip recompiling)
 # ---
 # run with full optimizations AND debug info
-run_release_debug name="hello_window" *args: mktarget_dirs ensure-engine
+[group('examples')]
+example_release_debug name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_debug", name + ".exe") }} {{args}}
 
-# run with optimizations (-keep-executable so `rerun_release` can skip recompiling)
-run_release name="hello_window" *args: mktarget_dirs ensure-engine
+# run with optimizations (-keep-executable so `example_rerun_release` can skip recompiling)
+[group('examples')]
+example_release name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -o:speed -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release", name + ".exe") }} {{args}}
 
-# `run_release` plus every runtime safety check compiled out: `-no-bounds-check` (slice/array indexing),
+# `example_release` plus every runtime safety check compiled out: `-no-bounds-check` (slice/array indexing),
 # `-disable-assert` (the built-in `assert`) and `-no-type-assert` (union/any type assertions). Those
 # checks are what turn a memory-corrupting bug into a clean panic, so a fault here is undefined
-# behaviour rather than a readable message - benchmark against `run_release` before adopting it, and
+# behaviour rather than a readable message - benchmark against `example_release` before adopting it, and
 # keep a checked build in your test matrix. `-o:aggressive` exists too but Odin flags it as risky.
-# (-keep-executable so `rerun_release_nochecks` can skip recompiling)
+# (-keep-executable so `example_rerun_release_nochecks` can skip recompiling)
 # ---
 # run with optimizations and ALL runtime safety checks removed
-run_release_nochecks name="hello_window" *args: mktarget_dirs ensure-engine
+[group('examples')]
+example_release_nochecks name="hello_window" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -o:speed -no-bounds-check -disable-assert -no-type-assert -microarch:native -keep-executable -linker:{{linker}} -out:{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
 # KIND is `address` (default, ASan: out-of-bounds and use-after-free), `memory` (reads of uninitialized
@@ -372,6 +410,7 @@ run_release_nochecks name="hello_window" *args: mktarget_dirs ensure-engine
 # Usage:  just sanitize   or   just sanitize thread -- --my-arg
 # ---
 # run a debug build under a sanitizer (address | memory | thread)
+[group('test')]
 sanitize name="hello_window" kind="address" *args: mktarget_dirs ensure-engine
 	odin run examples/{{name}}.odin -file -debug -sanitize:{{kind}} -out:{{ target_path("debug", f"sanitize-{{kind}}-{{name}}.exe") }} {{args}}
 
@@ -392,6 +431,7 @@ sanitize name="hello_window" kind="address" *args: mktarget_dirs ensure-engine
 # ---
 # run the tests under a sanitizer (address | memory | thread)
 [script]
+[group('test')]
 test_sanitize name="eval" kind="address" *args: mktarget_dirs
 	import os, re, subprocess, sys
 	sys.path.insert(0, ".github/scripts")
@@ -418,32 +458,36 @@ test_sanitize name="eval" kind="address" *args: mktarget_dirs
 		*r"""{{args}}""".split(),
 	], env=env)
 
-# Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `run_debug`/`run` build.
+# Odin has no build cache, so a plain `run` always rebuilds. Requires a prior `example_debug`/`run` build.
 # ---
 # re-run the last debug binary WITHOUT recompiling
-rerun_debug name="hello_window" *args:
+[group('examples')]
+example_rerun_debug name="hello_window" *args:
 	{{ target_path("debug", name + ".exe") }} {{args}}
 
-alias rerun := rerun_debug
 
-# re-run the last fast_debug binary without recompiling. Requires a prior `run_fast_debug` build.
-rerun_fast_debug name="hello_window" *args:
+# re-run the last fast_debug binary without recompiling. Requires a prior `example_fast_debug` build.
+[group('examples')]
+example_rerun_fast_debug name="hello_window" *args:
 	{{ target_path("fast_debug", name + ".exe") }} {{args}}
 
-# re-run the last release_debug binary without recompiling. Requires a prior `run_release_debug` build.
-rerun_release_debug name="hello_window" *args:
+# re-run the last release_debug binary without recompiling. Requires a prior `example_release_debug` build.
+[group('examples')]
+example_rerun_release_debug name="hello_window" *args:
 	{{ target_path("release_debug", name + ".exe") }} {{args}}
 
-# re-run the last release binary without recompiling. Requires a prior `run_release` build.
-rerun_release name="hello_window" *args:
+# re-run the last release binary without recompiling. Requires a prior `example_release` build.
+[group('examples')]
+example_rerun_release name="hello_window" *args:
 	{{ target_path("release", name + ".exe") }} {{args}}
 
-# re-run the last nochecks binary without recompiling. Requires a prior `run_release_nochecks` build.
-rerun_release_nochecks name="hello_window" *args:
+# re-run the last nochecks binary without recompiling. Requires a prior `example_release_nochecks` build.
+[group('examples')]
+example_rerun_release_nochecks name="hello_window" *args:
 	{{ target_path("release_nochecks", name + ".exe") }} {{args}}
 
 # hyperfine (https://github.com/sharkdp/hyperfine) times whole *processes*, and is installed separately.
-# Over `rerun_release`'s binary rather than `just run_release`: Odin has no build cache, so timing the
+# Over `example_rerun_release`'s binary rather than `just example_release`: Odin has no build cache, so timing the
 # recipe would mostly time the compiler - build first. `-N` skips the shell hyperfine would otherwise
 # spawn per run, at the cost that the command is split on whitespace rather than parsed: no pipes,
 # redirects or quoted arguments containing spaces.
@@ -467,15 +511,17 @@ rerun_release_nochecks name="hello_window" *args:
 #         just time_release eval               ... a different example
 #         just time_release api_map --flag=x   ... passing arguments to the program
 # ---
-# time an example's release binary end to end with hyperfine (needs a prior run_release)
+# time an example's release binary end to end with hyperfine (needs a prior example_release)
+[group('examples')]
 time_release name="api_map" *args:
 	hyperfine -N --warmup 3 "target/release/{{name}}.exe {{args}}"
 
 # A/B two build profiles in one run - hyperfine prints the ratio between them, which is the number worth
-# knowing about `-no-bounds-check`. Times both binaries, so needs a prior `run_release` AND
-# `run_release_nochecks` of the same example.
+# knowing about `-no-bounds-check`. Times both binaries, so needs a prior `example_release` AND
+# `example_release_nochecks` of the same example.
 # ---
 # compare an example's release and nochecks binaries with hyperfine
+[group('examples')]
 time_profiles name="api_map" *args:
 	hyperfine -N --warmup 3 "target/release/{{name}}.exe {{args}}" "target/release_nochecks/{{name}}.exe {{args}}"
 
@@ -489,11 +535,13 @@ alias test := example-tests
 #     just test1 eval test_value_array
 # ---
 # run one named test from one example (comma-separated for several)
+[group('test')]
 test1 example test_name *args: mktarget_dirs ensure-engine
 	odin test examples/{{example}}.odin -file -debug -microarch:native -define:ODIN_TEST_THREADS=1 -define:ODIN_TEST_NAMES={{test_name}} -linker:{{linker}} -out:{{ target_path("debug", example + "_test.exe") }} {{args}}
 
 # simple delete of all debug databases and executables in the target directory
 [unix]
+[group('toolchain')]
 clean:
 	rm -rf target .justcache
 	just mktarget_dirs
@@ -504,6 +552,7 @@ clean:
 # ---
 # simple delete of all debug databases and executables in the target directory
 [windows]
+[group('toolchain')]
 clean:
 	if exist target rmdir /s /q target
 	if exist .justcache rmdir /s /q .justcache
@@ -512,9 +561,10 @@ clean:
 # It used to build `.`, which cannot work: the root package is `package sciter`, a library with no
 # `main`, so every invocation died on `Undefined entry point procedure 'main'` before printing a single
 # timing. Repointed at `examples/NAME.odin` like the rest of the build family, and to the same output
-# path as `run_debug` so `just rerun NAME` finds what this built.
+# path as `example_debug` so `just example_rerun_debug NAME` finds what this built.
 # ---
 # build an example with some verbose diagnostics
+[group('examples')]
 diagnose name="hello_window" *args: mktarget_dirs ensure-engine
 	odin build examples/{{name}}.odin -file -debug -microarch:native -show-more-timings -show-debug-messages -show-timings -linker:{{linker}} -out:{{ target_path("debug", name + ".exe") }} {{args}}
 
@@ -525,6 +575,7 @@ diagnose name="hello_window" *args: mktarget_dirs ensure-engine
 # ---
 # install the editor snippets + build systems into Sublime Text's global `Packages/User` directory
 [script]
+[group('editor')]
 install-sublime:
 	import os, sys, shutil
 	home = os.path.expanduser("~")
@@ -562,13 +613,14 @@ install-sublime:
 
 
 # Opening the project in Sublime then exposes project-local build variants (Tools -> Build System) with
-# no global install. Seeds one working `just run` build plus commented-out examples to extend. Refuses
+# no global install. Seeds one working `just example` build plus commented-out examples to extend. Refuses
 # if a build_systems entry already exists. (Excluded from the Just-Odin snippet because it contains
 # literal `$file` / `$project_path` which would be parsed as snippet fields; still copied into new
 # projects by `just new`.)
 # ---
 # add a `build_systems` stub to the project's .sublime-project
 [script]
+[group('editor')]
 sublime-build-init:
 	import glob, os, sys
 	matches = glob.glob(os.path.join(".sublime", "*.sublime-project"))
@@ -598,7 +650,7 @@ sublime-build-init:
 		'            // string escaping: `\\\\(` in this file is the regex `\\(` (a literal open paren).\n'
 		'            "file_regex": "^(.+)\\\\(([0-9]+):([0-9]+)\\\\) (.+)$",\n'
 		'\n'
-		'            "shell_cmd": "just run",\n'
+		'            "shell_cmd": "just example",\n'
 		'\n'
 		'            // uncomment / extend; each variant appears under Tools -> Build With... Sublime expands\n'
 		'            // these build variables in shell_cmd / working_dir (full list:\n'
@@ -610,7 +662,7 @@ sublime-build-init:
 		'            //   $project_path    directory containing this .sublime-project file\n'
 		'            // "variants":\n'
 		'            // [\n'
-		'            //     { "name": "release",                "shell_cmd": "just run_release" },\n'
+		'            //     { "name": "release",                "shell_cmd": "just example_release" },\n'
 		'            //     { "name": "test",                   "shell_cmd": "just test" },\n'
 		'            //     { "name": "lint",                   "shell_cmd": "just lint" },\n'
 		'            //     { "name": "current file (run)",     "shell_cmd": "odin run \\"$file\\" -file -debug" },\n'
@@ -639,18 +691,20 @@ sublime-build-init:
 # odin-sciter
 #
 # The root package here is `package sciter` - a generated library with no `main` - so the skeleton's
-# `run_*` / `rerun_*` / `sanitize` / `test*` recipes have been repointed at `examples/NAME.odin`, which
+# `example_*` / `sanitize` / `test*` recipes have been repointed at `examples/NAME.odin`, which
 # is where every `main` and every `@(test)` in this repository lives. They keep their build profiles and
 # their names, and each takes an example name:
 #
-#     just run                     # hello_window, debug
-#     just run_release dom_walk    # optimized
-#     just rerun events            # last debug build, no recompile
-#     just sanitize eval           # under ASan
-#     just test                    # every example's tests
-#     just test_sanitize eval      # those tests under ASan
+#     just example                     # hello_window, debug
+#     just example_release dom_walk    # optimized
+#     just example_rerun_debug events  # last debug build, no recompile
+#     just sanitize eval               # under ASan
+#     just test                        # every example's tests
+#     just test_sanitize eval          # those tests under ASan
 #
-# `just example NAME` remains the short spelling of `just run NAME`.
+# `just example NAME` is the short spelling of `just example_debug NAME`. The skeleton's `run_*` /
+# `rerun_*` names are gone: this project builds no application, so `just run` read as though it
+# did. `run` and `rerun` were aliases and were dropped with them.
 #
 # One trap, and it is not optional: Sciter is single-threaded - every ISciterAPI call has to come from
 # the thread that ran SCITER_APP_INIT - while Odin's test runner is parallel by default. Every test
@@ -694,6 +748,7 @@ bindgen_commit := "12f4e7a"
 # have to read stays a diff about the generator. The second check confirms the formatter broke nothing.
 # ---
 # regenerate the bindings from external/sciter/include
+[group('build')]
 bindgen: require-bindgen-pin ensure-odinfmt
 	{{py}} src/flatten_headers.py
 	{{bindgen_bin}} .
@@ -707,6 +762,7 @@ bindgen: require-bindgen-pin ensure-odinfmt
 # rather than failing, because `$ODIN_C_BINDGEN` may legitimately point outside a git checkout.
 # ---
 # fail if the local odin-c-bindgen is not at the commit bindgen.yml verifies against
+[group('toolchain')]
 @require-bindgen-pin: require-uv
 	{{py}} .github/scripts/check-bindgen-pin.py "{{bindgen_bin}}" {{bindgen_commit}}
 
@@ -726,6 +782,7 @@ bindgen: require-bindgen-pin ensure-odinfmt
 # ---
 # type check both packages, the guides' snippets and every example
 [script]
+[group('gates')]
 check: ensure-engine
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -771,6 +828,7 @@ check: ensure-engine
 #   just doc .            # the generated bindings
 # ---
 # print a package's documentation (sciter_app, or `.` for the generated bindings)
+[group('build')]
 doc pkg="sciter_app" *args:
 	odin doc {{pkg}} {{args}}
 
@@ -796,6 +854,7 @@ doc pkg="sciter_app" *args:
 # ---
 # rebuild examples/assets/app.pak from examples/assets/app/
 [script]
+[group('build')]
 pack:
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -814,11 +873,13 @@ pack:
 # odin-sqlite` builds the SQLite binding. The library name is what script's `loadLibrary` is given.
 # ---
 # build a native extension -> target/debug/<lib>.so
+[group('build')]
 extension name="extension" lib="odin-ext": mktarget_dirs
 	odin build examples/{{name}}.odin -file -build-mode:shared -out:{{ target_path("debug", lib + shared_ext) }}
 
 # build the SQLite extension and run it under the SDK's scapp
 [script]
+[group('build')]
 extension-sqlite: (extension "sqlite_extension" "odin-sqlite")
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -836,6 +897,7 @@ extension-sqlite: (extension "sqlite_extension" "odin-sqlite")
 # ---
 # build the extension and run it under the SDK's scapp
 [script]
+[group('build')]
 extension-run: extension
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -856,6 +918,7 @@ extension-run: extension
 # above a recipe, so a paragraph written after it becomes the description and reads as a fragment.
 # ---
 # run the tests inside one example, e.g. `just example-test eval`
+[group('test')]
 example-test name="eval" *args: mktarget_dirs ensure-engine
 	odin test examples/{{name}}.odin -file -debug -keep-executable -define:ODIN_TEST_THREADS=1 -linker:{{linker}} -out:{{ target_path("debug", name + "_test.exe") }} {{args}}
 
@@ -872,6 +935,7 @@ example-test name="eval" *args: mktarget_dirs ensure-engine
 # ---
 # run every example's tests
 [script]
+[group('test')]
 example-tests: ensure-engine
 	import glob, os, sys
 	sys.path.insert(0, ".github/scripts")
@@ -990,14 +1054,16 @@ example-tests: ensure-engine
 		raise SystemExit(1)
 	print("ok: every example's tests passed")
 
-# `example` is the name the docs use and `run_debug` is the name the build-profile family uses, and they
+# `example` is the name the docs use and `example_debug` is the name the build-profile family uses,
+# and they
 # were two recipes writing the *same* `target/debug/NAME.exe` with different flags. That is worse than
 # duplication: `example` lacked `-keep-executable`, and `odin run` deletes the executable afterwards by
-# default - so the workflow README documents, `just example NAME` then `just rerun NAME`, could not work,
-# and whichever of the two you ran last silently decided what `rerun` found. One recipe, two names.
+# default - so the workflow README documents, `just example NAME` then `just example_rerun_debug NAME`,
+# could not work, and whichever of the two you ran last silently decided what the re-run found.
+# One recipe, two names.
 # ---
 # build and run an example, e.g. `just example hello_window`
-alias example := run_debug
+alias example := example_debug
 
 
 # Launches the SDK's inspector - the DevTools-style DOM tree, style viewer, console and debugger. It is
@@ -1015,6 +1081,7 @@ alias example := run_debug
 # ---
 # run the SDK's inspector, to attach to a window built with .ENABLE_DEBUG
 [script]
+[group('examples')]
 inspector:
 	import sys
 	sys.path.insert(0, ".github/scripts")

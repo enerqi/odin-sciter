@@ -1,6 +1,6 @@
 // A window with some HTML in it, using nothing but the generated bindings.
 //
-//   just run hello_window        (or: odin run examples/hello_window.odin -file)
+//   just example hello_window        (or: odin run examples/hello_window.odin -file)
 //
 // This is the spike that proves the whole approach: one shared library opened at runtime, one exported
 // symbol, and every call made through the ISciterAPI function table. Note what is NOT here - no GTK on

@@ -6,6 +6,10 @@
 # resolve from there.
 #
 # Everything below is called by `.github/workflows/ci.yml` except where a comment says otherwise.
+#
+# Almost everything here is `[group('gates')]` - that is what this file is. The exceptions are
+# `build-checks`, which is toolchain, and they are grouped for `just --list` only: see the note above
+# `set minimum-version` in the justfile for the seven groups and for why this is `[group]` and not `mod`.
 
 # The gate for `just format`. **Idempotence is the whole precondition** - a formatter that rewrites a
 # file on every run can never be a gate, because the gate then fails on a clean checkout. It holds here:
@@ -17,6 +21,7 @@
 # ---
 # fail if anything is not odinfmt-clean, without writing to it
 [script]
+[group('gates')]
 format-check: ensure-odinfmt
 	import subprocess, sys
 	sys.path.insert(0, ".github/scripts")
@@ -51,6 +56,7 @@ format-check: ensure-odinfmt
 # ---
 # build and link every example - the coverage `check` cannot give you
 [script]
+[group('gates')]
 build-examples: mktarget_dirs ensure-engine
 	import os, subprocess, sys
 	sys.path.insert(0, ".github/scripts")
@@ -90,6 +96,7 @@ build-examples: mktarget_dirs ensure-engine
 # ---
 # run api_map and assert its table (slots, version, symbols, null list)
 [script]
+[group('gates')]
 api-map-verify: mktarget_dirs
 	import subprocess, sys
 
@@ -111,6 +118,7 @@ api-map-verify: mktarget_dirs
 # header of examples/leak_sweep.odin for why the check cannot live in a test binary.
 # ---
 # exercise the resource-owning paths and fail if anything is still held by the engine at exit
+[group('gates')]
 leak-check: mktarget_dirs ensure-engine
 	odin build examples/leak_sweep.odin -file -debug -out:{{ target_path("debug", "leak_sweep.exe") }}
 	{{ target_path("debug", "leak_sweep.exe") }}
@@ -144,6 +152,7 @@ leak-check: mktarget_dirs ensure-engine
 # build the static-check tool, skipping the build when nothing under tools/checks has changed
 [script]
 [cache(inputs = split(checks_sources, " "), outputs = checks_bin)]
+[group('toolchain')]
 build-checks: mktarget_dirs
 	import sys
 	sys.path.insert(0, ".github/scripts")
@@ -154,6 +163,7 @@ build-checks: mktarget_dirs
 
 # ---
 # assert the ownership rule in docs/rules.md section 4: takes an allocator => yours, otherwise borrowed
+[group('gates')]
 check-ownership: build-checks
 	{{checks_bin}} ownership
 
@@ -166,6 +176,7 @@ check-ownership: build-checks
 # wildcard either. Source and one markdown file; no engine, no display.
 # ---
 # assert docs/api.md mentions every exported procedure of sciter_app
+[group('gates')]
 check-api-coverage: build-checks
 	{{checks_bin}} api-coverage
 
@@ -178,6 +189,7 @@ check-api-coverage: build-checks
 # fragment that can be checked without a compiler. `--self-test` runs it against that listing.
 # ---
 # assert the owned/borrowed split in the listings inside doc comments and guides
+[group('gates')]
 check-doc-ownership: build-checks
 	{{checks_bin}} doc-ownership --self-test
 	{{checks_bin}} doc-ownership
@@ -190,6 +202,7 @@ check-doc-ownership: build-checks
 # went unwatched. No engine and no display needed.
 # ---
 # assert the thread-affinity rule in docs/rules.md section 1: every engine call goes through engine()
+[group('gates')]
 check-affinity: build-checks
 	{{checks_bin}} affinity
 
@@ -201,6 +214,7 @@ check-affinity: build-checks
 # hole. No engine and no display needed.
 # ---
 # assert the ledger and callback-context invariants: tracked(), track_acquire(), and `context =`
+[group('gates')]
 check-invariants: build-checks
 	{{checks_bin}} invariants
 
@@ -213,6 +227,7 @@ check-invariants: build-checks
 # surprise afterwards. No engine and no display needed - it reads headers and .odin files.
 # ---
 # C-API coverage: which SCFN slots sciter_app reaches, checked against the committed baseline
+[group('gates')]
 parity *args: build-checks
 	{{checks_bin}} parity {{args}}
 
@@ -223,6 +238,7 @@ parity *args: build-checks
 # `\.name\b`, not `\.name(`, because a wrapper is as often stored or forwarded as called.
 # ---
 # suite and coverage counts; `just stats --check` asserts the docs still agree
+[group('gates')]
 stats *args: build-checks
 	{{checks_bin}} stats {{args}}
 
@@ -243,6 +259,7 @@ stats *args: build-checks
 # ---
 # [under Xvfb only] can the engine create a window on this machine?
 [linux]
+[group('gates')]
 window-canary: mktarget_dirs
 	.github/scripts/window-canary.sh
 
@@ -250,6 +267,7 @@ window-canary: mktarget_dirs
 # ---
 # can the engine create a window on this machine?
 [macos]
+[group('gates')]
 window-canary: mktarget_dirs
 	.github/scripts/macos-canary.sh
 
@@ -277,6 +295,7 @@ window-canary: mktarget_dirs
 # ---
 # run every windowed example as a program and check it stays up
 [script]
+[group('gates')]
 windowed-examples: mktarget_dirs ensure-engine
 	import os, sys
 	sys.path.insert(0, ".github/scripts")
@@ -345,6 +364,7 @@ windowed-examples: mktarget_dirs ensure-engine
 # ---
 # type check both packages, the snippets and every portable example for windows and macOS
 [script]
+[group('gates')]
 cross-check: ensure-engine
 	import os, sys
 	sys.path.insert(0, ".github/scripts")

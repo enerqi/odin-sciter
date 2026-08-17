@@ -2,7 +2,7 @@
 // symbol it belongs to. This is the tool that verifies the generated bindings actually line up with
 // the shipped engine.
 //
-//   just run api_map
+//   just example api_map
 //
 // Expected output on Linux, one line per slot:
 //

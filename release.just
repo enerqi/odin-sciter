@@ -21,6 +21,7 @@
 # ---
 # promote CHANGELOG.md's Unreleased section to a version heading
 [script]
+[group('release')]
 release version:
 	import datetime, re, sys
 
@@ -84,6 +85,7 @@ release version:
 # ---
 # print the CHANGELOG.md section for a version
 [script]
+[group('release')]
 changelog_section version:
 	import re, sys
 
