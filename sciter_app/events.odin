@@ -76,6 +76,7 @@ detach_window_handler :: proc(window: Window, handler: ^Event_Handler) -> Error 
 event_trampoline :: proc "system" (tag: rawptr, he: sciter.Helement, evtg: sciter.Event_Groups, prms: rawptr) -> b32 {
 	handler := (^Event_Handler)(tag)
 	context = handler.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 	// Right after attaching, the engine asks what to send. Answering is not optional: a handler that
 	// ignores this receives nothing.

@@ -361,6 +361,35 @@ request_close :: proc(window: Window) {
 	close(window, force = false)
 }
 
+// Tears a secondary window down in the one order that survives: `hide`, a turn of the pump, `close`,
+// and a turn of the pump to let the close happen.
+//
+// `close`'s comment above has the five-row measurement this is the conclusion of, and the reason the
+// order cannot be guessed: the pump is what takes a hidden window off the paint list, so hiding and
+// closing in the same turn segfaults exactly like closing outright. Four of the five ways to do this
+// crash; this is the fifth, written down once instead of in every application.
+//
+// **This is for the way out, not for a window the user closed a dialog on.** In an application the
+// answer is to hide a secondary window and keep it - reopening is a `show`, the document is untouched,
+// and there is no teardown to get wrong. `examples/workbench.odin` does both and pins the order with a
+// test.
+//
+// **Do not call it on a `.MAIN` window.** Closing the last main window is what ends `run`, so an
+// application does not tear that one down by hand; `run` returns and `shutdown` follows.
+//
+// It pumps, so it has to be called from the engine's thread and not from inside an event handler -
+// pumping from inside a handler re-enters the engine on a stack it did not expect. On the way out of
+// `main` is the place.
+close_secondary :: proc(window: Window) {
+	if window == nil {
+		return
+	}
+	hide(window)
+	heartbeat() // not optional: without this turn the close segfaults on the next one
+	close(window)
+	heartbeat() // the close happens here, not in the call above
+}
+
 // Brings the window forward and gives it focus.
 activate :: proc(window: Window, bring_to_front := true) {
 	engine().SciterWindowExec(rawptr(window), .ACTIVATE, uintptr(1 if bring_to_front else 0), 0)

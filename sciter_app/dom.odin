@@ -1056,5 +1056,6 @@ Sort_Sink :: struct {
 sort_callback :: proc "system" (he1: sciter.Helement, he2: sciter.Helement, param: rawptr) -> i32 {
 	sink := (^Sort_Sink)(param)
 	context = sink.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 	return i32(sink.cmp(Element(he1), Element(he2), sink.user_data))
 }

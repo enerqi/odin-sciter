@@ -954,6 +954,7 @@ Paint_Call :: struct {
 paint_trampoline :: proc "system" (prm: rawptr, gfx: sciter.Hgfx, width, height: u32) {
 	call := (^Paint_Call)(prm)
 	context = call.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 	call.painter(Graphics(gfx), width, height, call.user)
 }
 

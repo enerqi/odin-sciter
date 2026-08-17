@@ -17,6 +17,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:math"
 import vmem "core:mem/virtual"
+import "core:strings"
 import "core:sync"
 import "core:time"
 
@@ -1109,6 +1110,27 @@ pump_with_a_boundary_block :: proc() {
 		// ... your per-turn work, DOM reads, whatever ...
 		free_all(context.temp_allocator)
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// rules.md, what a callback may and may not keep
+//
+// `App` there is an application struct with a `log`; this one is local to the snippet because the file's
+// shared `App` stub is the one `calling-between-odin-and-js.md` uses.
+
+Logging_App :: struct {
+	log: [dynamic]string,
+}
+
+callback_temp_lifetime_block :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	app := (^Logging_App)(handler.user_data)
+
+	name, _ := sciter_app.text(event.element, context.temp_allocator)
+	if name == "quit" {sciter_app.stop()} 	// fine: used and dropped inside the callback
+
+	append(&app.log, name) // WRONG: that memory is gone when this returns
+	append(&app.log, strings.clone(name)) // right: an allocator that outlives the callback
+	return false
 }
 
 // ---------------------------------------------------------------------------------------------------

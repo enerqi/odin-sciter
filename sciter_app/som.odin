@@ -512,6 +512,7 @@ make_asset_getter :: proc "contextless" ($N: int) -> sciter.Som_Prop_Getter_T {
 	thunk :: proc "system" (thing: ^sciter.Som_Asset_T, out: ^Value) -> b32 {
 		asset := (^Asset)(thing)
 		context = asset.ctx
+		callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 		property := asset.class.properties[N]
 		if property.get == nil {
@@ -532,6 +533,7 @@ make_asset_setter :: proc "contextless" ($N: int) -> sciter.Som_Prop_Setter_T {
 	thunk :: proc "system" (thing: ^sciter.Som_Asset_T, value: ^Value) -> b32 {
 		asset := (^Asset)(thing)
 		context = asset.ctx
+		callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 		property := asset.class.properties[N]
 		if property.set == nil {
@@ -547,6 +549,7 @@ make_asset_method :: proc "contextless" ($N: int) -> sciter.Som_Method_T {
 	thunk :: proc "system" (thing: ^sciter.Som_Asset_T, argc: u32, argv: ^Value, out: ^Value) -> b32 {
 		asset := (^Asset)(thing)
 		context = asset.ctx
+		callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 		method := asset.class.methods[N]
 		if method.call == nil {

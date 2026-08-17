@@ -21,6 +21,17 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 
 ### Breaking
 
+- **Temp memory allocated inside a callback no longer outlives that callback.** Every callback that runs
+  your code — event handlers, host notifications, native functors, SOM getters/setters/methods, paint
+  procs, `value_each` visitors, element comparators — now unwinds `context.temp_allocator` to the mark it
+  had when the engine called in, which is what gives an application driven by `run` a temp boundary at
+  all (see Added). Anything a callback keeps has to be cloned or allocated from something that outlives
+  it. This was always the contract; with nothing ever calling `free_all` it had no symptom, and it has
+  one now. Three example files were relying on it and are fixed.
+- **`init` installs the default debug output** unless you pass `debug_output = false`. Programs that
+  installed their own handler *after* `init` are unaffected — `set_debug_output` still replaces it.
+  Programs relying on the engine's `OutputDebugStringW` fallback will now see diagnostics on stderr
+  instead.
 - **`make_element`, `clone_element`, `use_element` and `remove_element(finalize = false)` return an
   `Owned_Element`**, and `unuse_element` accepts only that — releasing a handle you never held no longer
   compiles. `borrow_element(owned)` is the free cast. Affects code that creates, clones, holds or
@@ -47,6 +58,19 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 
 ### Added
 
+- **A temp-allocator boundary at every callback**, in `callback_temp_scope`. `run` is the engine's own
+  loop and never returns to application code, so an application whose handlers do DOM work had nowhere to
+  put `free_all` and the arena grew for the life of the process. It is a watermark rather than a
+  `free_all`, because the engine dispatches handlers synchronously from inside this package's own calls
+  and freeing the arena there would take the argument buffer of the call still on the stack. Measured:
+  64 deliveries allocating 64 KB each grow the arena by 8 MB without it and by nothing with it
+  (`examples/events.odin`).
+- **`examples/app_skeleton.odin`** — the step between `getting-started.md`'s five calls and
+  `task_list`'s thousand lines: a model, one render, one handler and the four rules a first program gets
+  wrong, in about 200 lines meant to be copied and cut down. Five tests, two of which fail if the escape
+  or the clone is removed.
+- **`close_secondary(window)`** — hide, pump, close, pump: the one teardown order for a secondary window
+  that does not segfault, as one call. The five-row measurement stays on `close`.
 - **`just fetch-engine` / `just ensure-engine`** — the engine is downloaded and hash-verified rather
   than vendored, from three sources in order so a withdrawn upstream tag cannot strand a past commit.
   [`docs/UPGRADING.md`](docs/UPGRADING.md).

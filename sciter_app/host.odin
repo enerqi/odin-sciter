@@ -336,6 +336,7 @@ host_trampoline :: proc "system" (pns: ^sciter.Sciter_Callback_Notification, par
 	}
 	handler := (^Host_Handler)(param)
 	context = handler.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 	// SCITER_CALLBACK_NOTIFICATION is the common head of a family of structs; `code` says which one
 	// this really is. The notification codes are plain `#define`s upstream, so they are constants here

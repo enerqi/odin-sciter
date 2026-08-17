@@ -150,6 +150,7 @@ library the engine loads (`just extension`), `leak_sweep` is a gate (`just leak-
 | `call_odin_from_js` | The other direction: exposing an Odin procedure — and an Odin object — to script |
 | `dom_walk` | CSS selectors, traversal, and reading and writing text and attributes |
 | `events` | Handling DOM events in Odin, without any script in the document |
+| `app_skeleton` | **The shape of an application, at its smallest** — a model, one render, one handler, and the four rules a first program gets wrong. The step between `getting-started.md` and `task_list` |
 | `behavior` | Driving the built-in widgets — a real click, hit testing, and a behavior method of your own |
 | `input` | Real mouse and keyboard input from Odin, animation frames, and an element's script object |
 | `task_list` | **A whole small application** — an Odin model, one render, keyboard commands, saved state, no script |
@@ -329,10 +330,10 @@ the way are in other people's code, and both have reproductions written down the
   exceptions in ordinary operation. A patch is written, verified and ready to submit upstream:
   [`docs/odin-test-runner-windows.patch`](docs/odin-test-runner-windows.patch)
 
-**One thing every Windows application here must do: call `set_default_debug_output()` (or install your
-own handler).** With none installed the engine reports diagnostics through `OutputDebugStringW`, which
-Windows implements by raising an exception — harmless in a normal run, fatal under anything that treats
-first-chance exceptions as errors.
+**Every Windows application needs a debug-output handler installed, and `init` now installs one.** With
+none the engine reports diagnostics through `OutputDebugStringW`, which Windows implements by raising an
+exception — harmless in a normal run, fatal under anything that treats first-chance exceptions as
+errors. `init(debug_output = false)` opts out; `set_debug_output` replaces the handler with your own.
 
 Linux runtime dependencies are modest and satisfied by a stock desktop install: fontconfig, freetype,
 EGL, GLESv2, expat, zlib, libpng, brotli, libstdc++. **Sciter 6 does not use GTK** — 4.x did, and much

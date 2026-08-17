@@ -1950,8 +1950,12 @@ took_an_element :: proc(args: []sciter_app.Value, user_data: rawptr) -> sciter_a
 	if err != nil {
 		return sciter_app.value_from(false)
 	}
+	// `tag` is a borrow of the engine's own storage. The attribute is a copy, and **it must not be a
+	// temp one**: this runs inside an engine callback, and the package restores
+	// `context.temp_allocator` to the mark it had on the way in - so a temp string read after the
+	// callback is whatever landed in that memory next. The test frees this one.
 	state.seen_tag, _ = sciter_app.tag(el)
-	state.seen_id, _ = sciter_app.attribute(el, "id", context.temp_allocator)
+	state.seen_id, _ = sciter_app.attribute(el, "id")
 	return sciter_app.value_from(true)
 }
 
@@ -1979,6 +1983,7 @@ test_elements_cross_the_script_boundary :: proc(t: ^testing.T) {
 	state := Boundary_State {
 		root = root,
 	}
+	defer delete(state.seen_id) // `took_an_element` allocates it; see the note there
 
 	// Globals belong to the document, so publishing has to happen after the load `test_window` did.
 	// The engine releases a functor when the document that holds it goes away - which is the *next*
@@ -2703,9 +2708,12 @@ record_custom :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Even
 	if !ok || be.code != .CUSTOM {
 		return false
 	}
-	append(&log.names, sciter_app.event_name(be, context.temp_allocator))
+	// The log outlives this callback and so must what goes in it - `new_log` explains why the whole
+	// thing is on the default allocator, and the package's callback boundary is why the temp arena is
+	// not an option: it is restored to the mark it had on the way in. See `callback_temp_scope`.
+	append(&log.names, sciter_app.event_name(be, runtime.default_allocator()))
 
-	rendered, _ := sciter_app.value_to_display_string(be.data, .JSON_LITERAL, context.temp_allocator)
+	rendered, _ := sciter_app.value_to_display_string(be.data, .JSON_LITERAL, runtime.default_allocator())
 	append(&log.data, rendered)
 	return log.claim
 }

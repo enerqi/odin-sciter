@@ -337,8 +337,11 @@ commit_entry :: proc(app: ^App) {
 		return
 	}
 
-	value, verr := sciter_app.element_value(entry)
-	defer sciter_app.value_clear(&value)
+	// The scoped twin of `element_value`: the same call with the release attached to this scope. For a
+	// Value read here and used here - which is most of them - it is the one to reach for, and the leak
+	// is then impossible rather than remembered. `to_value` below is the other case, where the Value is
+	// the return value and the caller owes the clear.
+	value, verr := sciter_app.scoped_element_value(entry)
 	if verr != nil {
 		return
 	}
@@ -348,8 +351,7 @@ commit_entry :: proc(app: ^App) {
 	}
 
 	if _, added := add_task(app, title); added {
-		empty := sciter_app.value_from("")
-		defer sciter_app.value_clear(&empty)
+		empty := sciter_app.scoped_value_from_string("")
 		sciter_app.set_element_value(entry, &empty)
 		render(app)
 	}

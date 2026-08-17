@@ -6,7 +6,7 @@ example worth reading. Match it when you add one.
 
 **This file used to be a worklist**, written 2026-08-11 against a tree with 21 examples and 183 tests:
 close the coverage gap batch by batch, then build one larger application. That work is done — the tree
-is at 30 examples and 396 tests, `workbench` is the larger application, and coverage is every exported
+is at 31 examples and 404 tests, `workbench` is the larger application, and coverage is every exported
 procedure of `sciter_app` reached from a test (`just stats`). The batches, the proposal and their
 acceptance boxes are in the history; what survived them is below, because it is the part that applies to
 the *next* example rather than to that one.

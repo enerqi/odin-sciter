@@ -276,36 +276,66 @@ The same test does not work for a `Value`, which is why §2 above is a page of p
 covering four contracts, and the signature cannot tell you which. The `scoped_*` procedures are the way
 out of that for the common case — see below.
 
-### You own the temp-allocator boundary
+### A callback is a temp-allocator boundary, and the package takes it
 
 There are ~75 uses of `context.temp_allocator` inside the wrapper, and every one of them bumps *your*
 arena: `dom.odin` alone does it 19 times, `window.odin` 10, `host.odin` 9. Any call taking a string,
 a selector or a URL is one of them.
 
-**Nothing in this package ever calls `free_all`**, deliberately — the arena is the caller's and the
-library has no idea where your boundaries are. That means a long-running program that never frees it
-grows forever, one selector at a time, and the growth looks like a leak in the bindings when it is not.
+**Every callback that runs your code restores the arena to where it was when the engine called in.**
+An event handler, a host notification, a native functor, a SOM getter/setter/method, a paint proc, a
+`value_each` visitor and an element comparator all open with that mark and unwind to it on the way out.
+So a handler that reads text, walks a selector and builds a string costs the arena nothing across the
+life of the program, however long it runs and whichever pump shape you chose.
 
-Pick a boundary and put it somewhere unconditional:
+That is not a convenience — it is the only boundary an application driven by `run` *could* have. `run`
+is the engine's own loop and never comes back to your code in between, so before this the arena grew for
+the life of the process and the growth looked like a leak in the bindings.
+
+**It is a mark, not a `free_all`, and the difference is load-bearing.** The engine dispatches handlers
+synchronously from inside this package's own calls: `set_text` builds its UTF-16 in the temp arena and
+then calls the engine, which can deliver an event before returning. Unwinding to the callback's own
+watermark leaves the outer call's buffer alone; a `free_all` there would free an argument the engine is
+still reading. `examples/events.odin` pins both halves with a test.
+
+**What this costs you: temp memory does not survive the callback that allocated it.**
+
+```odin
+on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+    app := (^App)(handler.user_data)
+
+    name, _ := sciter_app.text(event.element, context.temp_allocator)
+    if name == "quit" {sciter_app.stop()}   // fine: used and dropped inside the callback
+
+    append(&app.log, name)                  // WRONG: that memory is gone when this returns
+    append(&app.log, strings.clone(name))   // right: an allocator that outlives the callback
+    return false
+}
+```
+
+Storing scratch in application state was always a bug — the arena is documented as scratch, and any
+`free_all` boundary would have taken it — but under a plain `run` with nothing ever freeing, the bug had
+no symptom. It has one now, and it is a use-after-free rather than a slow leak, so it is worth a look
+through your handlers when you move onto this version.
+
+**Outside a callback the arena is still yours**, and nothing in this package ever calls `free_all`. Your
+own main-line code — everything before `run`, and everything in a `run_once` loop you drive yourself —
+keeps whatever boundary you choose:
 
 ```odin
 for sciter_app.run_once() {
     sciter_app.heartbeat()
     // ... your per-turn work, DOM reads, whatever ...
-    free_all(context.temp_allocator)   // the boundary
+    free_all(context.temp_allocator)   // your boundary; the handlers already have theirs
 }
 ```
 
-The three that fall out naturally:
-
-| boundary | why |
-| --- | --- |
-| one turn of the pump | the common case for a windowed application; everything scratch dies with the frame |
-| one event handler | a handler that does substantial DOM work, if a frame is too coarse |
-| one served request | `on_load_data` can build a lot of strings, and the answer is copied out before you return |
-
 `free_all` on an arena is a pointer reset, so a boundary costs nothing and having one is what makes the
 temp allocator the right default for scratch in the first place.
+
+**A program that installs its own temp allocator keeps its own policy.** The mark is taken through
+Odin's default temp allocator, which reports nothing to take when `context.temp_allocator` is somebody
+else's — so the package does not silently reset an arena it does not understand.
 
 ### The capture rule: attach from where the object will live
 

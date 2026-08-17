@@ -39,7 +39,8 @@ Skip these and the cost is a debugging session, not a compile error.
   affinity, `Value` ownership, handle lifetimes, and which allocator a call uses. Short, and the one
   page here that is not optional.
 - [`gotchas.md`](./gotchas.md) — the things that cost a day each. Close every window before you exit,
-  install a debug-output handler on Windows, publish assets before the load and functors after.
+  publish assets before the load and functors after, and do not `switch` on an event code without a
+  default arm.
 
 ## The smallest program
 
@@ -50,8 +51,7 @@ import "../sciter_app"
 
 main :: proc() {
 	if !sciter_app.load_engine() {return}   // opens libsciter.so, prints where it looked on failure
-	sciter_app.init()                       // hands the engine argc/argv - required before any window
-	sciter_app.set_default_debug_output()   // route CSS/script errors to stderr - see below
+	sciter_app.init()                       // argc/argv, and the debug output - required before any window
 
 	window, err := sciter_app.create_window({width = 720, height = 480})
 	if err != nil {return}
@@ -69,7 +69,7 @@ Five calls in a fixed order, and the order is not negotiable:
 | Call | Why it must be there |
 | --- | --- |
 | `load_engine` | opens the shared library and fetches the API table. Nothing works before it. |
-| `init` | `SCITER_APP_INIT`. The engine wants argv, as UTF-16. Skipping it faults **at process exit**, not here — see below. |
+| `init` | `SCITER_APP_INIT`. The engine wants argv, as UTF-16. Skipping it faults **at process exit**, not here — see below. It also installs the debug output, unless you pass `debug_output = false`. |
 | `create_window` | `.MAIN` is the default flag, and it is what makes closing the window end `run` |
 | `show` | a window is created hidden |
 | `run` | Sciter's own pump — no GTK, no Win32 loop, on any platform |
@@ -84,33 +84,46 @@ way out of `main`, exit code 139, with nothing on the stack naming the omission.
 `init` exits 0. A debug build now traps inside `create_window` instead, where the call is still on the
 stack; a release build gets the exit fault, so this is a line to write rather than a check to rely on.
 
-**Nothing frees `context.temp_allocator` for you, and `run` never comes back to your code.** Every call
-that takes a string, a selector or a URL builds its argument in that arena, so an application whose
-handlers do DOM work grows for as long as it lives. Pick a boundary — one turn of the pump is the usual
-one — and [`rules.md`](./rules.md#you-own-the-temp-allocator-boundary) has the three worth choosing
-between:
+**`run` never comes back to your code, and your handlers are where the scratch memory is spent.** Every
+call that takes a string, a selector or a URL builds its argument in `context.temp_allocator`, and `run`
+is the engine's own loop — so there was nowhere for an application to put `free_all`. The package takes
+that boundary itself now: **every callback that runs your code unwinds the temp arena to where it was
+when the engine called in.** A handler can read text, walk selectors and build strings for the life of
+the program without the arena growing.
+
+The cost is the other side of the same rule: **temp memory does not outlive the callback that made it.**
+Anything a handler keeps — a label appended to application state, a string stashed for a `.DELAYED`
+request — needs `context.allocator`, a clone, or an arena of its own.
+
+Your own main-line code is untouched, and nothing in this package ever calls `free_all`, so if you drive
+the pump yourself the boundary there is still yours to choose:
 
 ```odin
 for sciter_app.run_once() {
 	sciter_app.heartbeat()
-	free_all(context.temp_allocator)   // the boundary
+	free_all(context.temp_allocator)   // your boundary; the handlers already have theirs
 }
 ```
+
+[`rules.md`](./rules.md#a-callback-is-a-temp-allocator-boundary-and-the-package-takes-it) is the whole
+rule.
 
 The examples import `sciter_app` by relative path because they live inside this repository. For your
 own program, vendor the repository and point an Odin collection at it —
 [`using-in-your-project.md`](./using-in-your-project.md) is that page, with the flag, what the minimum
 checkout is, and how the engine reaches your users.
 
-## Install the debug output, first
-
-```odin
-sciter_app.set_default_debug_output()
-```
+## The debug output, which `init` installs for you
 
 Without a debug output handler installed, **a CSS typo, a bad URL and a script exception are all
-completely silent**. The document simply renders wrong, or renders empty, with nothing on stderr. This
-is the single most confusing thing about a first Sciter document, and one line fixes it:
+completely silent**. The document simply renders wrong, or renders empty, with nothing on stderr. That
+is the single most confusing thing about a first Sciter document — and on Windows it is worse than
+confusing, because the engine's fallback is `OutputDebugStringW`, which raises an exception that can be
+fatal to any process treating first-chance exceptions as errors.
+
+So `init` installs the default handler unless you tell it not to (`init(debug_output = false)`), and
+`set_default_debug_output()` is the same call if you want it somewhere else — on one window, or after
+having installed your own. What arrives looks like this:
 
 ```
 [sciter CSS Warning] unknown property 'flexx'
@@ -207,6 +220,7 @@ parallel by default. Every test recipe here passes `-define:ODIN_TEST_THREADS=1`
 
 | You want to | Read |
 | --- | --- |
+| **see the shape of a whole program** | [`examples/app_skeleton.odin`](../examples/app_skeleton.odin) — a model, one render, one handler, ~200 lines |
 | **use this from your own project** | [`using-in-your-project.md`](./using-in-your-project.md) |
 | **get the four contracts right** | [`rules.md`](./rules.md) |
 | **avoid the footguns that cost a day each** | [`gotchas.md`](./gotchas.md) |
@@ -226,3 +240,9 @@ notes marked as such.
 
 The examples are ordered by difficulty and each is a single self-contained file with the explanation
 in its header comment. `just example NAME` runs one.
+
+**The one to read after this page is [`app_skeleton`](../examples/app_skeleton.odin).** The program above
+is five calls and a window; an application is a model, a render, a handler and the four contracts in
+[`rules.md`](./rules.md), and that example is the smallest thing that has all of them —
+about 200 lines, no cleverness, meant to be copied and cut down. `task_list` is the same shape once it
+has grown a keyboard, persistence and a real UI, and `workbench` is what it looks like under load.

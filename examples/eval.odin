@@ -593,13 +593,32 @@ Walk :: struct {
 	stop_after: int,
 }
 
+// Both lists and every key in them, given back. They are filled from inside an engine callback and
+// read after it, so they cannot live in the temp arena - see `collect`.
+@(private = "file")
+walk_destroy :: proc(walk: ^Walk) {
+	for key in walk.keys {
+		// An array's keys arrive as the literal "" that `collect` substitutes, which is not an
+		// allocation and must not be freed as one.
+		if len(key) > 0 {
+			delete(key)
+		}
+	}
+	delete(walk.keys)
+	delete(walk.values)
+}
+
 @(private = "file")
 collect :: proc(key: ^sciter_app.Value, value: ^sciter_app.Value, user_data: rawptr) -> bool {
 	walk := (^Walk)(user_data)
 
 	// `value_to_string` allocates, so the key is the walk's own copy rather than a borrow of the
-	// engine's storage - which is what makes it safe to keep past the callback.
-	if k, err := sciter_app.value_to_string(key, context.temp_allocator); err == nil {
+	// engine's storage. **The allocator is the other half of keeping it**: this runs inside an engine
+	// callback, and the package restores `context.temp_allocator` to the mark it had on the way in - so
+	// a temp copy dies with the callback that made it, and a `[dynamic]` grown here dies with it too.
+	// Anything a callback keeps needs an allocator that outlives the callback; `walk_destroy` gives
+	// these back. See `callback_temp_scope` in sciter_app/sciter_app.odin.
+	if k, err := sciter_app.value_to_string(key); err == nil {
 		append(&walk.keys, k)
 	} else {
 		// An array reports its keys as undefined rather than as indexes, and that is what lands here.
@@ -624,10 +643,8 @@ test_value_each_walks_maps_and_arrays :: proc(t: ^testing.T) {
 		sciter_app.value_set(&m, key, &element)
 	}
 
-	walk := Walk {
-		keys   = make([dynamic]string, context.temp_allocator),
-		values = make([dynamic]i32, context.temp_allocator),
-	}
+	walk: Walk
+	defer walk_destroy(&walk)
 	testing.expect_value(t, sciter_app.value_each(&m, collect, &walk), nil)
 	testing.expect_value(t, len(walk.keys), 3)
 	testing.expect_value(t, walk.keys[0], "a")
@@ -644,10 +661,8 @@ test_value_each_walks_maps_and_arrays :: proc(t: ^testing.T) {
 		sciter_app.value_set_at(&array, i, &element)
 	}
 
-	over_array := Walk {
-		keys   = make([dynamic]string, context.temp_allocator),
-		values = make([dynamic]i32, context.temp_allocator),
-	}
+	over_array: Walk
+	defer walk_destroy(&over_array)
 	testing.expect_value(t, sciter_app.value_each(&array, collect, &over_array), nil)
 	testing.expect_value(t, len(over_array.values), 3)
 	testing.expect_value(t, over_array.values[2], i32(14))
@@ -668,10 +683,9 @@ test_value_each_stops_and_refuses :: proc(t: ^testing.T) {
 
 	// Returning false ends the walk where it is.
 	early := Walk {
-		keys       = make([dynamic]string, context.temp_allocator),
-		values     = make([dynamic]i32, context.temp_allocator),
 		stop_after = 2,
 	}
+	defer walk_destroy(&early)
 	testing.expect_value(t, sciter_app.value_each(&array, collect, &early), nil)
 	testing.expect_value(t, len(early.values), 2)
 
@@ -679,10 +693,8 @@ test_value_each_stops_and_refuses :: proc(t: ^testing.T) {
 	scalar := sciter_app.value_from(i32(9))
 	defer sciter_app.value_clear(&scalar)
 
-	untouched := Walk {
-		keys   = make([dynamic]string, context.temp_allocator),
-		values = make([dynamic]i32, context.temp_allocator),
-	}
+	untouched: Walk
+	defer walk_destroy(&untouched)
 	testing.expect_value(
 		t,
 		sciter_app.value_each(&scalar, collect, &untouched),

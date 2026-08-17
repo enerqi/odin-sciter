@@ -112,7 +112,19 @@ guard_initialized :: proc(loc := #caller_location) {
 // `args` defaults to `os.args`. The engine wants UTF-16 here: the comment on SCITER_APP_INIT in
 // sciter-x-def.h says "p2 - CHAR** argv" and is wrong - `application::start()` builds a
 // `vector<const WCHAR*>`, and passing char** or NULL crashes.
-init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
+//
+// **`debug_output` installs `set_default_debug_output` for you, and it defaults to on because the
+// alternative is a trap.** Two things are true of a process with no debug-output handler: a CSS typo, a
+// bad URL and a script exception are all completely silent - the first-run confusion `docs/getting-
+// started.md` leads with - and on Windows the engine's fallback is `OutputDebugStringW`, which raises
+// `DBG_PRINTEXCEPTION_WIDE_C` and takes down any process that treats a first-chance exception as fatal.
+// That was one line every program had to know to write, documented in three places, and enforced
+// nowhere. It is now the default.
+//
+// Pass `debug_output = false` to keep the engine's own behaviour, and call `set_debug_output` at any
+// point after this to replace the handler with your own - installing one here does not stop that, it
+// only means there is never a window in which none is installed.
+init :: proc(args: []string = nil, allocator := context.allocator, debug_output := true) -> Error {
 	if !sciter.loaded() {
 		return .Not_Loaded
 	}
@@ -132,6 +144,10 @@ init :: proc(args: []string = nil, allocator := context.allocator) -> Error {
 
 	engine().SciterExec(.INIT, uintptr(len(g_argv)), uintptr(raw_data(g_argv)))
 	g_initialized = true
+
+	if debug_output {
+		set_default_debug_output()
+	}
 	return nil
 }
 

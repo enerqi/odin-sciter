@@ -1330,3 +1330,125 @@ test_the_gesture_accessor_decodes_its_parameters :: proc(t: ^testing.T) {
 	_, no_params := sciter_app.gesture_event({group = {.GESTURE}, params = nil})
 	testing.expect(t, !no_params)
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The temp-allocator boundary a handler carries
+
+@(private = "file")
+Temp_Burner :: struct {
+	handler: sciter_app.Event_Handler,
+	calls:   int,
+	bytes:   int,
+}
+
+// Allocates a block of `context.temp_allocator` per delivery and does nothing to give it back, which
+// is what an ordinary handler does implicitly every time it reads text, an attribute or a selector.
+@(private = "file")
+burn_temp :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool {
+	burner := (^Temp_Burner)(handler.user_data)
+	burner.calls += 1
+	scratch := make([]u8, BURN_BYTES, context.temp_allocator)
+	scratch[0] = 1 // touch it, so nothing decides the allocation is dead
+	burner.bytes += len(scratch)
+	return false
+}
+
+@(private = "file")
+BURN_BYTES :: 64 * 1024
+
+// How much of the default temp arena is currently handed out. Reading it needs the concrete allocator,
+// because "how big is the scratch arena" is not a question the `mem.Allocator` interface answers.
+@(private = "file")
+temp_used :: proc() -> uint {
+	if context.temp_allocator.procedure != runtime.default_temp_allocator_proc {
+		return 0
+	}
+	return (^runtime.Default_Temp_Allocator)(context.temp_allocator.data).arena.total_used
+}
+
+// **The rule-4 boundary the package takes on your behalf, measured rather than asserted.**
+//
+// `run` is the engine's own loop and never comes back to application code, so an application that does
+// its DOM work in handlers - every application - had nowhere to put `free_all(context.temp_allocator)`.
+// Every call in this package that takes a string, a selector or a URL builds it in that arena. Before
+// `callback_temp_scope` existed, the arena grew for the life of the process and looked like a leak in
+// the bindings.
+//
+// 64 deliveries, 64 KB of temp memory each: 4 MB if nothing gives it back, one block if the boundary
+// works. The threshold is deliberately loose - the test runner and the engine both allocate around
+// this - and still an order of magnitude below the leaking answer.
+@(test)
+test_a_handler_gives_its_temp_memory_back :: proc(t: ^testing.T) {
+	root, tick, _, ok := test_elements(t)
+	if !ok {return}
+
+	burner: Temp_Burner
+	burner.handler = sciter_app.Event_Handler {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = burn_temp,
+		user_data    = &burner,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(root, &burner.handler), nil)
+	defer sciter_app.detach_handler(root, &burner.handler)
+
+	DELIVERIES :: 64
+
+	before := temp_used()
+	for _ in 0 ..< DELIVERIES {
+		_, err := sciter_app.send_event(tick, .FIRST_APPLICATION_EVENT_CODE, source = root)
+		testing.expect_value(t, err, nil)
+	}
+	after := temp_used()
+
+	testing.expect(t, burner.calls >= DELIVERIES, "every send must reach the handler")
+	testing.expect(t, burner.bytes >= DELIVERIES * BURN_BYTES, "each delivery must allocate its block")
+
+	// One handler's worth of slack, not sixty-four. Unbounded growth here would be 4 MB.
+	grew := int(after) - int(before)
+	testing.expectf(
+		t,
+		grew < 4 * BURN_BYTES,
+		"the temp arena grew by %d bytes across %d deliveries; the boundary is not being taken",
+		grew,
+		DELIVERIES,
+	)
+}
+
+// The other half of the same contract, and the reason it is a mark rather than a `free_all`: the
+// engine delivers handlers *synchronously from inside this package's own calls*, so a callback runs
+// while an outer call's UTF-16 arguments are still live in the same arena. Unwinding to the callback's
+// own watermark leaves everything below it alone; freeing the arena would take the argument buffer of
+// the call still on the stack.
+//
+// `set_text` is that shape: it builds its argument in the temp arena and then calls the engine, which
+// runs the handler below before returning. If the boundary were a `free_all`, the text that arrives is
+// whatever the handler's own allocation left in that memory.
+@(test)
+test_the_boundary_survives_a_handler_reentering_from_inside_a_call :: proc(t: ^testing.T) {
+	root, tick, _, ok := test_elements(t)
+	if !ok {return}
+
+	burner: Temp_Burner
+	burner.handler = sciter_app.Event_Handler {
+		subscription = {.BEHAVIOR_EVENT},
+		on_event     = burn_temp,
+		user_data    = &burner,
+	}
+	testing.expect_value(t, sciter_app.attach_handler(tick, &burner.handler), nil)
+	defer sciter_app.detach_handler(tick, &burner.handler)
+
+	LONG :: "a string long enough that its UTF-16 buffer is a real allocation in the temp arena, not a rounding error somewhere"
+	testing.expect_value(t, sciter_app.set_text(tick, LONG), nil)
+
+	// Deliver into the same element while the outer call's arena use is still on the stack, then read
+	// back what the engine stored. Corruption here reads as a truncated or mangled string.
+	_, err := sciter_app.send_event(tick, .FIRST_APPLICATION_EVENT_CODE, source = root)
+	testing.expect_value(t, err, nil)
+
+	got, terr := sciter_app.text(tick, context.temp_allocator)
+	testing.expect_value(t, terr, nil)
+	testing.expect_value(t, got, LONG)
+
+	// Put the document back for the tests that come after this one - see `test_window`.
+	testing.expect_value(t, sciter_app.set_text(tick, "0"), nil)
+}

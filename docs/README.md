@@ -15,7 +15,9 @@ prints the file count and CI fails when this line disagrees with it.
 In this order. Each assumes the one before it.
 
 1. [`getting-started.md`](./getting-started.md) — a window, a document, an event, an Odin function
-   script can call. Start here even if you know Sciter; the Odin shape is what is new.
+   script can call. Start here even if you know Sciter; the Odin shape is what is new. Its
+   last section hands off to [`examples/app_skeleton.odin`](../examples/app_skeleton.odin), which is the
+   same material as a program: a model, one render, one handler, ~200 lines.
 2. [`architecture.md`](./architecture.md) — the two packages, why there are two, and what the
    ergonomic layer actually does over the generated one.
 3. [`rules.md`](./rules.md) — **the four contracts that decide whether your program is correct**:

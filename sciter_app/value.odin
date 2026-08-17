@@ -431,6 +431,7 @@ Each_Sink :: struct {
 each_callback :: proc "system" (param: rawptr, key: ^Value, value: ^Value) -> b32 {
 	sink := (^Each_Sink)(param)
 	context = sink.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 	return b32(sink.visit(key, value, sink.user_data))
 }
 
@@ -493,6 +494,7 @@ Functor :: struct {
 functor_invoke :: proc "system" (tag: ^sciter.Void, argc: u32, argv: ^Value, retval: ^Value) {
 	functor := (^Functor)(tag)
 	context = functor.ctx
+	callback_temp_scope() // rule 4's boundary, taken here - see sciter_app.odin
 
 	args: []Value
 	if argc > 0 && argv != nil {

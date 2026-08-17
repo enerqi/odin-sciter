@@ -58,12 +58,20 @@ the type itself — what converts to what, and in which direction.
 address stored by the engine, so it must not move and must outlive the attachment. Each captures the
 calling `context` at attach time, because the engine calls back as `proc "system"`.
 
+**A callback is also a temp-allocator boundary.** Every callback that runs your code — event handlers,
+host notifications, native functors, SOM getters/setters/methods, paint procs, `value_each` visitors,
+element comparators — unwinds `context.temp_allocator` to the mark it had when the engine called in. So
+handler-side scratch costs nothing over the life of the program, and **anything a callback keeps must
+not be temp memory**: clone it, or use an allocator that outlives the call. Rule 4 in
+[`rules.md`](./rules.md#a-callback-is-a-temp-allocator-boundary-and-the-package-takes-it) is the whole
+rule.
+
 ## Application — `app.odin`
 
 | | |
 | --- | --- |
 | `load_engine(path := "") -> bool` | `sciter.load` plus a useful error message on stderr |
-| `init(args: []string = nil, allocator := context.allocator) -> Error` | `SCITER_APP_INIT`; defaults to `os.args`. Required before any window. |
+| `init(args: []string = nil, allocator := context.allocator, debug_output := true) -> Error` | `SCITER_APP_INIT`; defaults to `os.args`. Required before any window. Installs `set_default_debug_output` unless told not to — see below |
 | `run() -> int` | the message pump; returns when `stop` is called or the last `.MAIN` window closes |
 | `run_once() -> bool` | one iteration, for sharing the thread with another event source |
 | `heartbeat()` | services tasks and timers without processing input; pair with `run_once` |
@@ -78,8 +86,10 @@ calling `context` at attach time, because the engine calls back as `proc "system
 | `set_master_css(css) -> Error` | the sheet under every document in the process. **Replaces**; `""` is refused. |
 | `append_master_css(css) -> Error` | adds to it, keeping what is there |
 
-Install the debug output before loading anything. Without it a CSS typo, a bad URL and a script
-exception are all completely silent.
+`init` installs the debug output for you. Without one a CSS typo, a bad URL and a script exception are
+all completely silent, and on Windows the engine's fallback path can be fatal — see
+[`gotchas.md`](./gotchas.md). `init(debug_output = false)` opts out; `set_debug_output` replaces it at
+any time.
 
 ## Windows — `window.odin`
 
@@ -95,6 +105,7 @@ exception are all completely silent.
 | `update_window(window)` | repaint what is dirty now, rather than at the next turn of the pump |
 | `show` / `hide` / `close` / `activate` | window state; a window is created hidden. **A secondary window is closed by `hide`, a turn of the pump, then `close`** — any other order segfaults the engine |
 | `request_close(window)` | `close` with the force flag off, so script may refuse. **Not portable as a veto**: Linux closes anyway |
+| `close_secondary(window)` | the whole teardown of a secondary window in the order that survives: hide, pump, close, pump. Nil is a no-op; not for a `.MAIN` window |
 | `window_state(window) -> (state, ok)` / `set_window_state` | `ok` is false when the engine answers something outside the enum — a destroyed window reports `0xFFFFFFFE` |
 | `eval(window, script) -> (Value, Error)` | script in the global scope |
 | `call(window, function: string, args: ..Value) -> (Value, Error)` | a function already defined in the document |

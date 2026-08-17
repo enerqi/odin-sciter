@@ -20,6 +20,7 @@
 package sciter_app
 
 import sciter ".."
+import "base:runtime"
 import "core:strings"
 import "core:unicode/utf16"
 
@@ -90,6 +91,49 @@ value_err :: proc(r: sciter.Value_Result, loc := #caller_location) -> Error {
 		return nil
 	}
 	return r
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The temp-allocator boundary the engine's callbacks carry with them
+
+// Restores `context.temp_allocator` to where it was when the engine called in, at the end of the
+// calling scope. Every trampoline that runs *your* code opens with this.
+//
+// **The problem it solves is rule 4's one unavoidable case.** `run` is the engine's own loop and never
+// returns to your code in between, so an application that does its DOM work in handlers - which is
+// every application - had nowhere to put `free_all(context.temp_allocator)`. Every call in this package
+// that takes a string, a selector or a URL builds it in that arena, so the arena grew for the life of
+// the process and looked like a leak in the bindings. The three boundaries `docs/rules.md` §4 offers
+// all require driving the pump yourself, which is a shape most applications should not have to adopt to
+// be correct.
+//
+// A handler is a boundary the package can see, so the package takes it. The engine calls in, the
+// handler allocates what it needs, the mark is restored on the way out.
+//
+// **It is a mark, not a `free_all`, and that is not a detail.** The engine dispatches handlers
+// *synchronously from inside our own calls*: `set_text` builds its UTF-16 in the temp arena and then
+// calls the engine, which can deliver an event before returning. A `free_all` there would free the
+// argument buffer of the call still on the stack. `arena_temp_begin`/`_end` unwinds to the watermark
+// this callback started at and leaves everything below it alone, so re-entrancy is safe to any depth.
+//
+// **It is a no-op unless `context.temp_allocator` is Odin's default one.** `default_temp_allocator_
+// temp_begin` returns a zero `Arena_Temp` when the context carries someone else's temp allocator, and
+// `arena_temp_end` of a zero mark returns immediately. So a program that installs its own temp
+// allocator keeps whatever policy it chose.
+//
+// **What this breaks, and it is worth stating plainly:** temp memory allocated inside a handler no
+// longer outlives that handler. Storing a `context.temp_allocator` string in application state was
+// always a bug - rule 4 says so, and the arena is documented as scratch - but under a plain `run` with
+// nothing ever freeing it, the bug had no symptom. It has one now. Anything a handler keeps needs
+// `context.allocator`, an arena of its own, or the `.DELAYED` request's own lifetime.
+@(private, deferred_out = end_callback_temp)
+callback_temp_scope :: proc() -> runtime.Arena_Temp {
+	return runtime.default_temp_allocator_temp_begin()
+}
+
+@(private)
+end_callback_temp :: proc(mark: runtime.Arena_Temp) {
+	runtime.default_temp_allocator_temp_end(mark)
 }
 
 // ---------------------------------------------------------------------------------------------------

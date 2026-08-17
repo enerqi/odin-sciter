@@ -430,9 +430,12 @@ test_post_from_this_thread :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
-	r := Recorder {
-		got = make([dynamic][2]uintptr, context.temp_allocator),
-	}
+	// **Not the temp arena.** `record` runs inside an engine callback, and the package restores
+	// `context.temp_allocator` to the mark it had on the way in - so a list grown in there is gone by
+	// the time this test reads it. Anything a callback fills for someone else needs an allocator that
+	// outlives the callback. See `callback_temp_scope` in sciter_app/sciter_app.odin.
+	r: Recorder
+	defer delete(r.got)
 	r.on_posted = record
 	sciter_app.set_host_handler(window, &r)
 	defer sciter_app.set_host_handler(window, nil)
@@ -460,9 +463,12 @@ test_post_from_a_worker_thread :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
-	r := Recorder {
-		got = make([dynamic][2]uintptr, context.temp_allocator),
-	}
+	// **Not the temp arena.** `record` runs inside an engine callback, and the package restores
+	// `context.temp_allocator` to the mark it had on the way in - so a list grown in there is gone by
+	// the time this test reads it. Anything a callback fills for someone else needs an allocator that
+	// outlives the callback. See `callback_temp_scope` in sciter_app/sciter_app.odin.
+	r: Recorder
+	defer delete(r.got)
 	r.on_posted = record
 	sciter_app.set_host_handler(window, &r)
 	defer sciter_app.set_host_handler(window, nil)
@@ -497,9 +503,12 @@ test_heartbeat_alone_delivers :: proc(t: ^testing.T) {
 	window, ok := test_window(t)
 	if !ok {return}
 
-	r := Recorder {
-		got = make([dynamic][2]uintptr, context.temp_allocator),
-	}
+	// **Not the temp arena.** `record` runs inside an engine callback, and the package restores
+	// `context.temp_allocator` to the mark it had on the way in - so a list grown in there is gone by
+	// the time this test reads it. Anything a callback fills for someone else needs an allocator that
+	// outlives the callback. See `callback_temp_scope` in sciter_app/sciter_app.odin.
+	r: Recorder
+	defer delete(r.got)
 	r.on_posted = record
 	sciter_app.set_host_handler(window, &r)
 	defer sciter_app.set_host_handler(window, nil)

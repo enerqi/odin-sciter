@@ -2,15 +2,15 @@
 
 Status as of 2026-08-12: **the bindings generate, compile, and run, and there is an ergonomic layer on
 top of them.** `just bindgen` produces `sciter.odin` from the vendored headers, `just example api_map`
-verifies all 189 `ISciterAPI` slots against the shipped engine, and 30 examples build and run —
+verifies all 189 `ISciterAPI` slots against the shipped engine, and 31 examples build and run —
 covering windows, loading from disk, JS evaluation, calling Odin from script (functors and SOM assets),
 the DOM, events, behavior methods, behaviors a stylesheet asks for by name, synthesised input,
 background threads, drag-and-drop, graphics (both a custom-painted element and a gallery covering the
 whole 2D API),
 video streaming through the one C++ interface the API has, custom resource loading
 (including the request API), archives, one-file shipping, the inspector and a native extension.
-`just example-tests` runs 396 `@(test)` procs, and `docs/` holds 30 documents besides its index. Coverage of
-the wrapper is 402 of its 402 exported procedures called from a test. The five that closed that gap -
+`just example-tests` runs 404 `@(test)` procs, and `docs/` holds 30 documents besides its index. Coverage of
+the wrapper is 403 of its 403 exported procedures called from a test. The five that closed that gap -
 `set_option`, `data_ready_async`, the `set_state` group and the two `draw_rounded_rect_*` members - each
 turned up something the headers do not say, which is the argument for closing coverage gaps rather than
 annotating them; the same pass measured what the three kinds of borrowed `Value` really cost and what a

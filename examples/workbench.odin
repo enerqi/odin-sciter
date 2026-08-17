@@ -1305,9 +1305,11 @@ details_destroy :: proc(app: ^App) {
 		return
 	}
 	details_hide(app)
-	sciter_app.heartbeat() // not optional: without this turn the close segfaults
-	sciter_app.close(app.details.window)
-	sciter_app.heartbeat()
+
+	// `close_secondary` is that order - hide, pump, close, pump - with a name. It is spelled out
+	// longhand in the test below, which is where the measurement lives; here the point is that an
+	// application does not have to carry the sequence around.
+	sciter_app.close_secondary(app.details.window)
 	app.details.window = nil
 }
 
@@ -3013,6 +3015,40 @@ test_a_secondary_window_is_closed_by_hiding_it_and_pumping_first :: proc(t: ^tes
 
 	// And the application's own window came through it untouched, which is the part that would not
 	// survive the unsafe order: there, the next pump takes the process down whatever it is doing.
+	testing.expect_value(t, render(app), nil)
+	testing.expect(t, rows_in_document(app) > 0)
+}
+
+// The same teardown through `close_secondary`, which is that four-step sequence with a name. The test
+// above is the measurement and this is the wrapper of it, so this one asserts only that the wrapper
+// really does all four steps: after it the handle is dead, without the caller having pumped anything.
+//
+// It carries the same hazard as the test above - if the order stops working, the binary dies here
+// rather than failing - and that is the argument for having one procedure to fix rather than a
+// sequence copied into every application.
+@(test)
+test_close_secondary_tears_a_window_down_in_the_order_that_survives :: proc(t: ^testing.T) {
+	app, _, ok := test_app(t)
+	if !ok {return}
+
+	window, werr := sciter_app.create_window({width = 520, height = 420, flags = {.POPUP}})
+	testing.expect_value(t, werr, nil)
+	testing.expect_value(t, sciter_app.load_html(window, DETAILS_DOC), nil)
+	root, rerr := sciter_app.root(window)
+	testing.expect_value(t, rerr, nil)
+	testing.expect(t, root != nil)
+
+	sciter_app.close_secondary(window)
+
+	_, after := sciter_app.root(window)
+	testing.expect_value(t, after, sciter_app.Error(sciter.Scdom_Result.INVALID_HWND))
+	_, state_ok := sciter_app.window_state(window)
+	testing.expect(t, !state_ok, "a destroyed window reports 0xFFFFFFFE, which is not a state")
+
+	// A nil window is not an error - it is the shape a teardown path has when the window was never
+	// created, and making the caller check would put the `if` back in every application.
+	sciter_app.close_secondary(nil)
+
 	testing.expect_value(t, render(app), nil)
 	testing.expect(t, rows_in_document(app) > 0)
 }

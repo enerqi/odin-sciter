@@ -79,18 +79,24 @@ Informatica actually ships applications with; the C header is a machine boundary
 two dispatchers are the only places a parameter can hide like this, which at least makes it a finite
 list — every command this wrapper sends has now been checked against the C++ layer, and the rest match.
 
-## 3. Install a debug-output handler on Windows, or a CSS warning can kill your process
-
-```odin
-sciter_app.set_default_debug_output()   // before loading any document
-```
+## 3. A process with no debug-output handler can be killed by a CSS warning on Windows
 
 With none installed the engine reports diagnostics through `OutputDebugStringW`, and Windows implements
 that by **raising an exception** (`DBG_PRINTEXCEPTION_WIDE_C`, `0x4001000A`). In a normal run the OS
 handles it and nothing notices. Under anything that treats first-chance exceptions as fatal — a test
 runner, some crash reporters, some sandboxes — a single CSS warning takes the process down.
 
-Every test harness in `examples/` calls it for exactly this reason, not because the messages are wanted.
+**`init` installs the default handler for this reason**, so an ordinary program no longer has to know
+any of the above. The two ways back into the trap:
+
+```odin
+sciter_app.init(debug_output = false)   // you asked for the engine's own behaviour
+sciter_app.set_debug_output(nil)        // detaching leaves nothing installed
+```
+
+`set_default_debug_output()` puts it back, and takes a window if you want one window's diagnostics
+rather than the process's. Every test harness in `examples/` calls it directly, because a test binary
+reaches the engine without going through an application's `init`.
 
 ## 4. The engine throws C++ exceptions in ordinary operation
 
