@@ -1054,18 +1054,16 @@ test_script_can_load_the_library_and_query :: proc(t: ^testing.T) {
 		sciter_app.paint_windowless(&view)
 	}
 
-	answer, aerr := sciter_app.global(view.window, "answer")
+	answer, aerr := sciter_app.scoped_global(view.window, "answer")
 	testing.expect_value(t, aerr, nil)
-	defer sciter_app.value_clear(&answer)
 	text, _ := sciter_app.value_to_string(&answer, context.temp_allocator)
 
 	// 7, "seven", two columns - and SQLite's own version on the end.
 	testing.expect(t, strings.has_prefix(text, "7:seven:2:"), text)
 	testing.expect(t, strings.count(text, ".") >= 2, "the version came through too")
 
-	exhausted, eerr := sciter_app.global(view.window, "exhausted")
+	exhausted, eerr := sciter_app.scoped_global(view.window, "exhausted")
 	testing.expect_value(t, eerr, nil)
-	defer sciter_app.value_clear(&exhausted)
 	done, _ := sciter_app.value_to_bool(&exhausted)
 	testing.expect(t, done, "one row, then the recordset finalises itself")
 }
@@ -1096,8 +1094,7 @@ test_a_query_runs_through_the_som_layer :: proc(t: ^testing.T) {
 	defer sciter_app.destroy_asset(namespace)
 
 	// SQLite.open(":memory:")
-	path := sciter_app.value_from_string(":memory:")
-	defer sciter_app.value_clear(&path)
+	path := sciter_app.scoped_value_from_string(":memory:")
 	db_value, opened := sqlite_open_method(namespace, {path})
 	testing.expect(t, opened, "open answered")
 	defer sciter_app.value_clear(&db_value)
@@ -1135,8 +1132,7 @@ test_a_query_runs_through_the_som_layer :: proc(t: ^testing.T) {
 
 	one := sciter_app.value_from_int(1)
 	defer sciter_app.value_clear(&one)
-	name := sciter_app.value_from_string("one")
-	defer sciter_app.value_clear(&name)
+	name := sciter_app.scoped_value_from_string("one")
 	inserted, ok2 := exec(t, db_asset, "insert into t values(?, ?)", one, name)
 	testing.expect(t, ok2, "insert answered")
 

@@ -232,8 +232,7 @@ main :: proc() {
 	fmt.printfln("SET_LEVEL 9000    clamped=%v level is now %d", bool(p.clamped), meter.level)
 
 	// And the engine's own value protocol, answered by the same handler.
-	value, got, _ := sciter_app.behavior_value(meter_el)
-	defer sciter_app.value_clear(&value)
+	value, got, _ := sciter_app.scoped_behavior_value(meter_el)
 	n, _ := sciter_app.value_to_int(&value)
 	fmt.printfln("behavior_value(#meter) handled=%v -> %d", got, n)
 
@@ -241,8 +240,7 @@ main :: proc() {
 	// has to be measured rather than read off the header.
 	name, _ := sciter_app.select_first(root, "#name")
 	_, got, _ = sciter_app.behavior_value(name)
-	text, _ := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&text)
+	text, _ := sciter_app.scoped_element_value(name)
 	s, _ := sciter_app.value_to_string(&text, context.temp_allocator)
 	fmt.printfln("behavior_value(#name)  handled=%v   element_value -> %q", got, s)
 
@@ -574,8 +572,9 @@ test_intrinsic_behaviors_do_not_implement_the_value_methods :: proc(t: ^testing.
 
 	// Measured on this engine, and the reason `behavior_value` carries a warning: the edit behavior
 	// answers GET_VALUE with "not handled" and no value.
-	value, handled, err := sciter_app.behavior_value(name)
-	defer sciter_app.value_clear(&value)
+	// The Value goes unread and is still released: `@(deferred_out)` hands every result to the cleanup
+	// whether the caller binds it or not, which is the difference between this and `@(require_results)`.
+	_, handled, err := sciter_app.scoped_behavior_value(name)
 	testing.expect_value(t, err, nil)
 	testing.expect(t, !handled, "no intrinsic behavior implements GET_VALUE on Sciter 6")
 
@@ -584,8 +583,7 @@ test_intrinsic_behaviors_do_not_implement_the_value_methods :: proc(t: ^testing.
 	testing.expect(t, !ihandled, "nor IS_EMPTY")
 
 	// SciterGetValue is the call that does answer, and it is a different one.
-	text, terr := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&text)
+	text, terr := sciter_app.scoped_element_value(name)
 	testing.expect_value(t, terr, nil)
 	s, _ := sciter_app.value_to_string(&text, context.temp_allocator)
 	testing.expect_value(t, s, "typed by hand")
@@ -599,16 +597,14 @@ test_intrinsic_behaviors_do_not_implement_the_value_methods :: proc(t: ^testing.
 	testing.expect_value(t, serr, nil)
 	testing.expect(t, !shandled, "no intrinsic behavior implements SET_VALUE either")
 
-	unchanged, uerr := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&unchanged)
+	unchanged, uerr := sciter_app.scoped_element_value(name)
 	testing.expect_value(t, uerr, nil)
 	still, _ := sciter_app.value_to_string(&unchanged, context.temp_allocator)
 	testing.expect_value(t, still, "typed by hand")
 
 	// `set_element_value` is the call that does write, as `element_value` is the one that reads.
 	testing.expect_value(t, sciter_app.set_element_value(name, &replacement), nil)
-	written, _ := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&written)
+	written, _ := sciter_app.scoped_element_value(name)
 	now, _ := sciter_app.value_to_string(&written, context.temp_allocator)
 	testing.expect_value(t, now, "written through SET_VALUE")
 }
@@ -657,8 +653,7 @@ test_a_method_of_your_own_round_trips :: proc(t: ^testing.T) {
 
 	// The engine's own ids reach the same handler, so a document element can implement the value
 	// protocol its behavior does not.
-	value, vhandled, verr := sciter_app.behavior_value(meter_el)
-	defer sciter_app.value_clear(&value)
+	value, vhandled, verr := sciter_app.scoped_behavior_value(meter_el)
 	testing.expect_value(t, verr, nil)
 	testing.expect(t, vhandled, "the handler answered GET_VALUE")
 	n, _ := sciter_app.value_to_int(&value)
@@ -678,8 +673,7 @@ test_a_method_of_your_own_round_trips :: proc(t: ^testing.T) {
 	testing.expect_value(t, meter.level, u32(7))
 
 	// And reading it back through the protocol agrees with the behavior's own state.
-	after, ahandled, _ := sciter_app.behavior_value(meter_el)
-	defer sciter_app.value_clear(&after)
+	after, ahandled, _ := sciter_app.scoped_behavior_value(meter_el)
 	testing.expect(t, ahandled)
 	back, _ := sciter_app.value_to_int(&after)
 	testing.expect_value(t, back, i32(7))
@@ -828,8 +822,7 @@ test_asset_call_refuses_a_call_with_too_few_arguments :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, sciter_app.Error(sciter_app.Api_Error.Wrong_Arity))
 
 	// Too many is fine - the extras are ignored - so over-supplying is the safe direction.
-	a := sciter_app.value_from_string("ab")
-	defer sciter_app.value_clear(&a)
+	a := sciter_app.scoped_value_from_string("ab")
 	spare := sciter_app.value_from_int(0)
 	defer sciter_app.value_clear(&spare)
 	_, cerr := sciter_app.asset_call(asset, "insertText", {a, spare})
@@ -854,9 +847,8 @@ test_a_behavior_asset_reads_writes_and_acts :: proc(t: ^testing.T) {
 	testing.expect_value(t, aerr, nil)
 
 	// A property the passport lists reads through its getter.
-	columns, gerr := sciter_app.asset_get(asset, "columns")
+	columns, gerr := sciter_app.scoped_asset_get(asset, "columns")
 	testing.expect_value(t, gerr, nil)
-	defer sciter_app.value_clear(&columns)
 	n, _ := sciter_app.value_to_int(&columns)
 	testing.expect(t, n > 0, "a terminal has a width")
 
@@ -871,14 +863,12 @@ test_a_behavior_asset_reads_writes_and_acts :: proc(t: ^testing.T) {
 
 	// And a method with its arguments does the work: this one moves the caret, which is observable
 	// through the properties next to it.
-	text := sciter_app.value_from_string("hello")
-	defer sciter_app.value_clear(&text)
+	text := sciter_app.scoped_value_from_string("hello")
 	_, werr := sciter_app.asset_call(asset, "write", {text})
 	testing.expect_value(t, werr, nil)
 
-	col, cerr := sciter_app.asset_get(asset, "caretColumn")
+	col, cerr := sciter_app.scoped_asset_get(asset, "caretColumn")
 	testing.expect_value(t, cerr, nil)
-	defer sciter_app.value_clear(&col)
 	after, _ := sciter_app.value_to_int(&col)
 	testing.expect_value(t, after, 5) // one column per character written
 }

@@ -405,8 +405,7 @@ test_rendering_site_is_invisible_to_script :: proc(t: ^testing.T) {
 	window, _, ok := test_window(t)
 	if !ok {return}
 
-	v, err := sciter_app.eval(window, `typeof document.$("#screen").renderingSite`)
-	defer sciter_app.value_clear(&v)
+	v, err := sciter_app.scoped_eval(window, `typeof document.$("#screen").renderingSite`)
 	testing.expect_value(t, err, nil)
 
 	s, serr := sciter_app.value_to_string(&v, context.temp_allocator)
@@ -423,8 +422,7 @@ test_rendering_site_returns_an_asset_value :: proc(t: ^testing.T) {
 	screen, _ := sciter_app.select_first(root, "#screen")
 	asset, _ := sciter_app.element_asset(screen, "video")
 
-	site, err := sciter_app.asset_call(asset, "renderingSite")
-	defer sciter_app.value_clear(&site)
+	site, err := sciter_app.scoped_asset_call(asset, "renderingSite")
 	testing.expect_value(t, err, nil)
 
 	type, _ := sciter_app.value_type(&site)
@@ -483,8 +481,7 @@ test_asset_helpers_work_on_the_edit_behavior :: proc(t: ^testing.T) {
 	testing.expect(t, len(props) > 0, "the edit behavior publishes properties")
 	testing.expect(t, len(methods) > 0, "and methods")
 
-	start, gerr := sciter_app.asset_get(asset, "selectionStart")
-	defer sciter_app.value_clear(&start)
+	start, gerr := sciter_app.scoped_asset_get(asset, "selectionStart")
 	testing.expect_value(t, gerr, nil)
 	n, nerr := sciter_app.value_to_int(&start)
 	testing.expect_value(t, nerr, nil)
@@ -501,8 +498,7 @@ test_the_destination_is_not_the_asset_pointer :: proc(t: ^testing.T) {
 
 	screen, _ := sciter_app.select_first(root, "#screen")
 	asset, _ := sciter_app.element_asset(screen, "video")
-	site, _ := sciter_app.asset_call(asset, "renderingSite")
-	defer sciter_app.value_clear(&site)
+	site, _ := sciter_app.scoped_asset_call(asset, "renderingSite")
 	inner, _ := sciter_app.value_to_asset(&site)
 
 	p := sciter_app.asset_interface(inner, sciter_app.FRAGMENTED_VIDEO_DESTINATION_INAME)
@@ -520,8 +516,7 @@ test_unknown_interfaces_are_refused :: proc(t: ^testing.T) {
 
 	screen, _ := sciter_app.select_first(root, "#screen")
 	asset, _ := sciter_app.element_asset(screen, "video")
-	site, _ := sciter_app.asset_call(asset, "renderingSite")
-	defer sciter_app.value_clear(&site)
+	site, _ := sciter_app.scoped_asset_call(asset, "renderingSite")
 	inner, _ := sciter_app.value_to_asset(&site)
 
 	for name in ([?]cstring{"source.video.sciter.com", "asset.sciter.com", "nope.sciter.com"}) {

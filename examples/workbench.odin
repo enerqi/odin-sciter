@@ -1109,26 +1109,22 @@ view_to_value :: proc(view: View) -> sciter_app.Value {
 view_from_value :: proc(v: ^sciter_app.Value, allocator := context.allocator) -> (view: View) {
 	view.selected = -1
 
-	if filter, err := sciter_app.value_get(v, "filter"); err == nil {
-		defer sciter_app.value_clear(&filter)
+	if filter, err := sciter_app.scoped_value_get(v, "filter"); err == nil {
 		if s, serr := sciter_app.value_to_string(&filter, context.temp_allocator); serr == nil {
 			view.filter = strings.clone(s, allocator)
 		}
 	}
-	if selected, err := sciter_app.value_get(v, "selected"); err == nil {
-		defer sciter_app.value_clear(&selected)
+	if selected, err := sciter_app.scoped_value_get(v, "selected"); err == nil {
 		if n, nerr := sciter_app.value_to_int(&selected); nerr == nil {
 			view.selected = int(n)
 		}
 	}
-	if scroll, err := sciter_app.value_get(v, "scroll"); err == nil {
-		defer sciter_app.value_clear(&scroll)
+	if scroll, err := sciter_app.scoped_value_get(v, "scroll"); err == nil {
 		if n, nerr := sciter_app.value_to_int(&scroll); nerr == nil {
 			view.scroll = int(n)
 		}
 	}
-	if light, err := sciter_app.value_get(v, "light"); err == nil {
-		defer sciter_app.value_clear(&light)
+	if light, err := sciter_app.scoped_value_get(v, "light"); err == nil {
 		if b, berr := sciter_app.value_to_bool(&light); berr == nil {
 			view.light = b
 		}
@@ -1465,9 +1461,8 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 		case .VALUE_CHANGED:
 			id, _ := sciter_app.attribute(be.target, "id", context.temp_allocator)
 			if id == "filter" {
-				value, verr := sciter_app.element_value(be.target)
+				value, verr := sciter_app.scoped_element_value(be.target)
 				if verr == nil {
-					defer sciter_app.value_clear(&value)
 					if text, terr := sciter_app.value_to_string(&value, context.temp_allocator); terr == nil {
 						// The keystroke ends here: the scan happens on the search thread and comes back
 						// as `SEARCH_DONE`. Nothing on this path touches ten thousand rows.
@@ -1477,9 +1472,8 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 			} else if app.editing >= 0 {
 				// The cell being edited. Its text goes into the model on every keystroke, because the
 				// element holding it will not survive the next render.
-				value, verr := sciter_app.element_value(be.target)
+				value, verr := sciter_app.scoped_element_value(be.target)
 				if verr == nil {
-					defer sciter_app.value_clear(&value)
 					if text, terr := sciter_app.value_to_string(&value, context.temp_allocator); terr == nil {
 						delete(app.edit_text, app.allocator)
 						app.edit_text = strings.clone(text, app.allocator)
@@ -1847,11 +1841,10 @@ load_view :: proc(app: ^App, path: string) {
 	if read_err != nil {
 		return
 	}
-	v, err := sciter_app.value_parse(string(bytes))
+	v, err := sciter_app.scoped_value_parse(string(bytes))
 	if err != nil {
 		return
 	}
-	defer sciter_app.value_clear(&v)
 
 	restored := view_from_value(&v, app.allocator)
 	delete(app.view.filter, app.allocator)
@@ -2254,9 +2247,8 @@ test_an_edit_survives_a_re_render_only_because_the_model_holds_it :: proc(t: ^te
 
 	// And it is a *different element* from the one before, which is the whole problem: any state the
 	// engine kept on it - the caret, the selection, a running transition - went with the old one.
-	value, verr := sciter_app.element_value(input)
+	value, verr := sciter_app.scoped_element_value(input)
 	testing.expect_value(t, verr, nil)
-	defer sciter_app.value_clear(&value)
 	text, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 	testing.expect_value(t, text, app.edit_text)
 
@@ -2359,9 +2351,8 @@ test_the_view_state_round_trips_through_a_value_as_json :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(json, "pump"), json)
 
 	// Back through the text, which is what a restart really does.
-	parsed, perr := sciter_app.value_parse(json)
+	parsed, perr := sciter_app.scoped_value_parse(json)
 	testing.expect_value(t, perr, nil)
-	defer sciter_app.value_clear(&parsed)
 
 	restored := view_from_value(&parsed, context.temp_allocator)
 	testing.expect_value(t, restored.filter, original.filter)
@@ -2395,9 +2386,8 @@ test_a_missing_or_broken_state_file_leaves_a_usable_view :: proc(t: ^testing.T) 
 	testing.expect_value(t, from_nothing.filter, "")
 
 	// A Value of the wrong shape entirely.
-	wrong, err := sciter_app.value_parse(`[1,2,3]`)
+	wrong, err := sciter_app.scoped_value_parse(`[1,2,3]`)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&wrong)
 	from_wrong := view_from_value(&wrong, context.temp_allocator)
 	testing.expect_value(t, from_wrong.selected, -1)
 	testing.expect_value(t, from_wrong.filter, "")

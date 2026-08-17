@@ -211,9 +211,8 @@ main :: proc() {
 		}
 		frame(&view, 500 * time.Millisecond)
 
-		value, verr := sciter_app.element_value(field)
+		value, verr := sciter_app.scoped_element_value(field)
 		if verr == nil {
-			defer sciter_app.value_clear(&value)
 			text, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 			fmt.printfln("the field now holds %q", text)
 		}
@@ -226,8 +225,7 @@ main :: proc() {
 	sciter_app.windowless_mouse(&view, .MOUSE_DOWN, {W / 2, 40})
 	sciter_app.windowless_mouse(&view, .MOUSE_UP, {W / 2, 40})
 	frame(&view, 600 * time.Millisecond)
-	if seen, merr := sciter_app.eval(view.window, "globalThis.mouse"); merr == nil {
-		defer sciter_app.value_clear(&seen)
+	if seen, merr := sciter_app.scoped_eval(view.window, "globalThis.mouse"); merr == nil {
 		text, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
 		fmt.printfln("the document saw %q - m(ove), d(own), u(p), c(lick synthesised by the engine)", text)
 	}
@@ -458,9 +456,8 @@ test_a_view_can_be_typed_into :: proc(t: ^testing.T) {
 	}
 	sciter_app.windowless_heartbeat(view, 200 * time.Millisecond)
 
-	value, verr := sciter_app.element_value(field)
+	value, verr := sciter_app.scoped_element_value(field)
 	testing.expect_value(t, verr, nil)
-	defer sciter_app.value_clear(&value)
 	text, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 	testing.expect_value(t, text, "abc")
 
@@ -504,9 +501,8 @@ test_the_mouse_reaches_the_document :: proc(t: ^testing.T) {
 	sciter_app.windowless_mouse(view, .MOUSE_UP, at)
 	sciter_app.windowless_heartbeat(view, 250 * time.Millisecond)
 
-	seen, serr := sciter_app.eval(view.window, "globalThis.mouse")
+	seen, serr := sciter_app.scoped_eval(view.window, "globalThis.mouse")
 	testing.expect_value(t, serr, nil)
-	defer sciter_app.value_clear(&seen)
 	log, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
 
 	testing.expectf(t, strings.contains(log, "m"), "no mousemove reached the document; log is %q", log)
@@ -596,9 +592,8 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 
 	// The button fires its own click...
 	click(&view, center(root, "#btn"), 100 * time.Millisecond)
-	presses, perr := sciter_app.eval(view.window, "globalThis.presses")
+	presses, perr := sciter_app.scoped_eval(view.window, "globalThis.presses")
 	testing.expect_value(t, perr, nil)
-	defer sciter_app.value_clear(&presses)
 	n, _ := sciter_app.value_to_int(&presses)
 	testing.expect_value(t, n, i32(1))
 
@@ -626,9 +621,8 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	}
 	frame(&view, 400 * time.Millisecond)
 
-	value, verr := sciter_app.element_value(field)
+	value, verr := sciter_app.scoped_element_value(field)
 	testing.expect_value(t, verr, nil)
-	defer sciter_app.value_clear(&value)
 	text, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 	testing.expect_value(t, text, "typed")
 
@@ -639,9 +633,8 @@ test_the_windowless_mouse_drives_the_intrinsic_behaviors :: proc(t: ^testing.T) 
 	testing.expect_value(t, clickerr, nil)
 	frame(&view, 500 * time.Millisecond)
 
-	after, aerr := sciter_app.eval(view.window, "globalThis.presses")
+	after, aerr := sciter_app.scoped_eval(view.window, "globalThis.presses")
 	testing.expect_value(t, aerr, nil)
-	defer sciter_app.value_clear(&after)
 	m, _ := sciter_app.value_to_int(&after)
 	testing.expect_value(t, m, i32(2))
 }
@@ -695,9 +688,8 @@ test_a_behaviors_event_arrives_on_the_next_heartbeat :: proc(t: ^testing.T) {
 	at := [2]i32{box.x + box.width / 2, box.y + box.height / 2}
 
 	presses :: proc(view: ^sciter_app.Windowless_View) -> i32 {
-		v, err := sciter_app.eval(view.window, "globalThis.presses")
+		v, err := sciter_app.scoped_eval(view.window, "globalThis.presses")
 		if err != nil {return -1}
-		defer sciter_app.value_clear(&v)
 		n, _ := sciter_app.value_to_int(&v)
 		return n
 	}
@@ -739,9 +731,8 @@ test_script_timers_run_on_the_wall_clock_not_the_heartbeat_timestamp :: proc(t: 
 	}
 
 	count :: proc(view: ^sciter_app.Windowless_View, name: string) -> int {
-		value, err := sciter_app.eval(view.window, name)
+		value, err := sciter_app.scoped_eval(view.window, name)
 		if err != nil {return -1}
-		defer sciter_app.value_clear(&value)
 		n, _ := sciter_app.value_to_int(&value)
 		return int(n)
 	}

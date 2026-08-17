@@ -154,6 +154,13 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 
 ### Changed
 
+- **The examples reach for the `scoped_` twins where the Value is a local read** — 104 sites across 12
+  files, each of them a producer immediately followed by `defer value_clear`. The behaviour is the same
+  and the release is now the language's job rather than the reader's; it also covers the early-return
+  paths between the producer and the `defer`, which leaked. What deliberately stays manual: `eval.odin`,
+  where Value ownership is the subject being taught; `leak_sweep.odin`, which exercises the release paths
+  on purpose; every producer that hands a Value *out* to its caller; and the `value_from` scalars, which
+  have no scoped twin (see Known issues).
 - **No engine is committed on any platform, and history was rewritten to remove the three that were** —
   `.git` 41 MB → ~2 MB. A binary does not delta-compress, so committing all three cost ~40 MB of
   permanent history per engine bump in a repository whose source is under 2 MB. `ensure-engine` fetches
@@ -275,6 +282,11 @@ The findings, the measurements behind them and the two still open are in
   there. `docs/` is 29 documents besides its index.
 
 ### Known issues
+
+- **`value_from`'s four scalar members have no `scoped_` twin.** `scoped_value_from_string` and
+  `scoped_value_from_bytes` exist; `value_from_bool`, `value_from_int`, `value_from_i64` and
+  `value_from_f64` do not, so ~32 sites in the examples still write `defer value_clear` for a Value that
+  holds a number. Nothing is wrong with them - it is a gap in the scoped surface, not a leak.
 
 - The timer tests in `examples/events.odin` flake under load.
 - Engine defects are tracked in [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md).

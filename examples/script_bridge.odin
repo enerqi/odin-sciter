@@ -125,11 +125,9 @@ DOC :: `<html>
 
 // Puts plain text on the clipboard. The simplest possible round trip, and the shape of all the rest.
 put_text :: proc(window: sciter_app.Window, text: string) -> (ok: bool, err: sciter_app.Error) {
-	argument := sciter_app.value_from_string(text)
-	defer sciter_app.value_clear(&argument)
+	argument := sciter_app.scoped_value_from_string(text)
 
-	result := sciter_app.call(window, "clipboardPutText", argument) or_return
-	defer sciter_app.value_clear(&result)
+	result := sciter_app.scoped_call(window, "clipboardPutText", argument) or_return
 	return sciter_app.value_to_bool(&result)
 }
 
@@ -137,8 +135,7 @@ put_text :: proc(window: sciter_app.Window, text: string) -> (ok: bool, err: sci
 // text flavour as much as the HTML one - so the trim is not optional: `"hello\x00" != "hello"`, and a
 // host that compares what it wrote with what it read fails for a reason it cannot see in a log.
 get_text :: proc(window: sciter_app.Window, allocator := context.allocator) -> (text: string, err: sciter_app.Error) {
-	result := sciter_app.call(window, "clipboardGetText") or_return
-	defer sciter_app.value_clear(&result)
+	result := sciter_app.scoped_call(window, "clipboardGetText") or_return
 	if sciter_app.value_is_undefined(&result) {
 		return "", nil // nothing textual on the clipboard, which is not an error
 	}
@@ -162,8 +159,7 @@ put_flavour :: proc(
 	defer sciter_app.value_clear(&data)
 	sciter_app.value_set(&data, flavour, payload) or_return
 
-	result := sciter_app.call(window, "clipboardPut", data) or_return
-	defer sciter_app.value_clear(&result)
+	result := sciter_app.scoped_call(window, "clipboardPut", data) or_return
 	return sciter_app.value_to_bool(&result)
 }
 
@@ -181,24 +177,21 @@ read_clipboard :: proc(
 	contents: Clipboard_Contents,
 	err: sciter_app.Error,
 ) {
-	result := sciter_app.call(window, "clipboardGet") or_return
-	defer sciter_app.value_clear(&result)
+	result := sciter_app.scoped_call(window, "clipboardGet") or_return
 
 	flag :: proc(map_value: ^sciter_app.Value, name: string) -> bool {
-		v, err := sciter_app.value_get(map_value, name)
+		v, err := sciter_app.scoped_value_get(map_value, name)
 		if err != nil {
 			return false
 		}
-		defer sciter_app.value_clear(&v)
 		b, _ := sciter_app.value_to_bool(&v)
 		return b
 	}
 	str :: proc(map_value: ^sciter_app.Value, name: string, allocator: runtime.Allocator) -> string {
-		v, err := sciter_app.value_get(map_value, name)
+		v, err := sciter_app.scoped_value_get(map_value, name)
 		if err != nil {
 			return ""
 		}
-		defer sciter_app.value_clear(&v)
 		if sciter_app.value_is_undefined(&v) {
 			return ""
 		}
@@ -245,16 +238,14 @@ machine_facts :: proc(
 	facts: map[string]string,
 	err: sciter_app.Error,
 ) {
-	result := sciter_app.call(window, "machine") or_return
-	defer sciter_app.value_clear(&result)
+	result := sciter_app.scoped_call(window, "machine") or_return
 
 	facts = make(map[string]string, allocator)
 	for name in ([]string{"platform", "home", "temp", "sciterVersion"}) {
-		v, kerr := sciter_app.value_get(&result, name)
+		v, kerr := sciter_app.scoped_value_get(&result, name)
 		if kerr != nil {
 			continue
 		}
-		defer sciter_app.value_clear(&v)
 		s, _ := sciter_app.value_to_display_string(&v, allocator = allocator)
 		facts[strings.clone(name, allocator)] = s
 	}
@@ -290,8 +281,7 @@ main :: proc() {
 	// returns. Beat until it is - `globalThis.ready` is the flag the document sets last.
 	for _ in 0 ..< 20 {
 		sciter_app.windowless_heartbeat(&view, 16 * time.Millisecond)
-		if ready, rerr := sciter_app.global(view.window, "ready"); rerr == nil {
-			defer sciter_app.value_clear(&ready)
+		if ready, rerr := sciter_app.scoped_global(view.window, "ready"); rerr == nil {
 			if b, _ := sciter_app.value_to_bool(&ready); b {
 				break
 			}
@@ -339,8 +329,7 @@ main :: proc() {
 	}
 
 	// HTML, which is where the surprise is.
-	fragment := sciter_app.value_from_string("<b>bold</b> and <i>italic</i>")
-	defer sciter_app.value_clear(&fragment)
+	fragment := sciter_app.scoped_value_from_string("<b>bold</b> and <i>italic</i>")
 	if _, herr := put_flavour(view.window, "html", &fragment); herr == nil {
 		if got, gerr := read_clipboard(view.window, context.temp_allocator); gerr == nil {
 			defer sciter_app.value_clear(&got.json)
@@ -437,8 +426,7 @@ test_view :: proc(t: ^testing.T) -> (window: sciter_app.Window, ok: bool) {
 	testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 	for _ in 0 ..< 20 {
 		sciter_app.windowless_heartbeat(&g_view, 16 * time.Millisecond)
-		if ready, rerr := sciter_app.global(g_view.window, "ready"); rerr == nil {
-			defer sciter_app.value_clear(&ready)
+		if ready, rerr := sciter_app.scoped_global(g_view.window, "ready"); rerr == nil {
 			if b, _ := sciter_app.value_to_bool(&ready); b {
 				break
 			}
@@ -468,9 +456,8 @@ test_json_survives_the_round_trip_exactly :: proc(t: ^testing.T) {
 	window, ok := test_view(t)
 	if !ok {return}
 
-	payload, perr := sciter_app.value_parse(`{name:"odin", counts:[1,2,3]}`)
+	payload, perr := sciter_app.scoped_value_parse(`{name:"odin", counts:[1,2,3]}`)
 	testing.expect_value(t, perr, nil)
-	defer sciter_app.value_clear(&payload)
 
 	wrote, werr := put_flavour(window, "json", &payload)
 	testing.expect_value(t, werr, nil)
@@ -503,15 +490,13 @@ test_json_survives_the_round_trip_exactly :: proc(t: ^testing.T) {
 		testing.expect(t, contents.has_json, "the clipboard reports it holds json")
 
 		// Read the structure, rather than comparing rendered text - the point of carrying a Value.
-		name, nerr := sciter_app.value_get(&contents.json, "name")
+		name, nerr := sciter_app.scoped_value_get(&contents.json, "name")
 		testing.expect_value(t, nerr, nil)
-		defer sciter_app.value_clear(&name)
 		name_text, _ := sciter_app.value_to_string(&name, context.temp_allocator)
 		testing.expect_value(t, name_text, "odin")
 
-		counts, cerr2 := sciter_app.value_get(&contents.json, "counts")
+		counts, cerr2 := sciter_app.scoped_value_get(&contents.json, "counts")
 		testing.expect_value(t, cerr2, nil)
-		defer sciter_app.value_clear(&counts)
 		length, lerr := sciter_app.value_len(&counts)
 		testing.expect_value(t, lerr, nil)
 		testing.expect_value(t, length, 3)
@@ -526,8 +511,7 @@ test_html_comes_back_wrapped_and_nul_terminated :: proc(t: ^testing.T) {
 	if !ok {return}
 
 	ORIGINAL :: "<b>bold</b> and <i>italic</i>"
-	fragment := sciter_app.value_from_string(ORIGINAL)
-	defer sciter_app.value_clear(&fragment)
+	fragment := sciter_app.scoped_value_from_string(ORIGINAL)
 
 	wrote, werr := put_flavour(window, "html", &fragment)
 	testing.expect_value(t, werr, nil)
@@ -573,9 +557,8 @@ test_eval_cannot_import_but_the_stash_can :: proc(t: ^testing.T) {
 
 	// The direct route fails - and fails as a *parse*, not as a permission error, which is why no
 	// amount of `set_script_features` fixes it.
-	result, err := sciter_app.eval(window, `await import("@sys")`)
+	result, err := sciter_app.scoped_eval(window, `await import("@sys")`)
 	if err == nil {
-		defer sciter_app.value_clear(&result)
 		text, _ := sciter_app.value_to_display_string(&result, allocator = context.temp_allocator)
 		testing.expect(t, strings.contains(text, "expecting"), "eval should refuse a dynamic import")
 	}
@@ -647,9 +630,8 @@ test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(
 	window, ok := test_view(t)
 	if !ok {return}
 
-	mark, err := sciter_app.eval(window, "globalThis.initMark")
+	mark, err := sciter_app.scoped_eval(window, "globalThis.initMark")
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&mark)
 	n, nerr := sciter_app.value_to_int(&mark)
 	testing.expect_value(t, nerr, nil)
 	testing.expect_value(t, n, 4321)
@@ -661,9 +643,8 @@ test_an_init_script_set_through_set_option_runs_in_every_later_document :: proc(
 	window2, ok2 := test_view(t)
 	if !ok2 {return}
 
-	again, aerr := sciter_app.eval(window2, "globalThis.initMark")
+	again, aerr := sciter_app.scoped_eval(window2, "globalThis.initMark")
 	testing.expect_value(t, aerr, nil)
-	defer sciter_app.value_clear(&again)
 	n2, _ := sciter_app.value_to_int(&again)
 	testing.expect_value(t, n2, 8642)
 }

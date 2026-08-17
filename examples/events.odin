@@ -174,9 +174,8 @@ on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) ->
 
 		case .VALUE_CHANGED:
 			// The element's `value` is what script sees as `element.value`.
-			v, err := sciter_app.element_value(be.target)
+			v, err := sciter_app.scoped_element_value(be.target)
 			if err == nil {
-				defer sciter_app.value_clear(&v)
 				text, _ := sciter_app.value_to_string(&v, context.temp_allocator)
 				log(app, fmt.aprintf("VALUE_CHANGED on #%s -> %q", id, text))
 			}

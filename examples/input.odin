@@ -221,8 +221,7 @@ main :: proc() {
 	sciter_app.send_text(name, " hello")
 	pump()
 
-	typed, _ := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&typed)
+	typed, _ := sciter_app.scoped_element_value(name)
 	s, _ := sciter_app.value_to_string(&typed, context.temp_allocator)
 	fmt.printfln(
 		"typed into #name -> %q (%d VALUE_CHANGEDs, %d focus gains)",
@@ -233,8 +232,7 @@ main :: proc() {
 
 	// --- the element's script object ------------------------------------------------------------
 
-	expando, eerr := sciter_app.expando(name)
-	defer sciter_app.value_clear(&expando)
+	expando, eerr := sciter_app.scoped_expando(name)
 	if eerr == nil {
 		// A number written from Odin, read by script.
 		mark := sciter_app.value_from(i32(7))
@@ -256,8 +254,7 @@ main :: proc() {
 	}
 
 	// A function the document defined, reached from an element rather than the window.
-	shout, serr := sciter_app.call_function(name, "shout", sciter_app.value_from("quiet"))
-	defer sciter_app.value_clear(&shout)
+	shout, serr := sciter_app.scoped_call_function(name, "shout", sciter_app.value_from("quiet"))
 	ss, _ := sciter_app.value_to_string(&shout, context.temp_allocator)
 	fmt.printfln("call_function(el, \"shout\", \"quiet\") -> %q (%v)", ss, serr)
 
@@ -555,8 +552,7 @@ test_send_text_types_into_an_input :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.send_text(name, "XY"), nil)
 	pump()
 
-	value, err := sciter_app.element_value(name)
-	defer sciter_app.value_clear(&value)
+	value, err := sciter_app.scoped_element_value(name)
 	testing.expect_value(t, err, nil)
 	s, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 
@@ -676,8 +672,7 @@ test_expando_crosses_both_ways :: proc(t: ^testing.T) {
 
 	name, _ := sciter_app.select_first(root, "#name")
 
-	expando, err := sciter_app.expando(name)
-	defer sciter_app.value_clear(&expando)
+	expando, err := sciter_app.scoped_expando(name)
 	testing.expect_value(t, err, nil)
 
 	// Odin writes a number, script reads it. (A *string* does not survive `value_set` here - see the
@@ -686,29 +681,26 @@ test_expando_crosses_both_ways :: proc(t: ^testing.T) {
 	defer sciter_app.value_clear(&rank)
 	testing.expect_value(t, sciter_app.value_set(&expando, "odin_rank", &rank), nil)
 
-	seen, eerr := sciter_app.eval(window, "String(document.$('#name').odin_rank)")
-	defer sciter_app.value_clear(&seen)
+	seen, eerr := sciter_app.scoped_eval(window, "String(document.$('#name').odin_rank)")
 	testing.expect_value(t, eerr, nil)
 	s, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
 	testing.expect_value(t, s, "7")
 
 	// Script writes, Odin reads - a number and a string, both intact.
 	sciter_app.eval(window, `document.$("#name").script_note = 41 + 1`)
-	back, berr := sciter_app.value_get(&expando, "script_note")
-	defer sciter_app.value_clear(&back)
+	back, berr := sciter_app.scoped_value_get(&expando, "script_note")
 	testing.expect_value(t, berr, nil)
 	n, _ := sciter_app.value_to_int(&back)
 	testing.expect_value(t, n, 42)
 
 	// The supported way to put a string there, and it reads back through the same expando.
 	//
-	// The result is cleared rather than dropped: an assignment expression evaluates to the assigned
-	// value, so this `eval_element` hands back a STRING that owns a reference like any other.
-	assigned, serr := sciter_app.eval_element(name, `this.odin_note = "set by Odin"`)
-	defer sciter_app.value_clear(&assigned)
+	// The result is released rather than dropped, and the scoped twin is what does it without the
+	// caller even naming the Value: an assignment expression evaluates to the assigned value, so this
+	// `eval_element` hands back a STRING that owns a reference like any other.
+	_, serr := sciter_app.scoped_eval_element(name, `this.odin_note = "set by Odin"`)
 	testing.expect_value(t, serr, nil)
-	note, nerr := sciter_app.value_get(&expando, "odin_note")
-	defer sciter_app.value_clear(&note)
+	note, nerr := sciter_app.scoped_value_get(&expando, "odin_note")
 	testing.expect_value(t, nerr, nil)
 	ns, nserr := sciter_app.value_to_string(&note, context.temp_allocator)
 	testing.expect_value(t, nserr, nil)
@@ -729,8 +721,7 @@ test_call_function_finds_what_call_method_cannot :: proc(t: ^testing.T) {
 
 	name, _ := sciter_app.select_first(root, "#name")
 
-	result, err := sciter_app.call_function(name, "shout", sciter_app.value_from("quiet"))
-	defer sciter_app.value_clear(&result)
+	result, err := sciter_app.scoped_call_function(name, "shout", sciter_app.value_from("quiet"))
 	testing.expect_value(t, err, nil)
 	s, _ := sciter_app.value_to_string(&result, context.temp_allocator)
 	testing.expect_value(t, s, "QUIET!")
@@ -915,4 +906,32 @@ test_graphics_caps :: proc(t: ^testing.T) {
 	// Documented as an ordinal scale, not a bitmask - see `Graphics_Caps`. The vendored Linux build
 	// answers `.Software`, which is the middle of the three.
 	testing.expect_value(t, caps, sciter_app.Graphics_Caps.Software)
+}
+
+// **The unscoped producer is the one to use when the Value leaves the scope that made it**, and this
+// pins that half of the pair. Everywhere else in this file the read and the use are in the same scope,
+// so `scoped_call_function` is what it says: the same call with the release attached. Here the call is
+// one procedure and the reading is another, so the reference travels with the Value and the caller is
+// the one that gives it back - `shout_of` says so in its doc comment, which is the only place that
+// contract can live.
+@(private = "file")
+shout_of :: proc(element: sciter_app.Element, text: string) -> (value: sciter_app.Value, err: sciter_app.Error) {
+	// Owns a reference on return; the caller clears it.
+	return sciter_app.call_function(element, "shout", sciter_app.value_from(text))
+}
+
+@(test)
+test_an_unscoped_call_hands_the_result_and_its_reference_upwards :: proc(t: ^testing.T) {
+	_, root, ok := test_window(t)
+	if !ok {return}
+
+	name, _ := sciter_app.select_first(root, "#name")
+
+	said, err := shout_of(name, "quiet")
+	defer sciter_app.value_clear(&said)
+	testing.expect_value(t, err, nil)
+
+	s, serr := sciter_app.value_to_string(&said, context.temp_allocator)
+	testing.expect_value(t, serr, nil)
+	testing.expect_value(t, s, "QUIET!")
 }

@@ -522,9 +522,8 @@ publish :: proc(window: sciter_app.Window, name: string, fn: sciter_app.Native_F
 // readable when what comes back is an object.
 @(private = "file")
 eval_string :: proc(t: ^testing.T, window: sciter_app.Window, source: string) -> string {
-	v, err := sciter_app.eval(window, source)
+	v, err := sciter_app.scoped_eval(window, source)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&v)
 	s, serr := sciter_app.value_to_display_string(&v, allocator = context.temp_allocator)
 	testing.expect_value(t, serr, nil)
 	return s
@@ -808,9 +807,8 @@ test_an_assets_properties_can_be_read_and_written_without_script :: proc(t: ^tes
 	_ = window
 
 	g_app.calls = 11
-	current, gerr := sciter_app.asset_get(g_asset, "calls")
+	current, gerr := sciter_app.scoped_asset_get(g_asset, "calls")
 	testing.expect_value(t, gerr, nil)
-	defer sciter_app.value_clear(&current)
 	n, _ := sciter_app.value_to_int(&current)
 	testing.expect_value(t, n, i32(11))
 
@@ -913,26 +911,22 @@ test_a_constant_property_is_read_from_the_definition_rather_than_called :: proc(
 	}
 
 	// Each of these would be a call through the constant before the tag was checked.
-	max_value, max_err := sciter_app.asset_get(&g_const_asset, "max")
-	defer sciter_app.value_clear(&max_value)
+	max_value, max_err := sciter_app.scoped_asset_get(&g_const_asset, "max")
 	testing.expect_value(t, max_err, nil)
 	max_i, _ := sciter_app.value_to_int(&max_value)
 	testing.expect_value(t, max_i, i32(100))
 
-	big_value, big_err := sciter_app.asset_get(&g_const_asset, "big")
-	defer sciter_app.value_clear(&big_value)
+	big_value, big_err := sciter_app.scoped_asset_get(&g_const_asset, "big")
 	testing.expect_value(t, big_err, nil)
 	big_i, _ := sciter_app.value_to_i64(&big_value)
 	testing.expect_value(t, big_i, i64(1 << 40))
 
-	ratio_value, ratio_err := sciter_app.asset_get(&g_const_asset, "ratio")
-	defer sciter_app.value_clear(&ratio_value)
+	ratio_value, ratio_err := sciter_app.scoped_asset_get(&g_const_asset, "ratio")
 	testing.expect_value(t, ratio_err, nil)
 	ratio_f, _ := sciter_app.value_to_f64(&ratio_value)
 	testing.expect_value(t, ratio_f, 0.5)
 
-	label_value, label_err := sciter_app.asset_get(&g_const_asset, "label")
-	defer sciter_app.value_clear(&label_value)
+	label_value, label_err := sciter_app.scoped_asset_get(&g_const_asset, "label")
 	testing.expect_value(t, label_err, nil)
 	label_s, _ := sciter_app.value_to_string(&label_value, context.temp_allocator)
 	testing.expect_value(t, label_s, LABEL)
@@ -970,18 +964,16 @@ test_an_assets_methods_can_be_called_without_script_and_the_arity_guard_can_be_w
 	two := []sciter_app.Value{sciter_app.value_from(i32(20)), sciter_app.value_from(i32(22))}
 	defer for &v in two {sciter_app.value_clear(&v)}
 
-	result, err := sciter_app.asset_call(g_asset, "sum", two)
+	result, err := sciter_app.scoped_asset_call(g_asset, "sum", two)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&result)
 	total, _ := sciter_app.value_to_int(&result)
 	testing.expect_value(t, total, i32(42))
 
 	// One argument to a two-parameter method: accepted.
 	one := []sciter_app.Value{sciter_app.value_from(i32(3))}
 	defer for &v in one {sciter_app.value_clear(&v)}
-	short, serr := sciter_app.asset_call(g_asset, "sum", one, check_arity = false)
+	short, serr := sciter_app.scoped_asset_call(g_asset, "sum", one, check_arity = false)
 	testing.expect_value(t, serr, nil)
-	defer sciter_app.value_clear(&short)
 	partial, _ := sciter_app.value_to_int(&short)
 	testing.expect_value(t, partial, i32(3))
 
@@ -990,9 +982,8 @@ test_an_assets_methods_can_be_called_without_script_and_the_arity_guard_can_be_w
 	testing.expect_value(t, aerr, sciter_app.Error(sciter_app.Api_Error.Wrong_Arity))
 
 	// None at all: also accepted, and `sum` of nothing is zero.
-	empty, eerr := sciter_app.asset_call(g_asset, "sum", nil, check_arity = false)
+	empty, eerr := sciter_app.scoped_asset_call(g_asset, "sum", nil, check_arity = false)
 	testing.expect_value(t, eerr, nil)
-	defer sciter_app.value_clear(&empty)
 	zero, _ := sciter_app.value_to_int(&empty)
 	testing.expect_value(t, zero, i32(0))
 

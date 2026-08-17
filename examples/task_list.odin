@@ -410,14 +410,12 @@ from_value :: proc(app: ^App, value: ^sciter_app.Value) -> sciter_app.Error {
 	app.next_id = 0
 
 	for i in 0 ..< n {
-		row, err := sciter_app.value_at(value, i)
+		row, err := sciter_app.scoped_value_at(value, i)
 		if err != nil {
 			continue
 		}
-		defer sciter_app.value_clear(&row)
 
-		title_value, terr := sciter_app.value_get(&row, "title")
-		defer sciter_app.value_clear(&title_value)
+		title_value, terr := sciter_app.scoped_value_get(&row, "title")
 		if terr != nil {
 			continue
 		}
@@ -431,8 +429,7 @@ from_value :: proc(app: ^App, value: ^sciter_app.Value) -> sciter_app.Error {
 			continue
 		}
 
-		done_value, derr := sciter_app.value_get(&row, "done")
-		defer sciter_app.value_clear(&done_value)
+		done_value, derr := sciter_app.scoped_value_get(&row, "done")
 		if derr == nil {
 			done, _ := sciter_app.value_to_bool(&done_value)
 			app.tasks[index].done = done
@@ -460,8 +457,7 @@ load :: proc(app: ^App) -> bool {
 	if rerr != nil {
 		return false
 	}
-	value, err := sciter_app.value_parse(string(data), .JSON_LITERAL)
-	defer sciter_app.value_clear(&value)
+	value, err := sciter_app.scoped_value_parse(string(data), .JSON_LITERAL)
 	if err != nil {
 		fmt.eprintfln("%s is not readable as JSON, starting empty: %v", app.path, err)
 		return false
@@ -994,8 +990,7 @@ test_entry_field_adds_a_task :: proc(t: ^testing.T) {
 	testing.expect_value(t, app.tasks[0].title, "typed in")
 
 	// And the field is cleared, so the next task does not start with the last one.
-	value, _ := sciter_app.element_value(entry)
-	defer sciter_app.value_clear(&value)
+	value, _ := sciter_app.scoped_element_value(entry)
 	s, _ := sciter_app.value_to_string(&value, context.temp_allocator)
 	testing.expect_value(t, s, "")
 

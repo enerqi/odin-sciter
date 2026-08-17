@@ -51,6 +51,12 @@ regenerating: every Python step here runs through it — fetching the engine inc
 needs it before the first build. `just fetch-engine` checks for it and prints the install command
 rather than failing as "os error 2".
 
+**uv is here so that Python is not.** It pins the interpreter these recipes run under and fetches it if
+the machine has none, which is why nothing here asks you to have Python, or to have it under a
+particular name: `python` versus `python3` versus `python3.x` is not a reliable lookup on three
+platforms, and `--no-project` keeps it from finding a `pyproject.toml` or a local `.venv` and using
+those instead. One dependency you install once, rather than a Python version you have to match.
+
 **The versions CI builds with are `odin dev-2026-08` and `just 1.55.1`**, pinned as the defaults of
 [`.github/actions/toolchain/action.yml`](.github/actions/toolchain/action.yml), which is the one place
 they are written down. Odin has no stable release line and changes `core:` between nightlies, so a much

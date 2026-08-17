@@ -11,7 +11,10 @@ Everything you need to get a window on screen, and what to do when it does not a
 - [just](https://just.systems/) — the task runner every command below uses; CI pins `1.55.1`
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — **not optional, and needed before the
   first build**: every Python step here runs through it, and fetching the engine is one of them. The
-  recipes check for it and print the install command rather than failing as "os error 2"
+  recipes check for it and print the install command rather than failing as "os error 2". **It is there
+  so that Python is not a requirement**: uv pins the interpreter and fetches one if the machine has
+  none, so no recipe has to find `python` versus `python3` versus `python3.x`, or care which of them the
+  machine has
 - Linux x64, Windows x64 or macOS. The first two have been run on real machines; macOS is exercised in
   CI only. The platform table in [`README.md`](../README.md#finding-the-engine) says exactly what that
   does and does not prove, and [`deployment.md`](./deployment.md) covers shipping.
@@ -224,6 +227,7 @@ parallel by default. Every test recipe here passes `-define:ODIN_TEST_THREADS=1`
 | **use this from your own project** | [`using-in-your-project.md`](./using-in-your-project.md) |
 | **get the four contracts right** | [`rules.md`](./rules.md) |
 | **avoid the footguns that cost a day each** | [`gotchas.md`](./gotchas.md) |
+| **know which upstream source answers which question** | [`gotchas.md`](./gotchas.md#where-the-knowledge-actually-lives) — docs.sciter.com is script-side only; the host API is documented in header comments and forum posts |
 | understand why the bindings are shaped this way | [`architecture.md`](./architecture.md) |
 | write the UI itself | [`html-css-js.md`](./html-css-js.md) |
 | move data between Odin and script | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) |

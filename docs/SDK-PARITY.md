@@ -138,7 +138,7 @@ SDK.
 
 Upstream ships a *script-side* test sample (`samples.sciter/unit-test`) and **no host-side tests**: the
 only C test sources in the whole checkout belong to the copy of SDL vendored inside `demos.lite`. This
-repository carries **362 `@(test)` assertions across 24 files** (`grep -c '@(test)'`), plus
+repository carries **406 `@(test)` procedures across 25 files** (`just stats`), plus
 `just example-tests`.
 
 **Read: on the cross-platform host API, this repository is at or ahead of the SDK's own C/C++ samples.**

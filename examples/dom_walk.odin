@@ -1874,9 +1874,8 @@ test_element_value_round_trip :: proc(t: ^testing.T) {
 	root, _ := sciter_app.root(window)
 	summary, _ := sciter_app.select_first(root, "#summary")
 
-	v, err := sciter_app.element_to_value(summary)
+	v, err := sciter_app.scoped_element_to_value(summary)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&v)
 
 	// A wrapped element is a RESOURCE, and renders as nothing - so this is one of the few Values that
 	// `value_to_display_string` cannot be used to look at.
@@ -1906,9 +1905,8 @@ test_element_value_holds_a_reference :: proc(t: ^testing.T) {
 	made := sciter_app.borrow_element(made_owned)
 	testing.expect_value(t, merr, nil)
 
-	v, err := sciter_app.element_to_value(made)
+	v, err := sciter_app.scoped_element_to_value(made)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&v)
 
 	// The only reference the caller had, given back. The handle is dead from here - touching it is a
 	// use-after-free, not an error code - so everything below goes through the Value.
@@ -1998,9 +1996,8 @@ test_elements_cross_the_script_boundary :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.set_global(window, "odin_gave", &gave), nil)
 
 	// In: script's element arrives as an argument and unwraps to the handle it stands for.
-	taken, terr := sciter_app.eval(window, `odin_took(document.$("#summary"))`)
+	taken, terr := sciter_app.scoped_eval(window, `odin_took(document.$("#summary"))`)
 	testing.expect_value(t, terr, nil)
-	defer sciter_app.value_clear(&taken)
 
 	got, _ := sciter_app.value_to_bool(&taken)
 	testing.expect(t, got, "the argument must unwrap to an element")
@@ -2034,9 +2031,8 @@ test_node_value_round_trip :: proc(t: ^testing.T) {
 	type, _ := sciter_app.node_type(text)
 	testing.expect_value(t, type, sciter.Node_Type.TEXT)
 
-	v, err := sciter_app.node_to_value(text)
+	v, err := sciter_app.scoped_node_to_value(text)
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&v)
 
 	back, berr := sciter_app.node_from_value(&v)
 	testing.expect_value(t, berr, nil)
@@ -2047,9 +2043,8 @@ test_node_value_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, not_an_element, sciter_app.Error(sciter.Scdom_Result.OPERATION_FAILED))
 
 	// The other asymmetry: an element *is* a node, so an element's Value unwraps both ways.
-	ev, everr := sciter_app.element_to_value(first)
+	ev, everr := sciter_app.scoped_element_to_value(first)
 	testing.expect_value(t, everr, nil)
-	defer sciter_app.value_clear(&ev)
 
 	as_node, nerr := sciter_app.node_from_value(&ev)
 	testing.expect_value(t, nerr, nil)
@@ -2191,23 +2186,20 @@ test_globals_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.set_global(window, "odin_answer", &published), nil)
 
 	// Out again through the API...
-	back, err := sciter_app.global(window, "odin_answer")
+	back, err := sciter_app.scoped_global(window, "odin_answer")
 	testing.expect_value(t, err, nil)
-	defer sciter_app.value_clear(&back)
 	n, _ := sciter_app.value_to_int(&back)
 	testing.expect_value(t, n, i32(42))
 
 	// ...and visible to script as a real global, which is the point of publishing one.
-	seen, serr := sciter_app.eval(window, "typeof odin_answer + ':' + globalThis.odin_answer")
+	seen, serr := sciter_app.scoped_eval(window, "typeof odin_answer + ':' + globalThis.odin_answer")
 	testing.expect_value(t, serr, nil)
-	defer sciter_app.value_clear(&seen)
 	described, _ := sciter_app.value_to_string(&seen, context.temp_allocator)
 	testing.expect_value(t, described, "number:42")
 
 	// A name nobody published is undefined rather than an error - the same answer script gives.
-	missing, merr := sciter_app.global(window, "odin_nothing_here")
+	missing, merr := sciter_app.scoped_global(window, "odin_nothing_here")
 	testing.expect_value(t, merr, nil)
-	defer sciter_app.value_clear(&missing)
 	testing.expect(t, sciter_app.value_is_undefined(&missing))
 
 	// Script's own globals come back the same way.
@@ -2215,18 +2207,16 @@ test_globals_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, derr, nil)
 	sciter_app.value_clear(&defined)
 
-	from_script, ferr := sciter_app.global(window, "from_script")
+	from_script, ferr := sciter_app.scoped_global(window, "from_script")
 	testing.expect_value(t, ferr, nil)
-	defer sciter_app.value_clear(&from_script)
 	s, _ := sciter_app.value_to_string(&from_script, context.temp_allocator)
 	testing.expect_value(t, s, "yes")
 
 	// Globals belong to the document, so a reload takes them with it. This is the mistake the guide
 	// warns about, pinned.
 	testing.expect_value(t, sciter_app.load_html(window, DOC), nil)
-	gone, gerr := sciter_app.global(window, "odin_answer")
+	gone, gerr := sciter_app.scoped_global(window, "odin_answer")
 	testing.expect_value(t, gerr, nil)
-	defer sciter_app.value_clear(&gone)
 	testing.expect(t, sciter_app.value_is_undefined(&gone), "a reload clears the document's globals")
 }
 
@@ -2943,54 +2933,47 @@ test_global_asset_is_an_object_in_script :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
 	testing.expect_value(t, sciter_app.set_global_asset(asset), nil)
 
-	before, berr := sciter_app.eval(window, "typeof Backend")
+	before, berr := sciter_app.scoped_eval(window, "typeof Backend")
 	testing.expect_value(t, berr, nil)
-	defer sciter_app.value_clear(&before)
 	kind, _ := sciter_app.value_to_string(&before, context.temp_allocator)
 	testing.expect_value(t, kind, "undefined")
 
 	// The next load is where it appears.
 	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
 
-	described, derr := sciter_app.eval(window, "[typeof Backend, String(Backend)].join('/')")
+	described, derr := sciter_app.scoped_eval(window, "[typeof Backend, String(Backend)].join('/')")
 	testing.expect_value(t, derr, nil)
-	defer sciter_app.value_clear(&described)
 	text, _ := sciter_app.value_to_string(&described, context.temp_allocator)
 	testing.expect_value(t, text, "object/[asset Backend]")
 
 	// A property read reaches the getter...
-	read, rerr := sciter_app.eval(window, "Backend.count")
+	read, rerr := sciter_app.scoped_eval(window, "Backend.count")
 	testing.expect_value(t, rerr, nil)
-	defer sciter_app.value_clear(&read)
 	n, _ := sciter_app.value_to_int(&read)
 	testing.expect_value(t, n, i32(5))
 
 	// ...and a write reaches the setter, which is what makes this an object rather than a snapshot.
-	written, werr := sciter_app.eval(window, "(Backend.count = 42, Backend.count)")
+	written, werr := sciter_app.scoped_eval(window, "(Backend.count = 42, Backend.count)")
 	testing.expect_value(t, werr, nil)
-	defer sciter_app.value_clear(&written)
 	back, _ := sciter_app.value_to_int(&written)
 	testing.expect_value(t, back, i32(42))
 	testing.expect_value(t, state.count, i32(42))
 
 	// A method, with its arguments.
-	called, cerr := sciter_app.eval(window, "Backend.reload(8)")
+	called, cerr := sciter_app.scoped_eval(window, "Backend.reload(8)")
 	testing.expect_value(t, cerr, nil)
-	defer sciter_app.value_clear(&called)
 	total, _ := sciter_app.value_to_int(&called)
 	testing.expect_value(t, total, i32(50))
 	testing.expect_value(t, state.reloads, 1)
 
 	// A property with no setter is read-only, and the assignment throws rather than being dropped.
-	version, verr := sciter_app.eval(window, "Backend.version")
+	version, verr := sciter_app.scoped_eval(window, "Backend.version")
 	testing.expect_value(t, verr, nil)
-	defer sciter_app.value_clear(&version)
 	v, _ := sciter_app.value_to_string(&version, context.temp_allocator)
 	testing.expect_value(t, v, "6.0.4.9")
 
-	refused, assigned := sciter_app.eval(window, "Backend.version = 'nope'")
+	refused, assigned := sciter_app.scoped_eval(window, "Backend.version = 'nope'")
 	testing.expect_value(t, assigned, nil)
-	defer sciter_app.value_clear(&refused)
 
 	// The refusal comes back as a Value rather than as an error from `eval`: an error *string*, which
 	// is exactly what `value_is_error` is for.
@@ -2999,16 +2982,14 @@ test_global_asset_is_an_object_in_script :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(message, "setting property"), message)
 
 	// And the value is unchanged.
-	still, serr := sciter_app.eval(window, "Backend.version")
+	still, serr := sciter_app.scoped_eval(window, "Backend.version")
 	testing.expect_value(t, serr, nil)
-	defer sciter_app.value_clear(&still)
 	unchanged, _ := sciter_app.value_to_string(&still, context.temp_allocator)
 	testing.expect_value(t, unchanged, "6.0.4.9")
 
 	// SOM members are not enumerable: script has to know the names.
-	keys, kerr := sciter_app.eval(window, "Object.keys(Backend).length")
+	keys, kerr := sciter_app.scoped_eval(window, "Object.keys(Backend).length")
 	testing.expect_value(t, kerr, nil)
-	defer sciter_app.value_clear(&keys)
 	count, _ := sciter_app.value_to_int(&keys)
 	testing.expect_value(t, count, i32(0))
 
@@ -3016,9 +2997,8 @@ test_global_asset_is_an_object_in_script :: proc(t: ^testing.T) {
 	testing.expect_value(t, sciter_app.release_global_asset(asset), nil)
 	testing.expect_value(t, sciter_app.load_html(window, SOM_DOC), nil)
 
-	after, aerr := sciter_app.eval(window, "typeof Backend")
+	after, aerr := sciter_app.scoped_eval(window, "typeof Backend")
 	testing.expect_value(t, aerr, nil)
-	defer sciter_app.value_clear(&after)
 	gone, _ := sciter_app.value_to_string(&after, context.temp_allocator)
 	testing.expect_value(t, gone, "undefined")
 }
@@ -3423,4 +3403,53 @@ test_the_scoped_dom_wraps_release_the_value_and_not_the_element :: proc(t: ^test
 	tag_name, gerr := sciter_app.tag(target)
 	testing.expect_value(t, gerr, nil)
 	testing.expect(t, tag_name != "", "the element outlives the Value that wrapped it")
+}
+
+// **Why both spellings exist, and the case that decides which to use.** Everywhere above, a Value is
+// read and used in the same scope, so the `scoped_` twin is the one to reach for: it is the same call
+// with the release attached to the scope, and the leak stops being something to remember. The unscoped
+// procedure is for the other case - a Value that has to *leave* the scope that produced it, where the
+// release belongs to whoever ends up holding it.
+//
+// `published_answer` below is that shape: it hands a Value upwards and says so in its doc comment,
+// which is the whole contract. A `scoped_global` there would hand back a Value the engine has already
+// released.
+@(private = "file")
+published_answer :: proc(window: sciter_app.Window) -> (value: sciter_app.Value, err: sciter_app.Error) {
+	// Owns a reference on return; the caller clears it.
+	return sciter_app.global(window, "odin_answer")
+}
+
+@(test)
+test_an_unscoped_producer_hands_the_value_and_its_reference_upwards :: proc(t: ^testing.T) {
+	window, ok := test_window(t)
+	if !ok {return}
+
+	published := sciter_app.value_from(i32(42))
+	defer sciter_app.value_clear(&published)
+	testing.expect_value(t, sciter_app.set_global(window, "odin_answer", &published), nil)
+
+	// Produced in one scope, read in another - which is exactly what the scoped twin cannot do.
+	answer, err := published_answer(window)
+	defer sciter_app.value_clear(&answer)
+	testing.expect_value(t, err, nil)
+	n, _ := sciter_app.value_to_int(&answer)
+	testing.expect_value(t, n, i32(42))
+
+	// The same rule for a node's Value: `node_to_value` produces, the holder releases. Kept past the
+	// call that made it, then given back here.
+	document, _ := sciter_app.root(window)
+	first, ferr := sciter_app.select_first(document, "#tasks li")
+	testing.expect_value(t, ferr, nil)
+	li, lerr := sciter_app.node_from_element(first)
+	testing.expect_value(t, lerr, nil)
+	child, cerr := sciter_app.node_first_child(li)
+	testing.expect_value(t, cerr, nil)
+
+	wrapped, werr := sciter_app.node_to_value(child)
+	testing.expect_value(t, werr, nil)
+	back, berr := sciter_app.node_from_value(&wrapped)
+	testing.expect_value(t, berr, nil)
+	testing.expect_value(t, back, child)
+	sciter_app.value_clear(&wrapped)
 }
