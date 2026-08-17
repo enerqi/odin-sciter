@@ -35,7 +35,7 @@ permissions:
 
 env:
   ODIN_VERSION: dev-2026-08
-  JUST_VERSION: 1.55.1
+  JUST_VERSION: 1.57.0
   # `BINDGEN_COMMIT` used to be here too, a third copy alongside bindgen.yml's and nothing on a
   # developer machine. It is `bindgen_commit` in the justfile now and read from there below.
   SDK_REPO: https://gitlab.com/sciter-engine/sciter-js-sdk.git

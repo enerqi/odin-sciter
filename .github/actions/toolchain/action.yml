@@ -27,9 +27,9 @@ inputs:
     required: false
     default: dev-2026-08
   just-version:
-    description: just release version, e.g. 1.55.1
+    description: just release version, e.g. 1.57.0
     required: false
-    default: 1.55.1
+    default: 1.57.0
   # No odinfmt here. It used to be an `odinfmt` boolean plus an `ols-version` default of `dev-2026-06`,
   # and that default was the only place the formatter version was written down - so CI formatted with
   # one odinfmt and developers with whatever ols they had built, which diverged and failed four files.
@@ -75,8 +75,8 @@ runs:
         # tells you it did not.
         #
         # Measured, because it broke this action: dropping the `-ols…-fmt…` components left
-        # `tools-Linux-X64-odin…-just1.55.1`, a prefix of the existing
-        # `tools-Linux-X64-odin…-just1.55.1-olsdev-2026-06-fmttrue`. 66 MB was restored, the unpack step
+        # `tools-Linux-X64-odin…-just1.57.0`, a prefix of the existing
+        # `tools-Linux-X64-odin…-just1.57.0-olsdev-2026-06-fmttrue`. 66 MB was restored, the unpack step
         # ran anyway because cache-hit was false, and it died on `mv: cannot overwrite
         # '~/.odin-sciter-tools/odin/base': Directory not empty` - that being the root at the time.
         #

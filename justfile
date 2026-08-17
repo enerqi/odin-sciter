@@ -21,9 +21,29 @@ py := "uv run --no-project -p 3.14 python"
 
 # Newest just features used below, in order of introduction: `[group]` (1.33), `--groups` (1.47),
 # user-defined functions (1.49), `--list --group` (1.50), `set lists` and `split()` (1.53), and cached
-# recipes (1.54) - the last of which is `build-checks` in ci.just, and is what sets this floor. Keep
-# docs/WINDOWS-CHECKLIST.md and `odin-skel doctor` in step.
-set minimum-version := "1.54.0"
+# recipes (1.54) - the last of which is `build-checks` in ci.just.
+#
+# **The floor is 1.57.0, and it is set by two bugs rather than by a feature.** Both were measured by
+# running this justfile under 1.55.1, 1.56.0, 1.57.0 and 1.58.0 - the developer machine was on 1.58.0
+# and the pin was 1.55.1, which is exactly why Windows passed and Linux and macOS did not.
+#
+#   before 1.56  `set lazy` plus a *variable* in a `[cache(...)]` attribute. The attribute is evaluated
+#                before the lazy variable is resolved, and the result is not a clean error:
+#
+#                    error: internal runtime error, this may indicate a bug in just:
+#                           attempted to evaluate undefined variable `checks_sources`
+#
+#                Any non-literal variable does it. `outputs = <literal-valued variable>` is fine;
+#                `inputs = split(<globbed variable>, " ")` is not.
+#
+#   before 1.57  the escaped `\"` inside `shell(...)` below does not survive to the shell, so the
+#                python one-liner arrives truncated and exits with a SyntaxError. A backtick command
+#                instead of `shell()` fails the same way, so this is about quoting and not about which
+#                spelling reaches the shell.
+#
+# Keep the pin in `.github/actions/toolchain/action.yml`, docs/WINDOWS-CHECKLIST.md,
+# docs/getting-started.md, README.md and `odin-skel doctor` in step.
+set minimum-version := "1.57.0"
 
 # **Every recipe carries a `[group('...')]`, and a new one should too.** Seven groups, and they are the
 # split this project already made informally - in the recipe names (`example_*`, `example_rerun_*`,

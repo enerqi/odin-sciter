@@ -8,7 +8,7 @@ Everything you need to get a window on screen, and what to do when it does not a
   recipes are tested against. There is no stable release line and `core:` changes between nightlies, so
   a much newer or older one may not compile the tree. The pin lives in
   [`.github/actions/toolchain/action.yml`](../.github/actions/toolchain/action.yml)
-- [just](https://just.systems/) — the task runner every command below uses; CI pins `1.55.1`
+- [just](https://just.systems/) — the task runner every command below uses; CI pins `1.57.0`
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — **not optional, and needed before the
   first build**: every Python step here runs through it, and fetching the engine is one of them. The
   recipes check for it and print the install command rather than failing as "os error 2". **It is there

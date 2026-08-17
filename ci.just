@@ -404,4 +404,7 @@ cross-check: ensure-engine
 			print(f"    {t}: {' '.join(c)}")
 		raise SystemExit(1)
 
-	print(f"ok: both packages, the doc snippets and every portable example type check for {', '.join(targets)}")
+	print(
+		f"ok: both packages, the doc snippets, tools/checks and every portable example type check "
+		f"for {', '.join(targets)}"
+	)

@@ -18,6 +18,7 @@
 package main
 
 import "../sciter_app"
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -84,9 +85,68 @@ main :: proc() {
 //
 // Windowless, so it needs no display and runs in the ordinary CI test job: the stylesheet either
 // resolves or it does not, and neither answer needs a window on screen.
+// **macOS: the engine's AppKit singleton has to be built on the main thread, and a *windowless* view
+// builds it too.** `create_windowless` reaches the same singleton the windowed path does -
+// `lite::application::factory` is in the abort trace either way - and AppKit aborts the whole process
+// when that happens off the main thread. Odin's test runner runs every test on a `thread.Pool` worker,
+// so the first engine call from one killed this file with
+//
+//	libc++abi: terminating due to uncaught exception of type NSException
+//	  ... lite::application::factory ... sciter_app::create_windowless ... thread_start
+//
+// `@(init)` procedures do run on the main thread, before the runner starts, so the singleton is built
+// there and every later `sciter_app.init()` is a no-op (`g_initialized` in sciter_app/app.odin). Test
+// binaries only: a normal build reaches the engine from `main`, which is the main thread by definition.
+//
+// The same block is in `examples/windowless.odin` and `examples/custom_loader.odin` for the same
+// reason. See docs/MACOS-CHECKLIST.md section 2.
+when ODIN_OS == .Darwin && ODIN_TEST {
+	@(private = "file")
+	@(init)
+	darwin_main_thread_bootstrap :: proc "contextless" () {
+		context = runtime.default_context()
+		if !sciter_app.load_engine() {
+			return
+		}
+		_ = sciter_app.init()
+
+		// And forget the thread that just armed rule 1. That thread is `main`, every test runs on a
+		// `thread.Pool` worker, and the guard would trap each one on its first engine call. The split is
+		// real and unavoidable - AppKit wants main for the singleton, the runner wants a worker for the
+		// tests - so what re-arming buys is the rest of the rule: the first test call arms the worker,
+		// and a later call from anywhere else still traps.
+		sciter_app.check_thread_affinity()
+	}
+}
+
+// No window is opened, but the view still needs a display: `SXM_CREATE` segfaults without one, measured
+// in `examples/windowless.odin`. macOS and Windows always have one; the `@(init)` above is what makes
+// macOS survive it.
+@(private = "file")
+have_display :: proc() -> bool {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		return true
+	} else {
+		return(
+			os.get_env("DISPLAY", context.temp_allocator) != "" ||
+			os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" \
+		)
+	}
+}
+
 @(test)
 test_relative_links_resolve_through_load_html_not_set_home_url :: proc(t: ^testing.T) {
 	if !engine_loaded(t) {return}
+	if !have_display() {
+		fmt.println("no display - skipping, `SXM_CREATE` segfaults without one")
+		return
+	}
+
+	// The engine outlives the test: `sciter_app.init()` builds process-wide state on first call, and the
+	// runner hands each test a tracking allocator it tears down afterwards. Anything the engine path
+	// allocates through the context would be reported as a leak by the test that happened to be first.
+	// `examples/windowless.odin` and `examples/custom_loader.odin` do the same, for the same reason.
+	context.allocator = runtime.default_allocator()
 
 	view, err := sciter_app.create_windowless({width = 400, height = 300})
 	testing.expect_value(t, err, nil)

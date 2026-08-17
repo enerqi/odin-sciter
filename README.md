@@ -57,7 +57,7 @@ particular name: `python` versus `python3` versus `python3.x` is not a reliable 
 platforms, and `--no-project` keeps it from finding a `pyproject.toml` or a local `.venv` and using
 those instead. One dependency you install once, rather than a Python version you have to match.
 
-**The versions CI builds with are `odin dev-2026-08` and `just 1.55.1`**, pinned as the defaults of
+**The versions CI builds with are `odin dev-2026-08` and `just 1.57.0`**, pinned as the defaults of
 [`.github/actions/toolchain/action.yml`](.github/actions/toolchain/action.yml), which is the one place
 they are written down. Odin has no stable release line and changes `core:` between nightlies, so a much
 newer or much older one may not compile this tree — that pin is what "a recent Odin" means here.

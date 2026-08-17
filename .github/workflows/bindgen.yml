@@ -32,7 +32,7 @@ permissions:
 
 env:
   ODIN_VERSION: dev-2026-08
-  JUST_VERSION: 1.55.1
+  JUST_VERSION: 1.57.0
   # The generator's pin is NOT here. It is `bindgen_commit` in the justfile, and the step below reads
   # it with `just --evaluate`.
   #
