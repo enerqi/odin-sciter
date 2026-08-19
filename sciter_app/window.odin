@@ -67,6 +67,13 @@ create_window :: proc(opts := Window_Options{}, loc := #caller_location) -> (win
 
 // Loads a document from a UTF-8 HTML string. `base_url` resolves relative references in it - without
 // one, `<img src="logo.png">` has nowhere to look.
+//
+// **The bytes being UTF-8 is not the same as the DOCUMENT saying so: give it a `<meta charset="utf-8">`.**
+// Without one the engine decodes with the system codepage, so on a Windows-1252 machine an em dash arrives
+// as `â€"` and `·` as `Â·`. Nothing is logged, the debug output stays silent, and the
+// mangling is in the DOM - so it survives into `text()` and into every attribute you read back. A document
+// assembled in Odin has no file for the engine to sniff, which makes the declaration the only signal there
+// is.
 load_html :: proc(window: Window, html: string, base_url := "") -> Error {
 	base: [^]u16
 	if base_url != "" {

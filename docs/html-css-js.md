@@ -19,8 +19,16 @@ web development with an Odin host to write.
 | HTML | a full HTML5 parser, a fixed set of known tags plus arbitrary custom ones, and Sciter-specific elements (`<frame>`, `<popup>`, `<menu>`, `<include>`) |
 | CSS | CSS 2.1 in full, selected CSS3 modules, plus Sciter's own flow/flex layout, style sets, `@image-map`, and CSS-assigned behaviors |
 | JS | QuickJS implementing **ES2020 in full**, plus JSX with a native parser, Signals, and a small NodeJS-shaped standard library |
-| Missing | `display:flexbox`, `display:grid`, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface |
+| Missing | `display:flexbox`, `display:grid`, `gap`, `vw`/`vh`, `clamp()`, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface — **and any component library**, see [Styling controls](#styling-controls-and-the-states-you-inherit) |
 | Extra | native behaviors, a persistent NoSQL store, real desktop windows and popups from script |
+
+**The expectation to reset first**, because it decides how much CSS you are signing up to write: the web
+platform hands you a framework — Material, Fluent, Bootstrap, Bulma, Tailwind — and with it a component
+vocabulary and, more importantly, the *states* of every control. None of that exists here, and none of it
+can be ported: every one of those frameworks is flex/grid at its core, and their distribution is
+npm/CDN, which this engine has no notion of. What the SDK offers instead is three sample themes to copy,
+`@set` style-sets as the encapsulation mechanism, and thirteen script widgets. See
+[Styling controls](#styling-controls-and-the-states-you-inherit).
 
 ## HTML
 
@@ -49,12 +57,26 @@ Sciter-specific markup you will actually reach for:
 The window's **title comes from the document's `<title>`**. Sciter 6 has no window-title API, and
 `create_window` has no title field for that reason.
 
+**Declare the encoding, even for a document you assembled in Odin.** `load_html` takes UTF-8 bytes, but
+the bytes being UTF-8 is not the same as the document *saying* so: with no `<meta charset="utf-8">` the
+engine decodes with the SYSTEM codepage, and on a Windows-1252 machine an em dash arrives as `â€"`
+and `·` as `Â·`. A file loaded by URL can be sniffed; a string handed to `load_html`
+has nothing to sniff, so the declaration is the only signal there is. The failure is silent in every
+direction that matters — nothing in the debug output, and the mangling is in the DOM rather than only on
+screen, so it survives into `text()` and into every attribute you read back. Two lines of head:
+
+```html
+<head>
+  <meta charset="utf-8">
+```
+
 ## CSS
 
 CSS 2.1 is implemented in full. CSS3 is implemented in the modules that are practical for desktop UI:
-`transform` (2D only), `transition`, `animation`, most CSS3 selectors, `border-radius`, `box-shadow`,
-`opacity`, `rgba()`/`hsl()`, `@font-face`, `@media`, `var()`, gradients, `filter()` and
-`backdrop-filter()`.
+`transform` (2D only, and **not every function** — see
+[Animation](#animation-what-moves-and-the-two-ways-a-transform-is-silently-ignored)), `transition`,
+`animation`, most CSS3 selectors, `border-radius`, `box-shadow`, `opacity`, `rgba()`/`hsl()`,
+`@font-face`, `@media`, `var()`, gradients, `filter()` and `backdrop-filter()`.
 
 ### Layout is flow and flex units, not flexbox
 
@@ -88,6 +110,11 @@ gallery   { flow: grid(1* 1* 1*); }   /* three equal columns */
 
 Porting instinct: `display:flex; flex-direction:row` becomes `flow:horizontal`, and `flex:1` becomes
 `size:*` or `width:*`.
+
+**`gap` does not exist either**, and it is the one people miss because it is a *spacing* property rather
+than a layout mode — a stylesheet full of `gap: .5rem` loses every one of them silently. Spacing between
+children is margins on the children (`.line > * { margin-right: .5em }` for a row), or flex-unit margins
+when the space should distribute rather than repeat.
 
 ### Absolutely positioned elements collapse — two separate rules, both measured
 
@@ -150,6 +177,21 @@ thinks it is** before concluding anything about the event system.
   avoids collisions with the standard DOM. The catalogue is `docs/md/behaviors/` **in the Sciter SDK
   checkout, not in this repository**; what a *host* can reach from Odin is measured in
   [`BEHAVIORS.md`](./BEHAVIORS.md).
+
+  **Read the absence as well as the presence: a click event comes from the CONTROLLER, so an element with
+  no behavior produces none.** A `<div>` you have made to look like a row or a tab is not clickable in
+  any sense a host can hear — no `.BUTTON_CLICK` reaches an `Event_Handler`, and nothing in the document
+  or the log says why. Measured, same view: a plain `<div>` answers `do_click` with `handled = false` and
+  reports `control_type` `.NO`; the same `<div>` with `behavior: button` answers `true` and `.BUTTON`.
+  **`control_type` is the diagnostic** — ask an unresponsive element what the engine thinks it is before
+  suspecting the event system. (For pointer events without a behavior, subscribe to `.MOUSE` instead.)
+
+  One timing consequence, and it only shows in a windowless view: a behavior goes live when the
+  element's style is RESOLVED, not when it is inserted. An element added by `set_html` reports its
+  `control_type` immediately but answers `do_click` with `handled = false` until the engine has run a
+  pass over it — measured `false` before `windowless_heartbeat` + `paint_windowless`, `true` after. A
+  windowed application pumps continuously and never sees this; a test that renders and clicks in the same
+  breath sees it every time, and blames the CSS.
 - **Style sets** — `@set name { ...rules... }`, applied with `style-set: name`. Encapsulated styling
   for a component subtree, closer to shadow DOM than to a class.
 - **CSS constants and mixins** — `@const`, `@mixin`, evaluated at parse time.
@@ -158,6 +200,126 @@ thinks it is** before concluding anything about the event system.
 - **Vector images in CSS** — `background-image: url(path: M 0 0 L 1 1 Z)` and the `icon:` scheme.
 - **`sciter:ux-master.css`** is the default stylesheet every document inherits. Read it when an
   element's default look is a mystery.
+
+### Styling controls, and the states you inherit
+
+**Measured on 6.0.4.9, Windows, in a windowless view.** A `<button>`'s default look is drawn by the
+engine as an *appearance* — native chrome — not as CSS properties you can read, extend or partly
+override. What the default cascade actually gives a bare `<button>`:
+
+| state | `background-color` | `border-top-color` |
+| --- | --- | --- |
+| rest | `transparent` | `#CECECE` |
+| `:hover` | `transparent` | `#CECECE` |
+| `:active` | **`#EBEBEB`** | `#CECECE` |
+| `:focus` | `transparent` | **`window-accent-color`** |
+| `[disabled]` | `#E8E8E8` (text `#AAAAAA`) | `#CECECE` |
+
+Three things follow, and the second is the one that bites.
+
+**1. There is no hover state at all**, on any of them. A pressed flash, a focus border and a disabled
+wash are the whole of it.
+
+**2. Painting a control REMOVES the little you had.** Set a `background` and the `:active` flash is gone
+— the same button, given `background: #89b4fa`, measures `#89B4FA` at rest, hovered, pressed *and*
+focused. You do not start from "no feedback" and add; you start from "a bit of feedback" and silently
+delete it. The result is a control that looks finished and feels dead, which is exactly the bug a quick
+visual check passes:
+
+```css
+/* the whole set, because there is nothing to inherit and no framework to inherit it from */
+button           { appearance: none; background: var(--accent); color: var(--accent-ink); }
+button:hover     { background: var(--accent-hover); }
+button:active    { background: var(--accent-active); }
+button:focus     { box-shadow: 0 0 0 2px rgba(137,180,250,.35); }
+button:disabled  { background: var(--line); color: var(--ink-dim); }  /* LAST: it must beat :hover */
+```
+
+`:disabled` last is not style — specificity between those five is a tie, so source order decides, and a
+disabled button that still lights up under the pointer is the standard way to get this wrong.
+
+**3. `appearance: none` is the first line, not a fix for a symptom.** It drops the native chrome — with
+it, the same button reports no `border-top-color` at all — and the SDK's own
+`samples.sciter/input-elements-styling/button.htm` opens with it for that reason. Keep the native look or
+replace it; do not paint over it.
+
+`window-accent-color` in that table is not a colour this file made up: the engine resolves **symbolic
+system colours**, so a focus ring can follow the user's desktop accent instead of guessing at one.
+
+**Where to copy from.** `sciter:ux-master.css` is the *diagnostic* — read it when a default look is a
+mystery. The *starting point* is `samples.sciter/themes/` in the SDK checkout: three complete themes
+restyling every intrinsic control — `windows-flat` (702 lines, 19 state rules), `android-material` (479),
+`default-unisex` (52). They are written in Sciter's own variable form and hook `:theme(dark)` and
+`[ui-size="compact"]`, so a dark/compact switch is a token swap rather than a second stylesheet. For
+individual widgets, `widgets/` has thirteen (tabs, color-selector, prop-list, virtual-tree, console,
+editable-label, tag-list, …), each a small `.css` + `.js` pair — components to lift, not a design system
+to adopt.
+
+**Two variable syntaxes, both real.** Standard custom properties work (`--name:` + `var(--name)`, 4.4.8.0
+and later) and are the ones to reach for. Sciter's own ergonomic form is what every SDK theme is written
+in, so anyone cribbing from one meets it in the first twenty lines:
+
+```css
+body { var(button-back): #555; }              /* declare, Sciter form */
+button { background: color(button-back); }     /* use — color() / length() are the typed accessors */
+```
+
+`docs/md/css/variables-and-attributes.md` in the SDK has both, plus `attr(name):` — CSS-assigned default
+*attributes*, which is how `<select>`'s options get their `role` without any script.
+
+### Animation: what moves, and the two ways a transform is silently ignored
+
+`transition`, `animation` and `transform` are all on the engine's supported-property list, and they do
+work — but a browser page's transform usually does nothing here, for two reasons that produce no error,
+no warning and no visible clue. Both measured on 6.0.4.9, **in pixels**, which is the first thing to know:
+
+**A transform is paint-time, so no box can see it.** `getBoundingClientRect` in script and `location` in
+the host both keep reporting the element's LAYOUT rectangle, transformed or not. An assertion built on
+either says "nothing moved" about a page that is moving perfectly, and — worse — says "centred" about one
+that is not. `windowless_pixel` on a windowless view is the honest instrument:
+
+```odin
+// Did the engine actually PAINT the element where the transform asked? Ask the surface, not the DOM.
+r, g, b, _ := sciter_app.windowless_pixel(&view, 220, 80)
+moved := r == 0x00 && g == 0xff && b == 0x00 // the box's own colour, 200px right of its layout position
+```
+
+**Fact 1 — `translate(x, y)` is honoured; `translateX(x)` is not.** No error, no warning: the element
+simply stays put. `scale()` and `rotate()` paint — the SDK's own transform sample
+(`samples.sciter/gestures/zoom-rotation.htm`) uses exactly those two, which is the clue in hindsight.
+
+**Fact 2 — `style.setProperty("transform", …)` applies; assigning `style.transform = …` does not.**
+Setting the whole inline style with `setAttribute("style", …)` did not apply it either. So the working
+pair from script, and it is valid CSS in a browser too, which is what makes it the portable choice:
+
+```css
+.track { transition: transform 0.35s ease; }   /* the engine animates this, on its own frame clock */
+```
+
+```js
+// Both halves matter. `style.transform = "translateX(-300px)"` is two mistakes in one line and is silent.
+track.style.setProperty("transform", "translate(-300px, 0)");
+```
+
+With those two right, the declared `transition` animates the move — no script-side tween needed. What does
+NOT animate is a layout property: a `transition: margin-left` reads back as an empty computed `transition`
+and the element jumps to its final position in a frame or two. If a fallback has to move something by
+layout (a margin, `left`), expect a jump and drive it yourself.
+
+**A `var()` inside `transform` did not resolve** — neither `var(--w3c-name)` nor Sciter's own `var(name)`
+syntax, with the variable declared on the element and updated through `style.variables({…})`, which is how
+the SDK's sample drives its rotate/scale. It may want the variable on an ancestor; `setProperty` sidesteps
+the question.
+
+When script does have to own the animation, the runtime has better tools than a `setInterval` tween, all
+script-side (see [`JS-RUNTIME.md`](./JS-RUNTIME.md)):
+
+| Call | What it gives you |
+| --- | --- |
+| `element.morphContent(step, {duration, ease})` | the engine calls `step(progress: 0…1)` at frame rate and stops when it returns false; ~25 named easings (`"cubic-out"`, `"bounce-in-out"`, …). The general-purpose tween |
+| `element.replaceContent(jsx, {duration, ease, effect})` | swaps content with a named effect — `"slide-left"`, `"blend"`, `"scroll-top"`, … — and returns a promise that resolves when it ends |
+| `requestAnimationFrame` / `cancelAnimationFrame` | present, and paced by the paint clock rather than a timer |
+| `element.scrollTo({left, top, behavior: "smooth"})` | an animated scroll, which is often the whole feature |
 
 ### Three stylesheets, in order
 
@@ -215,6 +377,12 @@ One trap, because it fails silently: `@media (name: "value")` parses and then ma
 Sciter's default length unit is `ppx` — physical pixels, DPI-aware. `px` is accepted and treated as a
 device-independent pixel. `dip`, `em`, `rem`, `%`, `mm`, `in`, `pt`, `sp` all work, and `*` is the flex
 unit above. `docs/md/css/units/` covers the details.
+
+**`vw`, `vh` and `clamp()` are NOT among them**, which is worth stating rather than leaving to the list
+above, because the fluid-type idiom every recent browser stylesheet is full of —
+`font-size: clamp(1rem, 2.6vw, 1.6rem)` — is three unsupported things in one declaration. Percentages,
+`em`/`rem` and the flex unit cover the same ground here; a window that has to respond at breakpoints uses
+`@media` on `width`.
 
 ## JavaScript
 
@@ -312,11 +480,26 @@ this and not a bug.
 
 ## Porting a browser UI: the realistic checklist
 
+- [ ] keep (or add) the `<meta charset="utf-8">` — a document built as a string has nothing to sniff, and
+      without it non-ASCII text is decoded with the system codepage, silently
 - [ ] replace `display:flex` / `display:grid` with `flow:` and flex units
+- [ ] replace `gap` with margins on the children — it is silently ignored, unlike `display`
+- [ ] replace `vw`/`vh`/`clamp()` with `%`, `em`/`rem`, flex units, or `@media` on `width`
+- [ ] **write the control states you were getting for free** — `:hover` above all, plus `:active`,
+      `:focus` and `:disabled`, and put `appearance: none` first. A framework's stylesheet carried these;
+      nothing here does, and painting a control deletes the engine's own (see
+      [Styling controls](#styling-controls-and-the-states-you-inherit))
+- [ ] give any element you made clickable a `behavior:` — a styled `<div>` raises no click event
 - [ ] replace any framework build step — React, Vue, bundlers — with Reactor and native JSX, or drop to
       plain DOM calls
 - [ ] replace `localStorage` / IndexedDB with `@storage`
 - [ ] replace `fetch` of local files with `@sys.fs`, and grant the feature bits
+- [ ] **check every `transform`**: `translate(x, y)` not `translateX(x)`, and `style.setProperty("transform", …)`
+      not `style.transform = …` — either mistake is silent and leaves the element where layout put it (see
+      [Animation](#animation-what-moves-and-the-two-ways-a-transform-is-silently-ignored))
+- [ ] don't assert a transform with a box — it is paint-time, so `getBoundingClientRect` and `location`
+      report the untransformed rectangle; read pixels instead
+- [ ] replace `getBoundingClientRect()` with `element.state.box("xywh", "border", "view")`
 - [ ] check every third-party JS dependency: no npm, no `require`, ES modules only, and no browser
       globals
 - [ ] re-check custom scrollbars, `<select>` styling and focus rings — Sciter's are native behaviors

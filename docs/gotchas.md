@@ -238,6 +238,79 @@ One more, from the same run: **`set_debug_output` scoped to a windowless view's 
 and Windows. `examples/eval.odin`'s per-window handler test skips on Darwin because of it. The handle a
 windowless view carries answers as a window on two platforms out of three.
 
+## 12. A styled `<div>` is not a control, and the host hears nothing about it
+
+**Symptom:** a list of rows, tabs or cards that look right, hover correctly if you gave them a `:hover`
+rule, and are completely inert. A window handler subscribed to `.BEHAVIOR_EVENT` never fires, no error
+appears in the debug output, and the DOM is exactly what you rendered.
+
+**Cause:** `.BUTTON_CLICK` comes from a native **controller**, not from the pointer. `<button>` has one
+because the engine gives it one; a `<div>` has none, so there is no click to deliver and nothing anywhere
+says so. One line of CSS is the whole fix:
+
+```css
+.row { behavior: button; }   /* now it is a control, and the host's handler hears it */
+```
+
+**The diagnostic is `control_type`.** Measured on 6.0.4.9 in a windowless view: a plain `<div>` answers
+`do_click` with `handled = false` and reports `.NO`; the same `<div>` with `behavior: button` answers
+`true` and reports `.BUTTON`. Ask an unresponsive element what the engine thinks it *is* before suspecting
+the event system — the same instinct as asking `location` about an element that receives no mouse events
+(#11's neighbours in [`html-css-js.md`](./html-css-js.md)). For pointer events without a controller,
+subscribe to `.MOUSE` and handle them yourself.
+
+**The half that only bites in tests:** a behavior goes live when the element's style is **resolved**, not
+when it is inserted. An element added by `set_html` reports its `control_type` immediately but answers
+`do_click` with `handled = false` until the engine has run a pass — measured `false` before
+`windowless_heartbeat` + `paint_windowless` and `true` after, on the same element. A windowed application
+pumps continuously and never sees it. A test that renders rows and clicks one in the same breath sees it
+every time, and the natural conclusion — "the CSS did not apply" — is wrong.
+
+**And `do_click`'s event is delivered through the queue, not synchronously.** The behavior itself runs at
+once (a checkbox is already ticked when the call returns) but the resulting `.BUTTON_CLICK` reaches
+handlers later, so a handler-driven assertion needs a pump between the click and the check.
+`examples/behavior.odin` calls `settle()` for exactly this; without it the model still holds its old value
+and the test blames the handler.
+
+Styling those controls is the other half of the subject, and it is authoring rather than host API:
+[`html-css-js.md`](./html-css-js.md) has what the default cascade actually gives you — no `:hover` at all,
+and painting a control silently deletes the `:active` flash it had.
+
+---
+
+## 13. A transform is ignored twice over, and the page just does not move
+
+**Symptom:** a ported page whose sliding, centring or zooming does nothing. No error, no CSS warning, no
+script exception; the DOM is right, the element is there, `getBoundingClientRect` reports exactly what it
+reported before — and the pixels never move.
+
+**Cause:** two independent silent rejections, both measured on 6.0.4.9 by reading the painted surface:
+
+- **`translateX(200px)` is ignored; `translate(200px, 0)` paints.** A browser accepts both, so the
+  single-axis form is what a ported stylesheet usually carries.
+- **`element.style.transform = "…"` is ignored; `element.style.setProperty("transform", "…")` applies.**
+  (`setAttribute("style", "transform: …")` does not apply either.) Assigning the property is the ordinary
+  script idiom, so this is the second half of the same trap.
+
+Get both right and the stylesheet's own `transition: transform` animates the move on the engine's frame
+clock — no tween needed. Get either wrong and every element paints where layout left it.
+
+**Why it survives a test suite:** a transform is paint-time. `getBoundingClientRect` in script and
+`location` in the host report the UNTRANSFORMED rectangle, so a geometry assertion cannot tell a working
+transform from an ignored one — it passes either way, or fails on a page that looks perfect. The
+instrument that answers is `windowless_pixel`: colour a box, ask the surface where that colour is.
+
+```odin
+r, g, b, _ := sciter_app.windowless_pixel(&view, 220, 80) // 200px right of the box's layout position
+```
+
+**And a layout property does not animate to cover for it:** `transition: margin-left` reads back as an
+empty computed `transition` and the element jumps in a frame or two. A fallback that moves something by
+margin has to drive its own steps — `morphContent` or `requestAnimationFrame`, not `setInterval`.
+
+The full measurement, the working pair, and the script-side animation APIs are in
+[`html-css-js.md`](./html-css-js.md#animation-what-moves-and-the-two-ways-a-transform-is-silently-ignored).
+
 ---
 
 ## Where the knowledge actually lives

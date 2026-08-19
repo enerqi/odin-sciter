@@ -42,7 +42,7 @@ Read the one you need, when you need it.
 | [`calling-between-odin-and-js.md`](./calling-between-odin-and-js.md) | `eval`, `call`, native functors, SOM assets — both directions |
 | [`graphics.md`](./graphics.md) | the 2D renderer, custom-drawn elements, offscreen images |
 | [`resources.md`](./resources.md) | the load callback, custom URL schemes, the request API, archives |
-| [`html-css-js.md`](./html-css-js.md) | what Sciter's dialects do and do not include |
+| [`html-css-js.md`](./html-css-js.md) | what Sciter's dialects do and do not include — and, since no component library exists to lean on, the control states you have to write yourself |
 | [`BEHAVIORS.md`](./BEHAVIORS.md) | the engine's intrinsic behaviors, measured one by one |
 | [`EMBEDDING.md`](./EMBEDDING.md) | windowless rendering into a surface you own |
 | [`using-in-your-project.md`](./using-in-your-project.md) | **your program, this repository as a dependency** — what to vendor, the collection flag, and getting the engine to your users. Everything else here is written from inside this checkout |

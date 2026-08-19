@@ -1227,3 +1227,15 @@ gotchas_teardown :: proc(window: sciter_app.Window) {
 gotchas_debug_output :: proc() {
 	sciter_app.set_default_debug_output() // before loading any document
 }
+
+// ---------------------------------------------------------------------------------------------------
+// html-css-js.md and gotchas.md #13 — a transform is paint-time, so the surface is what you ask
+
+transform_pixel :: proc(view: sciter_app.Windowless_View) {
+	view := view
+	// Did the engine actually PAINT the element where the transform asked? Ask the surface, not the DOM.
+	r, g, b, _ := sciter_app.windowless_pixel(&view, 220, 80)
+	moved := r == 0x00 && g == 0xff && b == 0x00 // the box's own colour, 200px right of its layout position
+
+	_ = moved
+}
