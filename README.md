@@ -509,4 +509,8 @@ listed and described in [`docs/README.md`](docs/README.md). A few worth naming h
   and the three that turned out to be this repository's own mistakes
 - [`docs/SDK-PARITY.md`](docs/SDK-PARITY.md) — how these examples, tests and guides line up against
   everything the SDK ships, and which of its 64 script samples have no host API to bind at all
+- [`docs/SDK-DOCS-AND-SAMPLES.md`](docs/SDK-DOCS-AND-SAMPLES.md) — the SDK's own 128 documentation pages
+  and ~480 samples, mapped by the question each one settles, plus the facts in there a host author needs:
+  media queries are not W3C syntax, `calc()` is supported where `clamp()` is not, and the key codes live in
+  a header nothing documents
 - [Sciter documentation](https://docs.sciter.com/docs/intro) and [tutorials](https://sciter.com/tutorials/)

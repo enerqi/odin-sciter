@@ -1,6 +1,6 @@
 # Documentation index
 
-30 files besides this index, and the first decision a reader has to make is which one to open. This is
+31 files besides this index, and the first decision a reader has to make is which one to open. This is
 that decision, made for you.
 
 The guides are **not** split into directories, deliberately: every one cross-links the others by
@@ -56,6 +56,10 @@ Read the one you need, when you need it.
 Useful, and not documentation of this library. Each documents an upstream framework or the engine
 itself; nothing here changes when this repository changes.
 
+- [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-SAMPLES.md) — **the SDK's own 128 doc pages and ~480 samples,
+  mapped**: which page settles which question, which sample demonstrates it, and the handful of facts in
+  there that a host author needs (media queries are not W3C syntax, `calc()` is supported, where the key
+  codes live, which units exist)
 - [`reactor.md`](./reactor.md) — Sciter's own script-side framework: JSX, `patch()`, components, Signals
 - [`ENGINE.md`](./ENGINE.md) — what the shipped engine binary contains
 - [`ALTERNATIVES.md`](./ALTERNATIVES.md) — 87 KB comparing Sciter against other UI toolkits. An essay

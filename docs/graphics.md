@@ -4,6 +4,12 @@ Sciter's 2D API is a second function table, `SciterGraphicsAPI`, reached through
 the same renderer the engine paints documents with, so anything you draw composites with the document
 rather than sitting on top of it — and it is available offscreen, with no window and no display.
 
+**Choosing the backend, which is a different subject from drawing with it.** `graphics_caps` reports how
+the engine rates the machine, and `SET_GFX_LAYER` (one `set_option`, no window, before any window is
+created) picks software Skia or a GPU layer — the lever to reach for when a document paints slowly rather
+than draws wrongly. It is opt-in for a reason, and the measurements that say layout usually matters more
+are in [`html-css-js.md`](./html-css-js.md#making-a-big-document-cheap-layout-is-the-cost-and-display-none-is-the-switch).
+
 [`graphics`](../examples/graphics.odin) is the whole thing in one file: a dial painted on every frame
 through an element's `DRAW` events, and a colour wheel rendered offscreen and handed to the document as
 a PNG.

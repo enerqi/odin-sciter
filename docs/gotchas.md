@@ -292,8 +292,10 @@ reported before — and the pixels never move.
   (`setAttribute("style", "transform: …")` does not apply either.) Assigning the property is the ordinary
   script idiom, so this is the second half of the same trap.
 
-Get both right and the stylesheet's own `transition: transform` animates the move on the engine's frame
-clock — no tween needed. Get either wrong and every element paints where layout left it.
+Get both right and the element moves. It still will not ANIMATE, which is the third half of this gotcha: a
+`transition` animates a transform that changes through the cascade (a class) but not one set inline from
+script — measured, the inline change arrives within two frames whatever the declared duration is. Script-
+driven movement needs `element.morphContent(step, {duration, ease})`, the runtime's own frame-paced tween.
 
 **Why it survives a test suite:** a transform is paint-time. `getBoundingClientRect` in script and
 `location` in the host report the UNTRANSFORMED rectangle, so a geometry assertion cannot tell a working
@@ -313,6 +315,35 @@ The full measurement, the working pair, and the script-side animation APIs are i
 
 ---
 
+## 14. A stylesheet over 32 KiB loses everything past the cut, and says nothing
+
+**Symptom:** a document whose styling is partly applied. The rules at the top of the sheet work, the ones at
+the bottom do not, and the CSS diagnostics that used to appear have gone quiet — which reads as "my last edit
+fixed the warnings" rather than "the parser stopped early". Adding a COMMENT can trigger it.
+
+**Cause:** a `<style>` element's contents are capped at 32,768 bytes. Bisected on 6.0.4.9: 32,763 bytes
+applied in full, 32,816 applied nothing past the cut. No warning, no error, no exception.
+
+**Why it is so confusing:** the failure is not in the rule that stops working, and the diagnostics go silent
+at the same moment, so the two obvious hypotheses — "my selector is wrong" and "the engine dislikes this
+property" — are both wrong. The measurement that answers it is the byte count of the sheet, which nobody
+thinks to take.
+
+```odin
+// The check that would have saved the afternoon.
+assert(len(stylesheet) < 32 * 1024, "over Sciter's 32 KiB stylesheet cap; the rest is dropped")
+```
+
+**The fix that keeps the documentation:** strip CSS comments when the page is EMITTED rather than deleting
+them from the template — a browser has no use for them either. One card-page template went from 33.3 KB to
+18.4 KB that way. An external `<link>` stylesheet is a separate parse with its own budget, so splitting is
+the other way out.
+
+[`html-css-js.md`](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence) has
+the table and the emit-time fix.
+
+---
+
 ## Where the knowledge actually lives
 
 - **`external/sciter/include/*.h`** — the C ABI. Comments are the only C-API documentation there is, and
@@ -320,10 +351,14 @@ The full measurement, the working pair, and the script-side animation APIs are i
 - **the SDK's `include/*.hpp`** — deliberately not vendored here, and worth reading anyway.
   `sciter-x-window.hpp` is the authority on both the start-up and the teardown sequence.
 - **the SDK's `demos/`, `samples.*`** — `demos/sciter-mfc` shows the intended
-  `SCITER_APP_INIT` → … → `SCITER_APP_SHUTDOWN` lifecycle.
+  `SCITER_APP_INIT` → … → `SCITER_APP_SHUTDOWN` lifecycle. ~480 sample documents besides, mapped by question
+  in [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-SAMPLES.md).
+- **`include/sciter-x-key-codes.h`** — the engine's own key codes (GLFW-style, `KB_RIGHT = 262`), which no
+  page documents and this repository does not bind.
 - **[docs.sciter.com](https://docs.sciter.com/docs/intro)** — a Docusaurus render of
   `sciter-js-sdk/docs/md`, which you already have in an SDK checkout. Script-side only: DOM, CSS, JS,
-  behaviours. Nothing about the host API.
+  behaviours. Nothing about the host API — but 128 pages of it, and
+  [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-SAMPLES.md) says which ones settle what.
 - **[sciter.com/forums](https://sciter.com/forums/)** — where host lifecycle knowledge is written down
   and nowhere else. "Close all windows and free all resources before exiting" is a 2019 forum post.
 - **the GitLab wiki** — empty. Do not bother.

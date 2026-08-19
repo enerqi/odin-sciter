@@ -19,7 +19,7 @@ web development with an Odin host to write.
 | HTML | a full HTML5 parser, a fixed set of known tags plus arbitrary custom ones, and Sciter-specific elements (`<frame>`, `<popup>`, `<menu>`, `<include>`) |
 | CSS | CSS 2.1 in full, selected CSS3 modules, plus Sciter's own flow/flex layout, style sets, `@image-map`, and CSS-assigned behaviors |
 | JS | QuickJS implementing **ES2020 in full**, plus JSX with a native parser, Signals, and a small NodeJS-shaped standard library |
-| Missing | `display:flexbox`, `display:grid`, `gap`, `vw`/`vh`, `clamp()`, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface — **and any component library**, see [Styling controls](#styling-controls-and-the-states-you-inherit) |
+| Missing | `display:flexbox`, `display:grid`, `gap`, `clamp()`/`min()`/`max()`, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface — **and any component library**, see [Styling controls](#styling-controls-and-the-states-you-inherit) |
 | Extra | native behaviors, a persistent NoSQL store, real desktop windows and popups from script |
 
 **The expectation to reset first**, because it decides how much CSS you are signing up to write: the web
@@ -301,10 +301,30 @@ pair from script, and it is valid CSS in a browser too, which is what makes it t
 track.style.setProperty("transform", "translate(-300px, 0)");
 ```
 
-With those two right, the declared `transition` animates the move — no script-side tween needed. What does
-NOT animate is a layout property: a `transition: margin-left` reads back as an empty computed `transition`
-and the element jumps to its final position in a frame or two. If a fallback has to move something by
-layout (a margin, `left`), expect a jump and drive it yourself.
+**Fact 3 — a `transition` animates a transform that changes through the CASCADE, not one set inline.** This
+is the one that costs an afternoon, because the first two make the element move and this one makes the move
+instant. Measured in the same page: toggling a class whose rule carries `transform: scale(1)` animates over
+its declared duration, while `style.setProperty("transform", …)` on the same element with the same
+`transition` arrives within two frames, whatever the duration says. On screen that reads as a jump followed
+by whatever else was animating — a class-driven scale, say — continuing on its own.
+
+So a script-driven move has to be tweened, and the runtime has the hook for it (see the table below):
+
+```js
+// Sciter: step the transform yourself, at the engine's frame rate, with a named easing.
+var from = current, delta = target - current;
+track.morphContent(function (progress) {
+   track.style.setProperty("transform", "translate(" + (from + delta * progress) + "px, 0)");
+   return true;
+}, { duration: 320, ease: "cubic-out" });
+```
+
+`morphContent`'s presence is also a serviceable test for which engine you are on: a browser does not have it
+and does not need it, because there the stylesheet's `transition` animates the inline change too.
+
+A layout property does not animate either: a `transition: margin-left` reads back as an empty computed
+`transition` and the element jumps in a frame or two. If a fallback has to move something by layout (a
+margin, `left`), expect a jump and drive it yourself.
 
 **A `var()` inside `transform` did not resolve** — neither `var(--w3c-name)` nor Sciter's own `var(name)`
 syntax, with the variable declared on the element and updated through `style.variables({…})`, which is how
@@ -320,6 +340,94 @@ script-side (see [`JS-RUNTIME.md`](./JS-RUNTIME.md)):
 | `element.replaceContent(jsx, {duration, ease, effect})` | swaps content with a named effect — `"slide-left"`, `"blend"`, `"scroll-top"`, … — and returns a promise that resolves when it ends |
 | `requestAnimationFrame` / `cancelAnimationFrame` | present, and paced by the paint clock rather than a timer |
 | `element.scrollTo({left, top, behavior: "smooth"})` | an animated scroll, which is often the whole feature |
+
+### Making a big document cheap: layout is the cost, and `display: none` is the switch
+
+A document that feels fine in a browser can be unusable here, and the reason is almost never the paint —
+it is how much of the document takes part in LAYOUT. Measured on 6.0.4.9, a page of 48 sections (~60
+elements each) laid out side by side, one visible at a time:
+
+| | per resize step |
+| --- | --- |
+| all 48 in layout | **124 ms** |
+| far sections `visibility: hidden` | 119 ms — no help at all |
+| far sections `display: none` | **6 ms** |
+
+`visibility: hidden` is the trap: it hides the pixels and keeps the box, so every hidden section is still
+measured, positioned and re-measured on every resize step. `display: none` takes it out of layout, and that
+is the whole difference. A window edge being dragged delivers one resize per mouse move, so 124 ms/step is
+a window that cannot be dragged, and 6 ms/step is one that can.
+
+Two consequences worth designing for:
+
+- **Keep only what is on screen (plus a neighbour) in layout.** A carousel, a pager, a long list: park the
+  rest with `display: none`. It is the same win in a browser — it is just that a browser can afford not to
+  take it.
+- **Parking changes the geometry under you.** Dropping a section from the left moves everything after it,
+  so a script that positions the visible part has to re-measure AFTER parking, and apply any compensating
+  move with the transition switched off — otherwise the correction animates and reads as a jump.
+
+**What is NOT worth chasing**, all measured on the same page: `box-shadow`, `border-radius`, `opacity` on
+inactive sections, `transform: scale()`, background colours and even hiding all the text changed the frame
+cost by nothing outside noise. Neither did `set_debug_mode(true)`, which is worth knowing before blaming
+the inspector hooks for a slow debug build.
+
+**`paint_windowless` is not a frame-rate proxy.** It rasterises the entire surface on every call, with no
+dirty-rect tracking, so a windowless loop reports a fixed ~90-180 ms/frame for a full-window page and says
+nothing about what a real window does. Use a windowless view to measure LAYOUT (`load_html`,
+`resize_windowless` + `heartbeat`), and measure frame rate in a window.
+
+**The one host-side lever is the graphics layer.** `graphics_caps` reports how the engine rates the machine
+(and reported `.Software` on the machine these numbers come from), and `SET_GFX_LAYER` chooses the backend —
+there is no typed wrapper, because it is one `set_option` with no window:
+
+```odin
+// Before creating any window. `.SKIA_GPU` asks for the best GPU layer the platform has.
+err := sciter_app.set_option(.SET_GFX_LAYER, uintptr(sciter.Gfx_Layer.SKIA_GPU))
+```
+
+**A GPU layer is ALREADY the default**, which is worth knowing before wiring a switch for it: the SDK's
+changelog records DX12/Vulkan as the Windows default (with an OpenGL fallback), Vulkan on Linux and Metal on
+macOS. `SET_GFX_LAYER` is therefore for FORCING a particular backend, or for going back to software Skia when
+a GPU path misbehaves — the same Skia GL path is the one whose desktop shaders a driver can reject outright
+(see `create_windowless`'s `.OPENGL` note). Make it a flag, print what the engine answered, and keep the
+raster layer reachable.
+
+And `graphics_caps` does not answer "which layer am I on". It is the Direct2D-era 0/1/2 rating of the machine
+and reported `.Software` on a Windows build whose default is a GPU layer. Nothing in the API reports the
+active layer.
+
+### A stylesheet is capped at 32 KiB, and the rest is dropped in silence
+
+The most expensive measurement in this file, because nothing tells you. Bisected on 6.0.4.9 with one
+`<style>` element in one document:
+
+| `<style>` contents | result |
+| --- | --- |
+| 32,763 bytes | every rule applies |
+| 32,816 bytes | **nothing past the cut applies at all** |
+
+32,768 is the number. Past it there is no warning, no error, and — this is what makes it so confusing — the
+engine's CSS diagnostics go QUIET, because the parser never reaches the rules that would have produced them.
+A page like that still loads and still runs its script; it is simply half-styled, and the half that lost is
+the bottom of the file.
+
+Two consequences for anything with a large stylesheet:
+
+- **Comments count.** A well-documented stylesheet is mostly prose, and prose is bytes. Strip comments when
+  you EMIT the page rather than deleting them from the source: a browser has no use for them either, and one
+  card-page template in the wild dropped from 33.3 KB to 18.4 KB that way — the difference between a
+  stylesheet a sentence can break and one with 14 KB of headroom.
+- **Assert it.** A byte count is trivial to check and impossible to notice by eye:
+
+```odin
+// Somewhere the page is produced or tested. The cap is the engine's, not this package's.
+style_bytes := len(stylesheet)
+assert(style_bytes < 32 * 1024, "the stylesheet is over Sciter's 32 KiB cap; the rest would be dropped")
+```
+
+An external stylesheet (`<link>`) is a separate parse and gets its own budget, so splitting one sheet into
+two is also a way out.
 
 ### Three stylesheets, in order
 
@@ -372,17 +480,46 @@ survive a reload.
 One trap, because it fails silently: `@media (name: "value")` parses and then matches
 *unconditionally*. It is not an error and not a flag test. Name the state itself — `@media dark`.
 
+### What the SDK's own pages settle, and where they disagree with the engine
+
+`sciter-js-sdk/docs/md/css/` is the authority on the dialect, and four of its answers are the ones a porting
+author most needs — all mapped in [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-SAMPLES.md):
+
+- **Media queries are not W3C syntax.** `@media screen and (max-width: 600px)` is a syntax ERROR here; the
+  Sciter form is `@media screen and (width < 600px)` (`css/media-const-mixin.md`). Since a CSS syntax error
+  costs the rest of the stylesheet, a ported page's phone query has to be rewritten or kept last.
+- **`calc()` is supported** — flex units (`*`) just cannot appear inside it (`css/units/dimentional.md`).
+  `min()`, `max()` and `clamp()` are not, so `calc()` is the way to compute a value.
+- **The units are** `em`, `rem`, `ex`, `ch`, `%`, `vw`, `vh`, `vmin`, `vmax`, plus Sciter's own `width(X%)`
+  and `height(Y%)` (a percentage of the element's own width or height — `line-height: height(100%)`).
+- **`css/properties.md` is the property list** and `css/flows-and-flexes.md` is the flexbox cheat sheet, with
+  a runnable `css/demo/flow-vs-flexbox.htm` beside it.
+
+And the correction that cost the most, measured on 6.0.4.9: **`vh` DOES resolve in a `font-size`**, and it
+re-evaluates on a resize — `font-size: 2.4vh` computes 21.6px in a 900px-tall view, 28.8px at 1200 and 12px
+at 500, on a fresh view and after resizing a live one. This guide said the opposite for a while, on a reading
+where the computed size came back EMPTY and a text-sized box grew to fill its container. That reading was
+real and the diagnosis was wrong: the whole stylesheet block holding the rule had been dropped by the
+[32 KiB stylesheet cap](#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence), so no `font-size` was being applied at all. When a
+declaration appears not to work, check the sheet's SIZE before concluding anything about the property.
+
 ### Units
 
 Sciter's default length unit is `ppx` — physical pixels, DPI-aware. `px` is accepted and treated as a
 device-independent pixel. `dip`, `em`, `rem`, `%`, `mm`, `in`, `pt`, `sp` all work, and `*` is the flex
 unit above. `docs/md/css/units/` covers the details.
 
-**`vw`, `vh` and `clamp()` are NOT among them**, which is worth stating rather than leaving to the list
-above, because the fluid-type idiom every recent browser stylesheet is full of —
-`font-size: clamp(1rem, 2.6vw, 1.6rem)` — is three unsupported things in one declaration. Percentages,
-`em`/`rem` and the flex unit cover the same ground here; a window that has to respond at breakpoints uses
-`@media` on `width`.
+`vw`, `vh`, `vmin` and `vmax` all work, `font-size` included — but **`clamp()`, `min()` and `max()` do
+not**, which is what breaks the fluid-type idiom every recent browser stylesheet is full of:
+`font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem)` loses its bounds (a `clamp()` degrades to its PREFERRED
+term) and the nested `min()` invalidates the declaration outright — measured, `min(2.4vh, 4.3vw)` computes a
+flat 13.33px that does not track the window at all. The port is to keep the viewport term and drop the
+bounds: one `2.4vh`, which tracks the window exactly as the browser's middle term does. `calc()` IS supported
+if the value has to be computed, with two caveats — flex units (`*`) cannot appear inside it, and
+`getComputedStyle` reads a `calc()` back as the literal string `calc(...)`, so a value you want to ASSERT has
+to be a plain unit. The bounds themselves can be had from a media query on `height`/`width`, but measured, a
+dimension query only takes effect after a RESIZE and not on the first layout, so a capped size is wrong on
+the freshly opened window and right once it is dragged.
 
 ## JavaScript
 
@@ -418,6 +555,40 @@ The **document lifecycle** events are worth knowing since scripts commonly hang 
 ```js
 document.on("ready", () => { /* DOM parsed, styles applied */ });
 ```
+
+### Keyboard events: `code`, not `key`, and only with focus
+
+Two measured differences, and together they make a page's shortcuts look unimplemented:
+
+- **The event carries `code`, not `key`.** A browser fills in both (`key: "ArrowRight"`, `code:
+  "ArrowRight"`; `key: "n"`, `code: "KeyN"`); this engine leaves `key` undefined. A handler written as
+  `if (e.key === "ArrowRight")` therefore never fires here. `code` is the PHYSICAL key, so a letter arrives
+  as `KeyN` rather than as whatever the layout would type:
+
+```js
+function keyOf(e) {
+   if (e.key) return e.key;                    // browsers
+   var code = e.code || "";                    // Sciter fills this one in
+   if (code.length === 4 && code.slice(0, 3) === "Key") return code.charAt(3).toLowerCase();
+   return code;                                // "ArrowLeft", "Escape", …
+}
+```
+
+- **A key only reaches a document once something IN it holds the focus.** For a document in a `<frame>`,
+  focusing the frame element is not enough — focus an element inside the sub-document (its `<body>` is the
+  least surprising choice, and is what a click on the page background would focus):
+
+```odin
+// after loadHtml/loadFile: frame.document -> element_from_value -> its body
+if body, err := sciter_app.select_first(framed_root, "body"); err == nil {
+    sciter_app.set_focus(body)
+}
+```
+
+**And the key CODES are the engine's own**, from the SDK's `include/sciter-x-key-codes.h` — GLFW-style
+values, not platform virtual keys: `KB_RIGHT = 262`, `KB_LEFT = 263`. Sending a Windows `VK_RIGHT` (39) to
+`windowless_key` arrives in the document as the `Quote` key, which is a puzzling ten minutes. That header is
+not bound in this package.
 
 ### The standard library
 
@@ -484,7 +655,8 @@ this and not a bug.
       without it non-ASCII text is decoded with the system codepage, silently
 - [ ] replace `display:flex` / `display:grid` with `flow:` and flex units
 - [ ] replace `gap` with margins on the children — it is silently ignored, unlike `display`
-- [ ] replace `vw`/`vh`/`clamp()` with `%`, `em`/`rem`, flex units, or `@media` on `width`
+- [ ] replace `clamp()`/`min()`/`max()` with a single term (`vw`/`vh` work, and in `font-size` too), `calc()`,
+      `%`, `em`/`rem`, flex units, or `@media` on `width`
 - [ ] **write the control states you were getting for free** — `:hover` above all, plus `:active`,
       `:focus` and `:disabled`, and put `appearance: none` first. A framework's stylesheet carried these;
       nothing here does, and painting a control deletes the engine's own (see
@@ -494,6 +666,14 @@ this and not a bug.
       plain DOM calls
 - [ ] replace `localStorage` / IndexedDB with `@storage`
 - [ ] replace `fetch` of local files with `@sys.fs`, and grant the feature bits
+- [ ] **check the stylesheet's size**: over 32 KiB and the rest of it is silently dropped (see
+      [A stylesheet is capped at 32 KiB](#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence)) —
+      strip CSS comments when emitting, and assert the byte count
+- [ ] replace `e.key` with a `code` fallback, and give the document's `<body>` the focus, or no keyboard
+      shortcut in it will ever fire
+- [ ] **park what is off screen with `display: none`** — layout cost scales with everything in the layout,
+      and `visibility: hidden` does not help (see
+      [Making a big document cheap](#making-a-big-document-cheap-layout-is-the-cost-and-display-none-is-the-switch))
 - [ ] **check every `transform`**: `translate(x, y)` not `translateX(x)`, and `style.setProperty("transform", …)`
       not `style.transform = …` — either mistake is silent and leaves the element where layout put it (see
       [Animation](#animation-what-moves-and-the-two-ways-a-transform-is-silently-ignored))
