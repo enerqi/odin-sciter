@@ -1553,8 +1553,11 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 	}
 
 	if ke, ok := sciter_app.key_event(event); ok && ke.code == .DOWN {
-		switch ke.key_code {
-		case 13:
+		// The codes are the engine's own GLFW-style set, `sciter.Sc_Kb_Codes` - Enter is 257 and not the
+		// Windows `VK_RETURN` 13. This switch was written against the platform virtual keys, which meant
+		// every non-ASCII case here was unreachable from a real keypress.
+		#partial switch sciter.Sc_Kb_Codes(ke.key_code) {
+		case .ENTER:
 			// Enter starts an edit on the selected row, or commits the one in progress.
 			if app.editing >= 0 {
 				commit_edit(app)
@@ -1563,17 +1566,17 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 			}
 			render(app)
 			return true
-		case 27:
+		case .ESCAPE:
 			if app.editing >= 0 {
 				cancel_edit(app)
 				render(app)
 				return true
 			}
-		case 38:
+		case .UP:
 			move_selection(app, -1); render(app); return true
-		case 40:
+		case .DOWN:
 			move_selection(app, +1); render(app); return true
-		case 80:
+		case .P:
 			// P pins the selected row: a pinned row matches every filter, and it is the third undoable
 			// action, so the history is exercised by something other than typing.
 			if app.editing < 0 && app.view.selected >= 0 {
@@ -1581,7 +1584,7 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 				render(app)
 				return true
 			}
-		case 90:
+		case .Z:
 			// Ctrl+Z. `sciter.KEYBOARD_STATE_CONTROL` is both control keys, so intersecting with it is "either one is
 			// down"; `.LCONTROL in ke.modifiers` would be the left key specifically.
 			if app.editing < 0 && sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {} {
@@ -1589,7 +1592,7 @@ on_event :: proc(h: ^sciter_app.Event_Handler, event: sciter_app.Event) -> bool 
 				render(app)
 				return true
 			}
-		case 89:
+		case .Y:
 			if app.editing < 0 && sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {} {
 				redo(app)
 				render(app)

@@ -487,7 +487,8 @@ bypass the intrinsic behavior, and a nil `source` delivers nothing at all — se
 [`events.md`](./events.md#synthesising-events).
 
 Synthesising input: `send_mouse(el, code, pos, buttons, modifiers)` and `send_key(el, code, key_code,
-modifiers)` are `SciterTraverseUIEvent` — they sink-and-bubble the event the way the window system's
+modifiers)` — whose `key_code` is a `sciter.Sc_Kb_Codes` value for `.DOWN`/`.UP` and a character for
+`.CHAR`, and is passed through untranslated — are `SciterTraverseUIEvent` — they sink-and-bubble the event the way the window system's
 own input does, so the **intrinsic behaviors run**: the button really is pressed and clicked, the
 `<input>` really is typed into. `send_text(el, text)` is the `.DOWN`/`.CHAR`/`.UP` loop over a string.
 Three requirements, each measured: `el` must not be nil (there is no hit testing inside — `element_at`

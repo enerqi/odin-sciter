@@ -365,10 +365,13 @@ not come along.
 | Dear ImGui / egui / microui | Nothing — no markup at all |
 
 Sciter deserves its own line, and [`html-css-js.md`](./html-css-js.md) has the measured detail. The
-decisive fact is in its CSS section: **there is no `display:flex` and no `display:grid`**. Sciter replaces
-both with flex units (`*`, `2*`) and the `flow:` property. CSS 2.1 is complete and the practical CSS3
-modules are there, but the two layout primitives every modern stylesheet is built on are not — so a
-stylesheet written for a browser does not port, it gets rewritten. On top of that the engine adds its own
+decisive fact is in its CSS section: **`display:flex` and `display:grid` are implemented in PART**. Grid is
+fairly complete and flex is an emulation over Sciter's own `flow:` property — the mode switches and `gap`
+works, but the sizing longhands (`flex-basis`, `flex-grow`, `flex-shrink`), `align-items` on a flex
+container and the `flex-start`/`flex-end` keywords are silently ignored, and so are `min()`/`max()`. CSS
+2.1 is complete and the practical CSS3 modules are there, and the native model — flex units (`*`, `2*`) and
+`flow:` — is what the emulation is built on. So a stylesheet written for a browser part-ports and part
+misleads: it lays out without complaining while the declarations carrying the sizing intent do nothing. On top of that the engine adds its own
 vocabulary (`behavior:`, `@set`/`style-set`, `@const`/`@mixin`, `@image-map`, vector `path:` images), and
 the script side is QuickJS against the Sciter DOM with a NodeJS-shaped stdlib (`@sys`, `@storage`) — no
 npm, no `require`, no `localStorage`, no service workers.

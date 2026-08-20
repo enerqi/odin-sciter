@@ -17,16 +17,18 @@ web development with an Odin host to write.
 | | |
 | --- | --- |
 | HTML | a full HTML5 parser, a fixed set of known tags plus arbitrary custom ones, and Sciter-specific elements (`<frame>`, `<popup>`, `<menu>`, `<include>`) |
-| CSS | CSS 2.1 in full, selected CSS3 modules, plus Sciter's own flow/flex layout, style sets, `@image-map`, and CSS-assigned behaviors |
+| CSS | CSS 2.1 in full, selected CSS3 modules — including a *partial* `display:flex` and a fairly complete `display:grid`, `gap` and `clamp()` — plus Sciter's own flow/flex layout, style sets, `@image-map`, and CSS-assigned behaviors |
 | JS | QuickJS implementing **ES2020 in full**, plus JSX with a native parser, Signals, and a small NodeJS-shaped standard library |
-| Missing | `display:flexbox`, `display:grid`, `gap`, `clamp()`/`min()`/`max()`, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface — **and any component library**, see [Styling controls](#styling-controls-and-the-states-you-inherit) |
+| Missing | `min()`/`max()`, `flex-basis`/`flex-grow`/`flex-shrink`, `align-items` on a *flex* container, WebGL-by-default, service workers, IndexedDB, most of the modern web platform API surface — **and any component library**, see [Styling controls](#styling-controls-and-the-states-you-inherit) |
 | Extra | native behaviors, a persistent NoSQL store, real desktop windows and popups from script |
 
 **The expectation to reset first**, because it decides how much CSS you are signing up to write: the web
 platform hands you a framework — Material, Fluent, Bootstrap, Bulma, Tailwind — and with it a component
 vocabulary and, more importantly, the *states* of every control. None of that exists here, and none of it
-can be ported: every one of those frameworks is flex/grid at its core, and their distribution is
-npm/CDN, which this engine has no notion of. What the SDK offers instead is three sample themes to copy,
+can be ported: those frameworks lean on the *whole* flex/grid model — `flex-basis`, `flex-grow`,
+`align-items`, `minmax()`, `min()`/`max()` — where this engine implements a useful subset (see
+[Layout](#layout-flex-and-grid-exist-partially-flow-and-flex-units-are-the-native-model)), and their
+distribution is npm/CDN, which this engine has no notion of. What the SDK offers instead is three sample themes to copy,
 `@set` style-sets as the encapsulation mechanism, and thirteen script widgets. See
 [Styling controls](#styling-controls-and-the-states-you-inherit).
 
@@ -78,10 +80,15 @@ CSS 2.1 is implemented in full. CSS3 is implemented in the modules that are prac
 `animation`, most CSS3 selectors, `border-radius`, `box-shadow`, `opacity`, `rgba()`/`hsl()`,
 `@font-face`, `@media`, `var()`, gradients, `filter()` and `backdrop-filter()`.
 
-### Layout is flow and flex units, not flexbox
+### Layout: flex and grid exist *partially*; flow and flex units are the native model
 
-This is the single biggest adjustment. **There is no `display:flexbox` and no `display:grid.`** Sciter
-replaces both with two mechanisms that compose better with each other:
+This is still the single biggest adjustment, but not for the reason this guide gave for a long time.
+**`display:flex` and `display:grid` DO work in Sciter 6** — both landed in the 6.0.1.x series, flex as
+an emulation over `flow:` that the SDK's own changelog calls "minimalistic" and grid rather more
+completely, both with `gap`. What does not work is the half of each model that carries the sizing
+intent, and every miss is silent. The measurements are in the table below; the native mechanisms —
+flex units and `flow:` — are still what to write for anything new, because they are the model the
+emulation is built on.
 
 **Flex units** — `*`, `2*`, `0.5*` — apply to almost any property that takes a length: `width`,
 `height`, margins, paddings, border widths. The physical model is a coil of that strength attached to
@@ -109,12 +116,34 @@ gallery   { flow: grid(1* 1* 1*); }   /* three equal columns */
 `css/demo/flow-vs-flexbox.htm` is runnable.
 
 Porting instinct: `display:flex; flex-direction:row` becomes `flow:horizontal`, and `flex:1` becomes
-`size:*` or `width:*`.
-
-**`gap` does not exist either**, and it is the one people miss because it is a *spacing* property rather
-than a layout mode — a stylesheet full of `gap: .5rem` loses every one of them silently. Spacing between
+`size:*` or `width:*`. `gap` needs no porting — but if you would rather not have one, spacing between
 children is margins on the children (`.line > * { margin-right: .5em }` for a row), or flex-unit margins
 when the space should distribute rather than repeat.
+
+**What the W3C models actually do here.** Measured on engine 6.0.4.9 with a throwaway windowless probe
+(boxes read with `sciter_app.location`, since the questions are all layout ones), a 400x40 flex row and a
+`grid-template-columns: 100px 50px` grid:
+
+| Declaration | Verdict |
+| --- | --- |
+| `display: flex` + `flex-direction: row \| column` + `flex-wrap: wrap` + `flex-flow` | **works** — three `flex:1` children of a 400px row measured 127/128/128, a `wrap` row of 50px children broke to a second line |
+| `flex: <number>` (the shorthand) | **works** — this is the one sizing spelling that lands |
+| `flex-basis`, `flex-grow`, `flex-shrink` (the longhands) | **silently ignored** — `flex-basis: 120px` measured 10px (shrink-to-fit), `flex-grow: 1` vs `3` measured identical, and a 200px `flex-shrink: 1` child of a 100px row stayed 200px and overflowed |
+| `gap` (flex and grid) | **works** — `gap: 10px` measured 9-10px between the flex children, `gap: 5px` exactly 5px between grid tracks |
+| `justify-content: start \| center \| end` | **works** — a 50px child of a 400px row measured x=175 centred, x=350 at `end` |
+| `justify-content: flex-start \| flex-end` | **silently ignored** — the W3C-prefixed keywords are not the Sciter ones; `end`, not `flex-end` |
+| `align-items` on a **flex** container | **silently ignored** — a 20px child of a 60px `align-items: center` row stayed at the top |
+| `align-self` on a **flex** child | **works** — `align-self: end` put that same child at the bottom, so cross-axis alignment is per-child here |
+| `display: grid` + `grid-template-columns/-rows` + `grid-auto-flow` | **works** — the 100px/50px tracks and 30px rows measured exactly, `width: max-content` included |
+| `grid-template-areas`, `grid-area`, `grid-column/-row` (numbered and named lines), `auto-fill`/`auto-fit` | **not measured here**, but each has a runnable SDK sample in `samples.css/css-w3-grid/`, so treat them as supported and check the sample if one misbehaves |
+| `align-items`, `justify-items`, `justify-self` on a **grid** | **works** — `align-items: center` centred a 20px child in a 60px row (so grid and flex differ, and the flex row above is the odd one out) |
+
+Read the first three rows together, because that is the trap: `display: flex` is honoured, so the layout
+mode switches and the page does not look obviously broken, while the *sizing* longhands the stylesheet
+uses to say how big anything should be are dropped. A ported flexbox stylesheet that used `flex: 1` will
+mostly work; one that used `flex-basis`/`flex-grow` will lay out as though every child were
+shrink-to-fit. The SDK's `samples.css/css-w3-flex/` and `css-w3-grid/` are runnable versions of exactly
+these cases.
 
 ### Absolutely positioned elements collapse — two separate rules, both measured
 
@@ -267,6 +296,47 @@ button { background: color(button-back); }     /* use — color() / length() are
 `docs/md/css/variables-and-attributes.md` in the SDK has both, plus `attr(name):` — CSS-assigned default
 *attributes*, which is how `<select>`'s options get their `role` without any script.
 
+### A composite control's internals are out of reach from author CSS
+
+**Measured on 6.0.4.9, Windows, styling `<input type=hslider>` in a real window and a windowless view.**
+An intrinsic control that is built out of child elements exposes those children to the DOM — the slider
+reads back as
+
+```html
+<input type="hslider"><button class="slider"></button></input>
+```
+
+— and the child is a real element: `querySelector('button.slider')` finds it, `getBoundingClientRect`
+measures it, `children.length` counts it. **No author rule reaches it.** Tried, in order, and every one
+left the engine's own 11px grey dot in place:
+
+```css
+.row input > button              { … }   /* nothing */
+button.slider                    { … }   /* nothing */
+.row input[type="hslider"] > button.slider { … }   /* nothing — and this out-specifies the master sheet */
+```
+
+An **inline** style on the same element applies immediately and completely. So a composite control is
+restyled from script, next to whatever creates it, and the element you can dress from CSS is only the
+outer one (the slider's own background is its track).
+
+Two corollaries worth having before you reach for either:
+
+- **Anything you append INTO the control is in the same position** — a `<span>` added as a child of the
+  slider is likewise untouched by author CSS and has to be styled inline.
+- **The engine drives its own children with `margin-left`.** Setting that inline froze the slider's knob:
+  every value drew it in the same place. Positioning of your own has to use something the engine is not
+  already using for that element.
+
+### `style.cssText` is a no-op; `setProperty` is the API
+
+Measured in the same pass, and it quietly invalidates experiments: assigning `element.style.cssText =
+"width: 176px"` changes nothing at all — no error, no partial application. `style.setProperty(name,
+value)` works, including on the internals above. Clearing is its own trap: `setProperty(name, '')` and
+`removeProperty(name)` both remove only the INLINE declaration, so a stylesheet rule underneath comes
+back into force — a box anchored `top` inline over a sheet's `bottom: 0.6rem` ends up with both and
+stretches between them. The value that says "no anchor" is `auto`.
+
 ### Animation: what moves, and the two ways a transform is silently ignored
 
 `transition`, `animation` and `transform` are all on the engine's supported-property list, and they do
@@ -397,20 +467,83 @@ And `graphics_caps` does not answer "which layer am I on". It is the Direct2D-er
 and reported `.Software` on a Windows build whose default is a GPU layer. Nothing in the API reports the
 active layer.
 
+### Scrolling is the cheap way to move content, and the animation is CSS
+
+A carousel, a filmstrip, anything that slides a long row past a window: make the window a **scroll container**
+and move it with `scrollTo`, rather than translating the row with a `transform` driven from script. Measured on
+6.0.4.9, with the SDK pages that document each piece:
+
+- **`element.scrollTo({left, top, behavior: "instant"|"smooth"})`**, `scrollIntoView({behavior, block})`,
+  and `scrollLeft`/`scrollTop`/`scrollWidth`/`scrollPosition` all exist (`docs/md/DOM/Element/README.md`).
+  `scrollLeft = n` and `behavior: "instant"` take effect synchronously and read back exactly.
+- **The animation is declared in CSS**, and the property is Sciter's own: `scroll-manner(animation: true,
+  step: <len>, page: <len>, wheel-step: <len>)`, given as a value of the `overflow` shorthand —
+  `overflow-x: scroll-indicator scroll-manner(animation: true, wheel-step: 40dip)` parses and reads back from
+  `getComputedStyle(el).scrollMannerX`. `scroll-behavior` (the W3C property) is NOT implemented; this is the
+  equivalent. `docs/md/css/properties.md` lists it, `samples.css/scrollbars-n-scrolling/` has the runnable
+  forms (`scroll-manner-no-animation.htm`, `no-wheel-animation.htm` — the latter shows `wheel-animation:false`,
+  which the property list omits).
+- With that in place a plain `scrollTo({left})` **is animated by the engine**, and a second `scrollTo` issued
+  while one is in flight **re-targets** it. That is the behaviour a burst of clicks needs and the thing a
+  hand-written tween is bad at.
+- `overflow: scroll-indicator` is the overlay, mobile-style bar: measured, `clientHeight` is unchanged, so it
+  takes no layout space. `overscroll-behavior: none` keeps the ends hard.
+
+Why prefer it to a transform: **a transform is paint-time and unreadable.** Nothing in the geometry API
+reports it, so the current position has to be re-derived from the inline style, any layout compensation
+compounds into it, a superseded tween can win the last write, and nothing clamps the result. A scroll offset is
+a number the engine clamps and hands back, which also means it can be ASSERTED in a test instead of sampled out
+of the framebuffer.
+
+Two measured traps when you do this:
+
+- **`offsetLeft` is relative to the SCROLLED viewport here**, not to the unscrolled offset parent as in a
+  browser: an element scrolled off to the left reports a NEGATIVE `offsetLeft`. Centring maths written against
+  browser semantics is then wrong by exactly one scroll offset. Compare `getBoundingClientRect()` CENTRES
+  instead — viewport-relative in both engines, and immune to a `scale()` about the element's middle.
+- **A percentage padding on a `max-content` box is dropped** (it is circular, and the engine resolves it to
+  nothing rather than to the containing block). The half-a-viewport of side padding that lets the FIRST and
+  LAST item reach the middle of a scroll container therefore has to be set in pixels from script.
+
+One more, learned by shipping it: **a programmatic scroll raises `scroll` events indistinguishable from a
+human one.** If the page also READS the scroll position back — which it must, once the container can be
+scrolled by a wheel, a swipe or a dragged bar — that reading has to be gated on a real input event
+(`wheel`/`touchstart`/`pointerdown`) *and* on the position differing from the one last requested. A
+time-based guard is not enough: it is a guess about how long the engine's animation takes, and both ways of
+guessing wrong were observed — expire too early and the page adopts a board it is still travelling towards;
+never clear the flag and the page undoes its own step 140ms in, which reads as the arrow keys being dead.
+
+Related, if the document is hosted in a `<frame>`: a key only reaches a document once something IN it holds
+the focus, so a click anywhere in the page is a good moment to focus its `<body>` — pressing any control in
+the host's own UI takes the focus away, and nothing about the page looks broken afterwards except that the
+keyboard silently stops working.
+
+`@keyframes` and the `animation-*` properties are supported (`css/properties.md`), but they cannot express
+this: the target offset is per-item and dynamic, and the one way to feed a live value into a declaration —
+`var()` inside `transform` — is invalid here (see the transform notes above).
+
 ### A stylesheet is capped at 32 KiB, and the rest is dropped in silence
 
-The most expensive measurement in this file, because nothing tells you. Bisected on 6.0.4.9 with one
-`<style>` element in one document:
+The most expensive measurement in this file, because nothing tells you. Re-measured properly on 6.0.4.9 —
+markers at the START, at ~30 KB and at the END of one sheet, sizes bisected, boxes read with `location`:
 
-| `<style>` contents | result |
-| --- | --- |
-| 32,763 bytes | every rule applies |
-| 32,816 bytes | **nothing past the cut applies at all** |
+| sheet | how it is delivered | result |
+| --- | --- | --- |
+| 32,741 bytes | one inline `<style>` | every rule applies |
+| 32,769 bytes | one inline `<style>` | **the WHOLE sheet is dropped — including its first rule** |
+| 2 × ~20 KB (40 KB of CSS in the document) | two inline `<style>` blocks | both apply |
+| 40 KB, then 100 KB | one `<link href>` | every rule applies — no limit found |
+| 40 KB `<link>` + a small `<style>` after it | both | both apply |
 
-32,768 is the number. Past it there is no warning, no error, and — this is what makes it so confusing — the
-engine's CSS diagnostics go QUIET, because the parser never reaches the rules that would have produced them.
-A page like that still loads and still runs its script; it is simply half-styled, and the half that lost is
-the bottom of the file.
+**32,768 is the number, the scope is ONE inline `<style>` element, and it is all-or-nothing.** The earlier
+note here said "the rest is dropped" — that was wrong in the way that matters: the sheet is not truncated at
+the cap, it is discarded entire, so the FIRST rule in an oversized block is as dead as the last. A document
+may carry any amount of CSS as long as no single `<style>` exceeds the cap, and **a linked stylesheet is not
+subject to it at all** (100 KB in one file, every rule live).
+
+Past the cap there is no warning, no error, and — this is what makes it so confusing — the engine's CSS
+diagnostics go QUIET for that sheet. The page still loads and still runs its script; it is simply unstyled by
+whatever that block held.
 
 Two consequences for anything with a large stylesheet:
 
@@ -426,8 +559,10 @@ style_bytes := len(stylesheet)
 assert(style_bytes < 32 * 1024, "the stylesheet is over Sciter's 32 KiB cap; the rest would be dropped")
 ```
 
-An external stylesheet (`<link>`) is a separate parse and gets its own budget, so splitting one sheet into
-two is also a way out.
+Two ways out, both measured above: **split the block** — two `<style>` elements each under the cap carry 40 KB
+between them — or **move it to a `<link>`**, which has no cap in reach. Splitting is the one that keeps a
+single-file page single-file, which is why a self-contained document (an offline export, a page handed to a
+`<frame>`) wants a bounded emitter rather than a link.
 
 ### Three stylesheets, in order
 
@@ -489,7 +624,9 @@ author most needs — all mapped in [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-S
   Sciter form is `@media screen and (width < 600px)` (`css/media-const-mixin.md`). Since a CSS syntax error
   costs the rest of the stylesheet, a ported page's phone query has to be rewritten or kept last.
 - **`calc()` is supported** — flex units (`*`) just cannot appear inside it (`css/units/dimentional.md`).
-  `min()`, `max()` and `clamp()` are not, so `calc()` is the way to compute a value.
+  `clamp(min, val, max)` is supported too, and since 6.0.2.24 it accepts a flex unit as `val`
+  (`padding-left: clamp(100px, *, 400px)`). `min()` and `max()` are NOT, so `calc()` is the way to
+  compute anything they would have expressed.
 - **The units are** `em`, `rem`, `ex`, `ch`, `%`, `vw`, `vh`, `vmin`, `vmax`, plus Sciter's own `width(X%)`
   and `height(Y%)` (a percentage of the element's own width or height — `line-height: height(100%)`).
 - **`css/properties.md` is the property list** and `css/flows-and-flexes.md` is the flexbox cheat sheet, with
@@ -509,12 +646,18 @@ Sciter's default length unit is `ppx` — physical pixels, DPI-aware. `px` is ac
 device-independent pixel. `dip`, `em`, `rem`, `%`, `mm`, `in`, `pt`, `sp` all work, and `*` is the flex
 unit above. `docs/md/css/units/` covers the details.
 
-`vw`, `vh`, `vmin` and `vmax` all work, `font-size` included — but **`clamp()`, `min()` and `max()` do
-not**, which is what breaks the fluid-type idiom every recent browser stylesheet is full of:
-`font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem)` loses its bounds (a `clamp()` degrades to its PREFERRED
-term) and the nested `min()` invalidates the declaration outright — measured, `min(2.4vh, 4.3vw)` computes a
-flat 13.33px that does not track the window at all. The port is to keep the viewport term and drop the
-bounds: one `2.4vh`, which tracks the window exactly as the browser's middle term does. `calc()` IS supported
+`vw`, `vh`, `vmin` and `vmax` all work, `font-size` included. **`clamp()` works and `min()`/`max()` do
+not**, and it is the nesting of the two that breaks the fluid-type idiom every recent browser stylesheet
+is full of. Measured on 6.0.4.9: `clamp(50px, 10px, 200px)` resolves to 50px, `clamp(50px, 120px, 200px)`
+to 120px and `clamp(50px, 300px, 200px)` to 200px — the real three-term behaviour, viewport terms
+included (`clamp(50px, 30vh, 200px)` in a 700px-tall view resolves to the 200px bound). But a bare
+`min(80px, 200px)` or `max(80px, 200px)` invalidates the declaration outright — the element fell back to
+its auto width — and so does a `min()` NESTED inside a clamp: `clamp(50px, min(30vh, 40vw), 200px)` is
+dropped whole. So `font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem)` fails here because of its middle
+term, not because of `clamp()`. The port is either to drop the inner function — `clamp(1rem, 2.4vh, 2.2rem)`,
+which keeps the bounds — or to keep the viewport term alone, `2.4vh`. An earlier version of this guide said
+`clamp()` "degrades to its PREFERRED term"; that reading came from the nested-`min()` case, where nothing
+was applied at all. `calc()` IS supported
 if the value has to be computed, with two caveats — flex units (`*`) cannot appear inside it, and
 `getComputedStyle` reads a `calc()` back as the literal string `calc(...)`, so a value you want to ASSERT has
 to be a plain unit. The bounds themselves can be had from a media query on `height`/`width`, but measured, a
@@ -586,9 +729,15 @@ if body, err := sciter_app.select_first(framed_root, "body"); err == nil {
 ```
 
 **And the key CODES are the engine's own**, from the SDK's `include/sciter-x-key-codes.h` — GLFW-style
-values, not platform virtual keys: `KB_RIGHT = 262`, `KB_LEFT = 263`. Sending a Windows `VK_RIGHT` (39) to
-`windowless_key` arrives in the document as the `Quote` key, which is a puzzling ten minutes. That header is
-not bound in this package.
+values, not platform virtual keys: `KB_RIGHT = 262`, `KB_LEFT = 263`. Nothing in the SDK includes that
+header, so this package binds it by hand as `sciter.Sc_Kb_Codes`; compare `Key_Event.key_code` against
+that enum and never against a platform virtual key. **Inbound, the engine translates for you** — measured
+by posting a real `WM_KEYDOWN` to a live window on Windows, `VK_RETURN` (13) arrives as 257 and `VK_UP`
+(38) as 265, in both `key_code` and script's `event.keyCode`, and `event.code` reads `Enter` / `ArrowUp`.
+**Outbound, `windowless_key` translates nothing**: whatever the host passes is what the document sees, so a
+Windows `VK_RIGHT` (39) arrives as the `Quote` key (39 is `KB_QUOTE`) with `event.code` undefined, which is
+a puzzling ten minutes. Only the printable ASCII range coincides between the two sets, which is why a
+letters-only test never catches the mistake.
 
 ### The standard library
 
@@ -653,10 +802,15 @@ this and not a bug.
 
 - [ ] keep (or add) the `<meta charset="utf-8">` — a document built as a string has nothing to sniff, and
       without it non-ASCII text is decoded with the system codepage, silently
-- [ ] replace `display:flex` / `display:grid` with `flow:` and flex units
-- [ ] replace `gap` with margins on the children — it is silently ignored, unlike `display`
-- [ ] replace `clamp()`/`min()`/`max()` with a single term (`vw`/`vh` work, and in `font-size` too), `calc()`,
-      `%`, `em`/`rem`, flex units, or `@media` on `width`
+- [ ] `display:flex` / `display:grid` / `gap` can STAY — they work (see
+      [Layout](#layout-flex-and-grid-exist-partially-flow-and-flex-units-are-the-native-model)) — but replace the
+      flex sizing longhands `flex-basis`/`flex-grow`/`flex-shrink` with the `flex: <n>` shorthand or flex
+      units, `justify-content: flex-start`/`flex-end` with `start`/`end`, and `align-items` on a flex row
+      with `align-self` on its children. Each of those four is silently ignored, unlike `display`; rewriting
+      the block as `flow:` + flex units is the alternative
+- [ ] replace `min()`/`max()` — including one nested inside an otherwise-valid `clamp()`, which drops the
+      whole declaration — with `clamp()` (it works, three terms and all), a single term (`vw`/`vh` work,
+      and in `font-size` too), `calc()`, `%`, `em`/`rem`, flex units, or `@media` on `width`
 - [ ] **write the control states you were getting for free** — `:hover` above all, plus `:active`,
       `:focus` and `:disabled`, and put `appearance: none` first. A framework's stylesheet carried these;
       nothing here does, and painting a control deletes the engine's own (see
@@ -666,11 +820,13 @@ this and not a bug.
       plain DOM calls
 - [ ] replace `localStorage` / IndexedDB with `@storage`
 - [ ] replace `fetch` of local files with `@sys.fs`, and grant the feature bits
-- [ ] **check the stylesheet's size**: over 32 KiB and the rest of it is silently dropped (see
+- [ ] **check each inline `<style>`'s size**: one byte over 32 KiB and the WHOLE block is silently dropped,
+      first rule included — split it, or link it (see
       [A stylesheet is capped at 32 KiB](#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence)) —
       strip CSS comments when emitting, and assert the byte count
 - [ ] replace `e.key` with a `code` fallback, and give the document's `<body>` the focus, or no keyboard
-      shortcut in it will ever fire
+      shortcut in it will ever fire — and on the host side compare `key_code` against `sciter.Sc_Kb_Codes`
+      (`.ENTER` is 257, not 13)
 - [ ] **park what is off screen with `display: none`** — layout cost scales with everything in the layout,
       and `visibility: hidden` does not help (see
       [Making a big document cheap](#making-a-big-document-cheap-layout-is-the-cost-and-display-none-is-the-switch))

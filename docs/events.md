@@ -106,7 +106,9 @@ if me, ok := sciter_app.mouse_event(event); ok {
 
 if ke, ok := sciter_app.key_event(event); ok {
 	// ke.code      - .KEY_DOWN, .KEY_UP, .KEY_CHAR
-	// ke.key_code  - a virtual key for DOWN/UP, a character for CHAR
+	// ke.key_code  - a virtual key for DOWN/UP, a character for CHAR. The virtual keys are the
+	//                engine's own `sciter.Sc_Kb_Codes` (`.ENTER` is 257, not the platform's 13) -
+	//                the engine translates the platform key for you, so compare against that enum
 	// ke.modifiers - Keyboard_States, a set: `sciter.KEYBOARD_STATE_CONTROL & ke.modifiers != {}`
 }
 
@@ -160,6 +162,13 @@ and does not pretend to cover the rest, so nothing is out of reach.
 `.SIZE` has no accessor because it has no parameters: `event.element` — the element whose box changed —
 is the whole payload. Measured, it is that element's own resize rather than the window's: maximizing
 and restoring the window produced none, restyling a `<div>`'s width produced one.
+
+**A document inside a `<frame>` never gets script's `resize` event.** Measured with the host resizing the
+window: the frame is relaid out and every box in the framed document changes, while
+`window.addEventListener('resize', …)` inside it fires not once — so a page whose responsive work hangs off
+that event goes on laying itself out for the old size until something else happens to re-render it. There
+is no event to subscribe to from inside the frame; what works is watching the box (`clientWidth` /
+`clientHeight` on a timer, acting only on a change), or driving the page from the host, which does know.
 
 **Three groups never reach a window handler.** `.METHOD_CALL`, `.SCROLL` and `.ATTRIBUTE_CHANGE` are
 delivered only to handlers attached to the element itself, so `attach_handler` is the only attachment
@@ -291,6 +300,27 @@ case .DRAG:             return true    // ... and means it
 case .DROP:             take(xe.data); return true
 }
 ```
+
+### What Windows delivers, and where the handler has to be
+
+Measured on Windows 11, engine 6.0.4.9, dragging a file out of Explorer:
+
+- **The payload is a map of one entry**, `"file"` → an **array** of `file:///` **URLs**, not paths, and
+  percent-encoded:
+
+  ```
+  data = MAP { "file": ARRAY [ "file:///C:/Users/me/My%20Deals/hand.png" ] }
+  ```
+
+  So a real path takes `value_get(data, "file")` → `value_at(…, 0)` → strip the scheme → percent-decode.
+  A folder with a space in its name is the ordinary case, not an edge one.
+
+- **`.EXCHANGE` never reaches a WINDOW handler.** Subscribed through `attach_window_handler` the group is
+  delivered nowhere: no `.WILL_ACCEPT_DROP`, no `.DROP`, and the drag source is told no — which on screen
+  is indistinguishable from an application that does not accept drops. `attach_handler` on an element is
+  the only attachment that receives it, so "the whole window accepts drops" means attaching to the
+  document's ROOT element. (`.METHOD_CALL`, `.SCROLL` and `.ATTRIBUTE_CHANGE` are documented above as
+  element-only; this belongs on that list.)
 
 ### What Linux does not do
 

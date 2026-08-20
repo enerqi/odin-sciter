@@ -23,6 +23,7 @@
 //     renders itself as JSON and parses back - no serializer to write and none to keep in step.
 package main
 
+import sciter ".."
 import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
@@ -283,31 +284,31 @@ on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) ->
 			}
 		}
 
-		switch ke.key_code {
-		case KEY_ENTER:
+		#partial switch sciter.Sc_Kb_Codes(ke.key_code) {
+		case .ENTER:
 			if in_entry {
 				commit_entry(app)
 				return true
 			}
-		case KEY_UP:
+		case .UP:
 			if !in_entry {
 				move_selection(app, -1)
 				render(app)
 				return true
 			}
-		case KEY_DOWN:
+		case .DOWN:
 			if !in_entry {
 				move_selection(app, +1)
 				render(app)
 				return true
 			}
-		case KEY_SPACE:
+		case .SPACE:
 			if !in_entry {
 				toggle_task(app, app.selected)
 				render(app)
 				return true
 			}
-		case KEY_DELETE:
+		case .DELETE:
 			if !in_entry {
 				remove_task(app, app.selected)
 				render(app)
@@ -318,13 +319,12 @@ on_event :: proc(handler: ^sciter_app.Event_Handler, event: sciter_app.Event) ->
 	return false
 }
 
-// Virtual key codes, as the engine reports them in `Key_Event.key_code` for `.DOWN` and `.UP`. They are
-// the platform-independent set in sciter-x-key-codes.h; only the five this application uses are named.
-KEY_ENTER :: 13
-KEY_SPACE :: 32
-KEY_DELETE :: 46
-KEY_UP :: 38
-KEY_DOWN :: 40
+// The key codes are `sciter.Sc_Kb_Codes`, which is the engine's own GLFW-style set - and this file used
+// to declare five of them by hand as Windows virtual keys (`KEY_ENTER :: 13`, `KEY_UP :: 38`), with a
+// comment claiming they were sciter-x-key-codes.h values. They were not: Enter is 257 there and Up is
+// 265, so every case but SPACE (32 in both sets, being ASCII) was unreachable from a real keypress. The
+// tests passed anyway, because `send_key` hands the code straight through, so they asserted the
+// handler's agreement with itself. Compare against the enum and both problems go away.
 
 // Takes what is in the entry field, adds it, and clears the field.
 commit_entry :: proc(app: ^App) {
@@ -941,19 +941,19 @@ test_keyboard_drives_the_model :: proc(t: ^testing.T) {
 		}
 	}
 
-	press(list, KEY_DOWN)
+	press(list, u32(sciter.Sc_Kb_Codes.DOWN))
 	testing.expect_value(t, app.selected, 1)
 
-	press(list, KEY_SPACE)
+	press(list, u32(sciter.Sc_Kb_Codes.SPACE))
 	testing.expect(t, app.tasks[1].done, "space toggled the selected task")
 	testing.expect_value(t, remaining(app), 2)
 
-	press(list, KEY_DELETE)
+	press(list, u32(sciter.Sc_Kb_Codes.DELETE))
 	testing.expect_value(t, len(app.tasks), 2)
 	testing.expect_value(t, app.tasks[1].title, "gamma")
 	testing.expect_value(t, app.selected, 1)
 
-	press(list, KEY_UP)
+	press(list, u32(sciter.Sc_Kb_Codes.UP))
 	testing.expect_value(t, app.selected, 0)
 
 	// And the document agrees with the model, which is the invariant the whole design exists to keep.

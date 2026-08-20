@@ -671,6 +671,42 @@ assembles a throwaway app folder under `target/` rather than writing into the SD
   invisible, so the property lost is "clone and run *with no network*", not "clone and run". The
   arithmetic, the runbook for the rewrite, why not Git LFS, and the release-asset fallback that keeps the
   pin from depending on one upstream URL are in [`UPGRADING.md`](./UPGRADING.md).
+- **Regeneration is Linux-only, and it does not have to be — measured, not decided.** `just bindgen`
+  refuses off Linux (`check-bindgen-pin.py`) because a Windows run cannot reproduce the committed
+  `sciter.odin`. It CAN, and a scratch-tree experiment on 2026-08-20 got a **zero-line diff** against the
+  committed file (CRLF normalised). Four things stand between here and there, and only the third needs
+  anything outside this repository:
+  1. **The platform `#if`.** `sciter-x-primitives.h:58` is `#if defined(_WIN32) || defined(_WIN64)` →
+     `#define WINDOWS`, and Windows libclang predefines `_WIN32`, so `-DLINUX=1` never gets a look-in:
+     the WINDOWS branch wins, the LINUX branch's `#include <stdint.h>` is skipped, and the parse dies
+     with `unknown type name 'int32_t'`. A `flatten_headers.py` PATCH neutralising that condition and the
+     chain's trailing `#else #error` fixes it — `-DLINUX=1` already supplies the define. Host-independent,
+     so it changes nothing about a Linux run (which is why the diff came out empty).
+  2. **`size_t`.** Nothing includes `<stddef.h>`, and under a Linux target the POSIX headers are not on
+     this machine to bring it in, so `size_t` fell back to implicit `int` — `som_method_def_t.params`,
+     `n_properties` and `n_methods` came out `i32` instead of `c.size_t`. Another one-line flatten patch,
+     beside the stdint include.
+  3. **`--target=x86_64-unknown-linux-gnu`, which needs a bindgen change.** This is the piece no define
+     or alias can fake: **a C enum's backing type is an ABI question, not a preprocessor one.** Linux
+     clang gives an all-non-negative enum `unsigned int`; MSVC always `int` — so ~10 `enum u32` became
+     `enum i32`, taking the `bit_set` storage types with them. odin-c-bindgen builds its clang argv from
+     `clang_include_paths` and `clang_defines` alone (`src/translate_collect.odin`), and a target is
+     neither an `-I` nor a `-D`. Eight lines add it; the clean shape is a `clang_args = [ … ]` config
+     field rather than the space-splitting env var the experiment used (which broke on `Program Files`).
+     The cost is the pin: `bindgen_commit` would have to name a fork, or upstream, once such a field
+     exists.
+  4. **An `-I` at clang's own builtin includes** (`stdint.h`, `stddef.h`) — the bundled `libclang.dll`
+     does not find its resource directory. Machine-specific, so the justfile should locate it rather than
+     `bindgen.sjson` naming a path. And `.gitattributes` has to normalise line endings: bindgen and
+     odinfmt write CRLF on Windows.
+
+  The eight remaining `file not found` errors (`dlfcn.h`, `libgen.h`, `string.h`, …) are harmless — the
+  byte-identical output is the proof. **What this is worth beyond the friction**: `sciter-x-key-codes.h`
+  is included by nothing in the SDK, so it is bound by hand as `Sc_Kb_Codes` in `src/prelude.odin`
+  instead of being added to `flatten_headers.py`'s `HEADERS` — a Windows-only checkout cannot produce the
+  regenerated file that `.github/workflows/bindgen.yml` asserts. With this done, that block deletes
+  itself and becomes one line in `HEADERS`. A one-off WSL run is the cheap alternative that gets the enum
+  generated without touching the tool.
 - **Naming.** `sciter.SciterCreateWindow` maps 1-to-1 onto upstream documentation, which is worth a lot
   for a library whose users will be reading sciter.com. `sciter.create_window` reads better. The
   intended answer is both, in two packages: generated `package sciter` stays 1-to-1, ergonomic

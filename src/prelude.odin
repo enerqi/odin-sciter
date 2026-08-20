@@ -50,6 +50,171 @@ Scdom_Result :: enum Int {
 	OK_NOT_HANDLED    = -1, // not an error: the call succeeded and nothing consumed it
 }
 
+// The virtual keys the engine reports, and the ones it accepts.
+//
+// `SC_KB_CODES` in `external/sciter/include/sciter-x-key-codes.h`, transcribed by hand. Nothing in the
+// SDK includes that header - not `sciter-x.h`, not `sciter-x-api.h`, nothing - so it is not reached
+// transitively and `src/flatten_headers.py` cannot pick it up for free either: adding it to that list
+// is the generated alternative to this block, and it is the right move the next time bindings are
+// regenerated on Linux (`just bindgen` refuses on Windows and macOS, so a Windows-only change cannot
+// produce the byte-identical sciter.odin that `.github/workflows/bindgen.yml` asserts - though it CAN
+// be made to, measured, and what it takes is written up in docs/PLAN.md section 12). The type name
+// here is the one bindgen would emit from the C tag, so that migration is a delete rather than a
+// rename; the members are the `KB_*` names with the prefix stripped, which is also what bindgen's
+// shared-prefix pass does.
+//
+// **These are GLFW-style codes and NOT platform virtual keys**, and the engine translates for you.
+// Measured on 6.0.4.9, Windows, by posting real `WM_KEYDOWN` messages to a live window: `VK_RETURN`
+// (13) arrives at both a host `Key_Event.key_code` and script's `event.keyCode` as **257**, `VK_UP`
+// (38) as 265, `VK_DOWN` (40) as 264, `VK_ESCAPE` (27) as 256, `VK_DELETE` (46) as 261, `VK_F1` (112)
+// as 290. Only the printable ASCII range coincides - `A` is 65 in both sets, which is what makes the
+// mistake survive a letters-only test.
+//
+// `windowless_key` is the other direction and does NO translation: whatever code the host passes is
+// what the document sees. Measured with the same page - code 257 gives a `keydown` with
+// `event.code == "Enter"`, code 13 gives one whose `event.code` is undefined, so the key is delivered
+// and recognised as nothing. That is why a windowless host must send from this set (`sciter-x-msg.h`
+// says only "key code" and there is nothing in the docs tree about it either).
+//
+// Two more measurements worth having before comparing against this enum: the editing keys are consumed
+// by the intrinsic behavior when an `<input>` has the focus (`.DELETE` and `.BACKSPACE` reached a host
+// handler but raised no script `keydown` at all), and `.CHAR` carries a CHARACTER rather than a key -
+// `windowless_key(view, .CHAR, 120)` types an `x`.
+Sc_Kb_Codes :: enum u32 {
+	UNKNOWN       = 0,
+
+	// Printable keys. The values are the ASCII codes of the unshifted characters, which is why they
+	// look like - and for letters and digits are - the platform virtual keys.
+	SPACE         = 32,
+	QUOTE         = 39, // '
+	APOSTROPHE    = 39, // the header's own alias for QUOTE
+	COMMA         = 44, // ,
+	MINUS         = 45, // -
+	PERIOD        = 46, // .
+	SLASH         = 47, // /
+	NUM_0         = 48, // KB_0 upstream; Odin identifiers cannot start with a digit
+	NUM_1         = 49,
+	NUM_2         = 50,
+	NUM_3         = 51,
+	NUM_4         = 52,
+	NUM_5         = 53,
+	NUM_6         = 54,
+	NUM_7         = 55,
+	NUM_8         = 56,
+	NUM_9         = 57,
+	SEMICOLON     = 59, // ;
+	EQUAL         = 61, // =
+	A             = 65,
+	B             = 66,
+	C             = 67,
+	D             = 68,
+	E             = 69,
+	F             = 70,
+	G             = 71,
+	H             = 72,
+	I             = 73,
+	J             = 74,
+	K             = 75,
+	L             = 76,
+	M             = 77,
+	N             = 78,
+	O             = 79,
+	P             = 80,
+	Q             = 81,
+	R             = 82,
+	S             = 83,
+	T             = 84,
+	U             = 85,
+	V             = 86,
+	W             = 87,
+	X             = 88,
+	Y             = 89,
+	Z             = 90,
+	LEFT_BRACKET  = 91, // [
+	BACKSLASH     = 92, // 	RIGHT_BRACKET = 93, // ]
+	GRAVE_ACCENT  = 96, // `
+	BACKQUOTE     = 96, // the header's own alias for GRAVE_ACCENT
+	WORLD_1       = 161, // non-US #1
+	WORLD_2       = 162, // non-US #2
+
+	// Function keys. Nothing here coincides with a platform virtual key.
+	ESCAPE        = 256,
+	ENTER         = 257,
+	TAB           = 258,
+	BACKSPACE     = 259,
+	INSERT        = 260,
+	DELETE        = 261,
+	RIGHT         = 262,
+	LEFT          = 263,
+	DOWN          = 264,
+	UP            = 265,
+	PAGE_UP       = 266,
+	PAGE_DOWN     = 267,
+	HOME          = 268,
+	END           = 269,
+	CAPS_LOCK     = 280,
+	SCROLL_LOCK   = 281,
+	NUM_LOCK      = 282,
+	PRINT_SCREEN  = 283,
+	PAUSE         = 284,
+	F1            = 290,
+	F2            = 291,
+	F3            = 292,
+	F4            = 293,
+	F5            = 294,
+	F6            = 295,
+	F7            = 296,
+	F8            = 297,
+	F9            = 298,
+	F10           = 299,
+	F11           = 300,
+	F12           = 301,
+	F13           = 302,
+	F14           = 303,
+	F15           = 304,
+	F16           = 305,
+	F17           = 306,
+	F18           = 307,
+	F19           = 308,
+	F20           = 309,
+	F21           = 310,
+	F22           = 311,
+	F23           = 312,
+	F24           = 313,
+	F25           = 314,
+	KP_0          = 320,
+	KP_1          = 321,
+	KP_2          = 322,
+	KP_3          = 323,
+	KP_4          = 324,
+	KP_5          = 325,
+	KP_6          = 326,
+	KP_7          = 327,
+	KP_8          = 328,
+	KP_9          = 329,
+	KP_DECIMAL    = 330,
+	KP_DIVIDE     = 331,
+	KP_MULTIPLY   = 332,
+	KP_SUBTRACT   = 333,
+	KP_ADD        = 334,
+	KP_ENTER      = 335,
+	KP_EQUAL      = 336,
+	LEFT_SHIFT    = 340,
+	LEFT_CONTROL  = 341,
+	LEFT_ALT      = 342,
+	LEFT_SUPER    = 343,
+	RIGHT_SHIFT   = 344,
+	RIGHT_CONTROL = 345,
+	RIGHT_ALT     = 346,
+	RIGHT_SUPER   = 347,
+	MENU          = 348,
+	CONTEXT_MENU  = 349,
+}
+
+// `KB_KEY_LAST`, the header's last-value marker. A constant rather than a member, because as a member
+// it would be a second name for CONTEXT_MENU in every switch and every `fmt` of the enum.
+KB_KEY_LAST :: Sc_Kb_Codes.CONTEXT_MENU
+
 @(private = "file")
 g_api: ^Isciter_Api
 

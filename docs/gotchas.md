@@ -354,7 +354,11 @@ the table and the emit-time fix.
   `SCITER_APP_INIT` → … → `SCITER_APP_SHUTDOWN` lifecycle. ~480 sample documents besides, mapped by question
   in [`SDK-DOCS-AND-SAMPLES.md`](./SDK-DOCS-AND-SAMPLES.md).
 - **`include/sciter-x-key-codes.h`** — the engine's own key codes (GLFW-style, `KB_RIGHT = 262`), which no
-  page documents and this repository does not bind.
+  page documents. Nothing in the SDK includes the header either, so it is bound here by hand as
+  `sciter.Sc_Kb_Codes` (in `src/prelude.odin`) rather than generated. **The engine translates platform
+  keys into this set**: a Windows `VK_RETURN` (13) arrives as `.ENTER` (257) in `Key_Event.key_code`, so a
+  handler comparing against platform virtual keys never fires. `windowless_key` does NOT translate — the
+  host has to send from this set.
 - **[docs.sciter.com](https://docs.sciter.com/docs/intro)** — a Docusaurus render of
   `sciter-js-sdk/docs/md`, which you already have in an SDK checkout. Script-side only: DOM, CSS, JS,
   behaviours. Nothing about the host API — but 128 pages of it, and

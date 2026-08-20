@@ -32,23 +32,29 @@ with it (measured — [`html-css-js.md`](./html-css-js.md)). A ported page whose
 loses every rule after it, silently. Either write the Sciter form or keep such a block last.
 
 **`calc()` is supported**, with one restriction: flex units (`*`) cannot appear inside it
-(`docs/md/css/units/dimentional.md`). `min()`, `max()` and `clamp()` are not — so `calc()` is the escape
-hatch when a value has to be computed.
+(`docs/md/css/units/dimentional.md`). `clamp(min, val, max)` is supported as well — since 6.0.2.24 it even
+takes a flex unit as `val` — but `min()` and `max()` are not, in any position, including nested inside a
+`clamp()` (which drops that declaration whole). `calc()` is the escape hatch when a value has to be
+computed; measurements in [`html-css-js.md`](./html-css-js.md).
 
 **The unit list is longer than you would guess**: `em`, `rem`, `ex`, `ch`, `%`, `vw`, `vh`, `vmin`, `vmax`,
 plus Sciter's own `width(X%)` and `height(Y%)` — a percentage of the element's own width or height, which is
 how `line-height: height(100%)` is expressed. Flex units (`*`) are a separate mechanism, documented in
 `docs/md/css/flows-and-flexes.md`.
 
-**But a documented unit is not valid everywhere.** Measured on 6.0.4.9 against that list: `vh` resolves in
-`max-height` and does NOT resolve in `font-size` — the computed value comes back empty and the element falls
-back to sizing by content. The page documents the unit, not the properties it works in.
+**And a unit this page documents does work everywhere it says.** An earlier note here claimed `vh` resolved
+in `max-height` but not in `font-size`; re-measured on 6.0.4.9, `font-size: 2.4vh` computes 21.6px in a
+900px-tall view and re-evaluates on a resize. The empty computed value that produced the original claim was
+the [32 KiB stylesheet cap](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence)
+dropping the block that held the rule.
 
 **Key codes are the engine's own**, in `include/sciter-x-key-codes.h` rather than in the docs: GLFW-style
-values (`KB_RIGHT = 262`, `KB_LEFT = 263`), not platform virtual keys. Nothing in this repository binds that
-header, so a `windowless_key` caller passing a Windows `VK_RIGHT` (39) sees the document report the `Quote`
-key. The event side of it is in [`html-css-js.md`](./html-css-js.md): the engine fills in `event.code`, not
-`event.key`.
+values (`KB_RIGHT = 262`, `KB_LEFT = 263`), not platform virtual keys. Nothing in the SDK includes that
+header, so these bindings carry it by hand as `sciter.Sc_Kb_Codes`. Two directions, measured on 6.0.4.9:
+the engine **translates inbound platform keys into this set** — a real `WM_KEYDOWN` for `VK_RETURN` (13)
+reaches a host handler and script alike as 257 — while `windowless_key` translates nothing, so a host
+passing a Windows `VK_RIGHT` (39) has the document report the `Quote` key. The event side of it is in
+[`html-css-js.md`](./html-css-js.md): the engine fills in `event.code`, not `event.key`.
 
 ---
 

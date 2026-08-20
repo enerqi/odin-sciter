@@ -158,6 +158,32 @@ Two traps in that table worth stating on their own:
 `<input type=range>` is HTML's slider and Sciter has no behavior for it — `control_type` `.NO`, no
 asset, nothing happens. The Sciter spelling is `<input type=hslider>`.
 
+**CSS `behavior: slider` on the HTML one is worse than nothing**, and this is the shape of the bug it
+produces. The behavior *does* attach — `control_type` reads `.SLIDER`, so every check that asks the DOM
+passes — but the widget then paints at its own intrinsic size inside whatever box the CSS gave it:
+measured by sampling the painted row, **a 27px control in a 147px box**. The remaining 120px are invisible
+and still live, so a click on what looks like blank page moves the value. Use the engine's own element.
+
+### What a slider's geometry actually does
+
+Measured on 6.0.4.9 with `<input type=hslider min=1 max=13>`, 147px wide:
+
+- The engine walks the knob's **LEFT EDGE** from the track's left edge to its **RIGHT** edge, so at the
+  top of the range the whole knob is *past* the track. A browser's range thumb instead has its *middle*
+  travel between the ends.
+- **Padding reserves no room for it** — `padding-right`, symmetric `padding`, and `box-sizing:
+  border-box` all measured an identical overhang.
+- **Clicks are mapped onto the input's own box**, so drawing the track on a wrapper of a different width
+  (to give the knob somewhere to land) separates what the user aims at from what answers — visible as a
+  control that responds where it is not drawn.
+
+What works, if the default placement is not wanted: hide the engine's knob (inline `display: none`),
+append your own as a **child of the input** — the input's flow is `stack`, so a `margin-left` places it
+over the track without disturbing layout — and derive its offset from the input's box, which is the same
+box the clicks use. `getBoundingClientRect` on the knob is stale within the call that moved it, so a
+self-calibrating placement (`inset = knobLeft - trackLeft - lastAppliedMargin`) plus one deferred re-run
+converges where a single computed offset does not.
+
 ## What `do_click` is worth
 
 Eight of the behaviors answer a `do_click`: `button`, `clickable`, `hyperlink`, `check`, `radio`,

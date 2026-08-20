@@ -58,6 +58,14 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 
 ### Added
 
+- **`sciter.Sc_Kb_Codes`** — the engine's key codes, bound at last. `include/sciter-x-key-codes.h` is
+  included by nothing in the SDK, so it is reached neither by the flattened header nor by any doc page,
+  and every caller comparing a `Key_Event.key_code` was guessing. Hand-written in `src/prelude.odin`
+  under the name bindgen would generate, because `just bindgen` only runs on Linux. Measured on Windows
+  by posting real `WM_KEYDOWN` messages to a live window: the engine TRANSLATES the platform key into
+  this set (`VK_RETURN` 13 arrives as `.ENTER` 257, `VK_UP` 38 as `.UP` 265), while `windowless_key`
+  translates nothing and needs a code from the set. `examples/task_list.odin` and
+  `examples/workbench.odin` were both comparing against Windows virtual keys — see Fixed.
 - **A temp-allocator boundary at every callback**, in `callback_temp_scope`. `run` is the engine's own
   loop and never returns to application code, so an application whose handlers do DOM work had nowhere to
   put `free_all` and the arena grew for the life of the process. It is a watermark rather than a
@@ -195,6 +203,27 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
   `[windows]` recipe variants that carried no comment of their own listed blank on Windows.
 
 ### Fixed
+
+- **Two examples' keyboard handling was unreachable.** `task_list` named five Windows virtual keys
+  (`KEY_ENTER :: 13`, `KEY_UP :: 38`) under a comment claiming they were `sciter-x-key-codes.h` values,
+  and `workbench` switched on 13/27/38/40/80/89/90 directly. The engine reports `.ENTER` as 257 and
+  `.UP` as 265, so every case but the ASCII ones could never fire from a real keypress; the tests passed
+  because `send_key` hands the code straight through, so they asserted each handler's agreement with
+  itself. Both now switch on `sciter.Sc_Kb_Codes`.
+- **The 32 KiB CSS cap was written up with the wrong shape.** Re-measured: the limit is **per inline
+  `<style>` element** (32,741 bytes applies, 32,769 does not), it is **all-or-nothing** rather than a
+  truncation — the first rule of an oversized block dies with the last — and a **`<link>`ed stylesheet is
+  not subject to it** (100 KB, every rule live). Two inline blocks of 20 KB each both apply, so splitting
+  is a way out for a page that must stay single-file. `docs/html-css-js.md`.
+- **The docs said `display:flex`, `display:grid`, `gap` and `clamp()` were missing.** They are not, on
+  engine 6.0.4.9 — flex is a "minimalistic" emulation over `flow:`, grid is fairly complete, and both
+  take `gap`. Measured with a windowless probe and written up in
+  [`docs/html-css-js.md`](docs/html-css-js.md), including what IS silently ignored (`flex-basis`,
+  `flex-grow`, `flex-shrink`, `align-items` on a flex container, the `flex-start`/`flex-end` keywords,
+  and `min()`/`max()` in any position, nested inside a `clamp()` included). `ALTERNATIVES.md`,
+  `SDK-DOCS-AND-SAMPLES.md` and the porting checklist carried the same claim and are corrected too — as
+  is `SDK-DOCS-AND-SAMPLES.md`'s "`vh` does not resolve in `font-size`", which the 32 KiB stylesheet cap
+  had already been shown to explain.
 
 Twenty-odd correctness fixes from the review, the sharpest of them memory-safety: `asset_get` reading a
 `som_property_def_t` union without its tag (a constant's value called as a function pointer),
