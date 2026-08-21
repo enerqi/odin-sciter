@@ -315,14 +315,21 @@ The full measurement, the working pair, and the script-side animation APIs are i
 
 ---
 
-## 14. A stylesheet over 32 KiB loses everything past the cut, and says nothing
+## 14. An inline `<style>` over 32 KiB is discarded ENTIRE, and says nothing
 
-**Symptom:** a document whose styling is partly applied. The rules at the top of the sheet work, the ones at
-the bottom do not, and the CSS diagnostics that used to appear have gone quiet — which reads as "my last edit
-fixed the warnings" rather than "the parser stopped early". Adding a COMMENT can trigger it.
+**Symptom:** a document with NO styling at all, from a sheet that worked yesterday — and the CSS diagnostics
+that used to appear have gone quiet, which reads as "my last edit fixed the warnings" rather than "the parser
+threw the sheet away". Adding a COMMENT can trigger it. On a page with a desktop override block at the bottom
+it looks exactly as if that block alone had gone, which sends the search to the wrong end of the file.
 
-**Cause:** a `<style>` element's contents are capped at 32,768 bytes. Bisected on 6.0.4.9: 32,763 bytes
-applied in full, 32,816 applied nothing past the cut. No warning, no error, no exception.
+**Cause:** one inline `<style>` element's contents are capped at 32,768 bytes. Re-bisected on 6.0.4.9 with
+markers at the start, the middle and the end of one sheet: **32,741 bytes apply in full and 32,769 apply
+NOTHING AT ALL** — its first rule dies with its last. This is not truncation at the cap, and the earlier
+reading ("everything past the cut") was wrong: the parser abandons the whole block. No warning, no error,
+no exception, and the CSS diagnostics for that sheet go quiet at the same moment.
+
+**The scope is one `<style>` element.** Two blocks of 20 KB both apply, and a `<link>`ed sheet has no cap
+in reach (100 KB measured, every rule live).
 
 **Why it is so confusing:** the failure is not in the rule that stops working, and the diagnostics go silent
 at the same moment, so the two obvious hypotheses — "my selector is wrong" and "the engine dislikes this
@@ -331,16 +338,70 @@ thinks to take.
 
 ```odin
 // The check that would have saved the afternoon.
-assert(len(stylesheet) < 32 * 1024, "over Sciter's 32 KiB stylesheet cap; the rest is dropped")
+assert(len(stylesheet) < 32 * 1024, "over Sciter's 32 KiB cap on one inline <style>; the WHOLE block goes")
 ```
 
 **The fix that keeps the documentation:** strip CSS comments when the page is EMITTED rather than deleting
 them from the template — a browser has no use for them either. One card-page template went from 33.3 KB to
-18.4 KB that way. An external `<link>` stylesheet is a separate parse with its own budget, so splitting is
-the other way out.
+18.4 KB that way. But comment-stripping only buys headroom and leaves the cliff one sentence away: emitting
+the CSS as **two `<style>` blocks**, cut at a top-level rule boundary, removes it and keeps the page
+single-file, which a `<link>` would not for a page that gets copied around or handed to a `<frame>`.
 
-[`html-css-js.md`](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence) has
+[`html-css-js.md`](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-whole-block-is-dropped-in-silence) has
 the table and the emit-time fix.
+
+---
+
+## 15. A width media query in someone else's page kills the process
+
+**Symptom:** loading an ordinary responsive web page into a `<frame>` ends the process. No error return,
+no CSS diagnostic, nothing in the log — and if it happens under a test runner, the runner *hangs* rather
+than reporting (see #16).
+
+**Cause:** a `@media` condition with a width feature. Bisected on 6.0.4.9: `(max-width: 699px)`,
+`all and (max-width: 699px)` and `(min-width: 900px) and (max-width: 1045px)` each crash; bare
+`@media all` and `@media screen` are fine and their rules apply. It is the feature, not the at-rule.
+
+**Why it is confusing:** the page is not wrong. It works in every browser, and the responsive block is
+usually nowhere near whatever was being changed when the crash started. The measurement that answers it is
+loading the sheet one rule at a time, which nobody does to a page that "just needs displaying".
+
+**The fix:** strip `@media` blocks whose condition mentions a width, brace-matched, before the document
+reaches the engine. What is left is the base rule — the page's wide-window look.
+
+[`html-css-js.md`](./html-css-js.md#a-media-query-with-a-width-feature-crashes-the-engine) has the cases.
+
+---
+
+## 16. A windowless probe cannot touch a loaded `<frame>`, and the runner hangs rather than fails
+
+**Symptom:** a test that reaches into a framed document stops dead. Not a failure — no output, no exit; the
+binary sits there until something kills it.
+
+**Cause:** two calls that take the process down in a windowless view.
+
+* `location` on a `<frame>` **element** once a document is loaded into it. An *empty* frame measures fine,
+  which is the trap — the same call worked five lines earlier.
+* Reaching into the frame's document **at all while the frame is displayed** — `element_asset(frame,
+  "frame")`, its `document` property, then anything.
+
+The hang is the second half: the Odin test runner's crash handler touches the engine from another thread
+and trips [rule 1](./rules.md#1-thread-affinity-one-thread-and-one-way-across), so a crash becomes a
+deadlock and the useful signal is lost.
+
+**Why it is misleading:** a real window does neither of these things wrong. An application that focuses an
+element inside a visible framed page, or evaluates script in it, works — so this is a property of the
+windowless view and it limits the PROBE, not the application. Compare #11.
+
+**What to do instead**, in the order to reach for it:
+
+1. measure the frame **before** loading it — the box does not change when a document arrives;
+2. load into a **hidden** frame and read it there (a hidden frame is 1x1, so everything inside measures 0);
+3. for anything about the page's own layout, load the page as the **view's own document** — that measures
+   the real question, a page of that shape in a viewport of that size.
+
+Also measured: `eval_element` on a frame's document root works, but a computed style comes back as a
+non-string value — wrap it, `String(getComputedStyle(el).backgroundColor)`.
 
 ---
 

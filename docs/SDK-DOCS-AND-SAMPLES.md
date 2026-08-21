@@ -45,7 +45,7 @@ how `line-height: height(100%)` is expressed. Flex units (`*`) are a separate me
 **And a unit this page documents does work everywhere it says.** An earlier note here claimed `vh` resolved
 in `max-height` but not in `font-size`; re-measured on 6.0.4.9, `font-size: 2.4vh` computes 21.6px in a
 900px-tall view and re-evaluates on a resize. The empty computed value that produced the original claim was
-the [32 KiB stylesheet cap](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence)
+the [32 KiB stylesheet cap](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-whole-block-is-dropped-in-silence)
 dropping the block that held the rule.
 
 **Key codes are the engine's own**, in `include/sciter-x-key-codes.h` rather than in the docs: GLFW-style

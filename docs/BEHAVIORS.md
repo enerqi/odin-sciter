@@ -184,6 +184,37 @@ box the clicks use. `getBoundingClientRect` on the knob is stale within the call
 self-calibrating placement (`inset = knobLeft - trackLeft - lastAppliedMargin`) plus one deferred re-run
 converges where a single computed offset does not.
 
+### `plaintext`: the LINES are the buffer, `content` is not
+
+Measured on 6.0.4.9. Write three lines through the asset's `content` property and read them back:
+
+```
+written   "a\nb\nc"
+read back "\r\na\r\nbc"
+```
+
+The separator is emitted **before** each line instead of after it, so the content gains a blank first
+line — and **the last boundary is missing entirely**: the final two lines come back joined, and no amount
+of splitting recovers them. An editor that saves what `content` hands it silently glues the last two
+lines of the file together.
+
+The `<text>` **children** are exact: one per line, in order, `text(child)` giving the line. Writing is
+fine either way — `\n` and `\r\n` both produce one child per line. So read the children, write whatever
+you have, and treat `content` as good enough only for output nobody reads back.
+
+`isModified` is trustworthy, and it answers a *typed* key: `send_key(editor, .CHAR, 'X')` on a focused
+plaintext sets it — though in a windowless view it sets the flag **without inserting the character**, and
+`appendLine` through a script does nothing at all there.
+
+### `set_html` into an attached `<select>` gives its options no behavior
+
+Writing `<option>` children into a `<select>` that is already in the document leaves them as plain inline
+elements: the control draws its options **side by side, in place**, instead of dropping down. The DOM
+looks right and nothing is logged, so this reads as a stylesheet problem.
+
+A behavior attaches when its element is **parsed**. Put the control inside a wrapper and write the whole
+`<select>` — options included — into the wrapper, and it comes up as a dropdown.
+
 ## What `do_click` is worth
 
 Eight of the behaviors answer a `do_click`: `button`, `clickable`, `hyperlink`, `check`, `radio`,

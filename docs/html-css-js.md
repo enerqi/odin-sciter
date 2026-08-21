@@ -522,7 +522,7 @@ keyboard silently stops working.
 this: the target offset is per-item and dynamic, and the one way to feed a live value into a declaration —
 `var()` inside `transform` — is invalid here (see the transform notes above).
 
-### A stylesheet is capped at 32 KiB, and the rest is dropped in silence
+### A stylesheet is capped at 32 KiB, and the whole block is dropped in silence
 
 The most expensive measurement in this file, because nothing tells you. Re-measured properly on 6.0.4.9 —
 markers at the START, at ~30 KB and at the END of one sheet, sizes bisected, boxes read with `location`:
@@ -556,7 +556,7 @@ Two consequences for anything with a large stylesheet:
 ```odin
 // Somewhere the page is produced or tested. The cap is the engine's, not this package's.
 style_bytes := len(stylesheet)
-assert(style_bytes < 32 * 1024, "the stylesheet is over Sciter's 32 KiB cap; the rest would be dropped")
+assert(style_bytes < 32 * 1024, "over Sciter's 32 KiB cap on one inline <style>; the WHOLE block would go")
 ```
 
 Two ways out, both measured above: **split the block** — two `<style>` elements each under the cap carry 40 KB
@@ -637,7 +637,7 @@ re-evaluates on a resize — `font-size: 2.4vh` computes 21.6px in a 900px-tall 
 at 500, on a fresh view and after resizing a live one. This guide said the opposite for a while, on a reading
 where the computed size came back EMPTY and a text-sized box grew to fill its container. That reading was
 real and the diagnosis was wrong: the whole stylesheet block holding the rule had been dropped by the
-[32 KiB stylesheet cap](#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence), so no `font-size` was being applied at all. When a
+[32 KiB stylesheet cap](#a-stylesheet-is-capped-at-32-kib-and-the-whole-block-is-dropped-in-silence), so no `font-size` was being applied at all. When a
 declaration appears not to work, check the sheet's SIZE before concluding anything about the property.
 
 ### Units
@@ -663,6 +663,68 @@ if the value has to be computed, with two caveats — flex units (`*`) cannot ap
 to be a plain unit. The bounds themselves can be had from a media query on `height`/`width`, but measured, a
 dimension query only takes effect after a RESIZE and not on the first layout, so a capped size is wrong on
 the freshly opened window and right once it is dragged.
+
+## `::mark(name)` belongs to the LINE element, not to the editor
+
+`Range.applyMark(name)` / `.highlight(name)` marks a range of a **text node**, so the pseudo-element that
+paints it belongs to the element holding that node. In a `<plaintext>` that is the `<text>` child the
+widget makes per line — never the `<plaintext>`:
+
+```css
+#editor::mark(keyword)        { color: blue; }   /* parses, matches NOTHING */
+#editor > text::mark(keyword) { color: blue; }   /* what the SDK's own sample spells */
+```
+
+The wrong one parses, so there is no warning and no CSS diagnostic: every marked token simply stays the
+colour of ordinary text and a whole colorizer looks like it never ran.
+`samples.sciter/editor-plaintext/highlighting-marks.htm` has the correct spelling, and
+`samples.sciter/colorizer/colorizer.css` the same shape for `::highlight`.
+
+Worth knowing before testing one: a mark leaves **no attribute** and reads back only through a `Range`, so
+a host cannot see whether colouring happened. Have the page's own colorizer return the number of marks it
+applied, and assert that.
+
+## A `@media` query with a WIDTH FEATURE crashes the engine
+
+Measured on 6.0.4.9, one stylesheet at a time, in a document loaded into a `<frame>` in a windowless view.
+Each of these takes the **process** down — a caught signal, no error return, no diagnostic:
+
+```css
+@media (max-width: 699px)                                 { .content { max-width: 600px; } }
+@media all and (max-width: 699px)                         { .content { max-width: 600px; } }
+@media all and (min-width: 900px) and (max-width: 1045px) { .content { max-width: 800px; } }
+```
+
+while a bare media **type** is fine and its rules apply:
+
+```css
+@media all    { .content { max-width: 600px; } }
+@media screen { .content { max-width: 600px; } }
+```
+
+So it is the width **feature**, not the at-rule. This is the hard face of something already known in a
+milder form — an unparseable media query taking the rest of the sheet with it — and it matters most when
+the document is not yours: any ordinary responsive page carries a dozen of these.
+
+Strip them before handing such a page to the engine, brace-matched so a nested rule cannot end the block
+early. What is left is the base rule, which is the same look the page has at a wide window anyway.
+
+## The BODY background does not reach the canvas
+
+A browser propagates `body`'s background to the canvas behind the whole viewport. This engine paints the
+body **box** and no more. On a page whose body *is* its content column — `<body class="content">` with
+`max-width: 900px; margin: auto`, a common shape — the background covers 900px of a 1120px view and leaves
+the gutters unpainted (measured: a 901px body in a 1121px view).
+
+`body { size: * }` cannot fix it, because `max-width` caps the body. Paint the **root** instead, and give
+it `size: *` so it fills rather than shrinking to its content:
+
+```css
+html { size: *; background: <the body's own colour>; }
+```
+
+Read that colour out of the sheet you are already inlining rather than writing it out a second time: a
+duplicated colour goes stale in silence.
 
 ## JavaScript
 
@@ -822,7 +884,7 @@ this and not a bug.
 - [ ] replace `fetch` of local files with `@sys.fs`, and grant the feature bits
 - [ ] **check each inline `<style>`'s size**: one byte over 32 KiB and the WHOLE block is silently dropped,
       first rule included — split it, or link it (see
-      [A stylesheet is capped at 32 KiB](#a-stylesheet-is-capped-at-32-kib-and-the-rest-is-dropped-in-silence)) —
+      [A stylesheet is capped at 32 KiB](#a-stylesheet-is-capped-at-32-kib-and-the-whole-block-is-dropped-in-silence)) —
       strip CSS comments when emitting, and assert the byte count
 - [ ] replace `e.key` with a `code` fallback, and give the document's `<body>` the focus, or no keyboard
       shortcut in it will ever fire — and on the host side compare `key_code` against `sciter.Sc_Kb_Codes`
