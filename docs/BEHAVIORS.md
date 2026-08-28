@@ -202,6 +202,18 @@ The `<text>` **children** are exact: one per line, in order, `text(child)` givin
 fine either way — `\n` and `\r\n` both produce one child per line. So read the children, write whatever
 you have, and treat `content` as good enough only for output nobody reads back.
 
+`selectRange(row, col, row, col)` is how the host moves the CARET - and it moves only the caret.
+**It does not scroll.** Measured on 6.0.4.9: jumping to a row ~1700 lines down set the selection (a
+`selectionStart` read agreed, and typing went there) and left the view exactly where it was, which reads as
+the jump having done nothing at all. Scroll it yourself, and the `<text>` children are the measurement to
+use: take the target line's box with origin `.Container` - the one origin that does not move when the
+container scrolls - and `set_scroll_pos` the plaintext to it. `scroll_to_view` is the wrong tool here
+(see `layout.odin`: it does nothing until the window has been shown and rendered once, so it cannot be
+driven from a windowless probe).
+
+`selectionStart` is an ARRAY - `[row, column]` - and it is reachable through the ASSET only: in script
+`element.selectionStart` is `undefined`.
+
 `isModified` is trustworthy, and it answers a *typed* key: `send_key(editor, .CHAR, 'X')` on a focused
 plaintext sets it — though in a windowless view it sets the flag **without inserting the character**, and
 `appendLine` through a script does nothing at all there.
@@ -221,6 +233,12 @@ Eight of the behaviors answer a `do_click`: `button`, `clickable`, `hyperlink`, 
 `details`, and the two editors that take focus from it (`plaintext`, `htmlarea`).
 Everything else answers `handled = false`. In particular **`do_click` does not open a `<select>`** —
 `select`'s `showPopup/1` does.
+
+**`do_click` runs a DISABLED button's behavior.** Measured on 6.0.4.9: a `<button disabled>` still
+activates, and the click reaches an attached handler like any other (traced). So a `disabled` attribute —
+or the `.DISABLED` state bit — is the LOOK and not the enforcement: whatever refuses the action has to be
+the application's own model, checked in the handler. A host that disables a button and assumes the path is
+closed has closed nothing, and a UI test driven with `do_click` walks straight through it.
 
 ## Where this leaves the host
 

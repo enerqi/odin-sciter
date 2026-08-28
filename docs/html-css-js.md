@@ -337,6 +337,27 @@ value)` works, including on the internals above. Clearing is its own trap: `setP
 back into force — a box anchored `top` inline over a sheet's `bottom: 0.6rem` ends up with both and
 stretches between them. The value that says "no anchor" is `auto`.
 
+### `zoom` is a LAYOUT property, and it is the whole-window scale control
+
+Measured on 6.0.4.9: `zoom` on the root element (or on `body`) scales the boxes, not just the paint. A
+button measuring 57x31 comes back 86x46 at `zoom: 1.5` — exactly x1.5 — and 57x31 again the moment the
+property is removed. Every px in the sheet moves with it, fixed widths included, so one property gives an
+application a global text-and-widget scale with no `em` rewrite and no second stylesheet.
+
+Two details worth knowing before building on it:
+
+* **`getComputedStyle(el).fontSize` still reports the UNZOOMED size**, so the factor itself is the only
+  record of the current scale. Keeping it in the root's inline style (`documentElement.style.zoom`) makes it
+  readable from both script and the host, and setting the factor back to 1 is best done by REMOVING the
+  property rather than writing `1`, so "is it back to normal" has an exact answer.
+* **A wheel's delta reaches no host handler.** `Mouse_Params` has no delta field, so CTRL+wheel zoom has to
+  be driven from script (`wheel`, `evt.ctrlKey`, `evt.deltaY`) even in an application whose state otherwise
+  lives on the host side. Keys are fine host-side: `key_event` carries `modifiers` and the engine's own
+  `Sc_Kb_Codes` (`.MINUS`, `.EQUAL`, `.NUM_0`, `.KP_ADD`, `.KP_SUBTRACT`).
+
+A framed document is not scaled by its host's zoom — it is a document of its own, and its own root needs
+the property if it should follow.
+
 ### Animation: what moves, and the two ways a transform is silently ignored
 
 `transition`, `animation` and `transform` are all on the engine's supported-property list, and they do
@@ -683,6 +704,29 @@ colour of ordinary text and a whole colorizer looks like it never ran.
 Worth knowing before testing one: a mark leaves **no attribute** and reads back only through a `Range`, so
 a host cannot see whether colouring happened. Have the page's own colorizer return the number of marks it
 applied, and assert that.
+
+**What a `Range` gives back, measured on 6.0.4.9 in a WINDOWLESS view** — enough to build hover-a-squiggle
+without a window to try it in:
+
+| call | result |
+| --- | --- |
+| `range.marks()` | the mark names covering it, as an array — the only way to ask "is there a mark here" |
+| `range.startContainer` / `startOffset` | the text NODE and the offset; `range.start` is `[node, offset]` |
+| `text.parentElement` | the `<text>` line element, so a range identifies its LINE |
+| `element.rangeFromPoint(x, y)` | present and it answers windowless — the pointer to a position |
+| `element.popup(el, {x, y, popupAt})` | present; `popupdismissing` is the way back |
+
+Two things that follow. Identity comparison (`line.firstChild === range.startContainer`) is the reliable way
+from a range back to a line index — no geometry, no API guessing. And a hover CANNOT be tested in a hidden
+view: every line measures `[0,0,0,0]`, so `rangeFromPoint` has no point to hit. Test the LOOKUP (position →
+message) from the host and leave the pointer to the real window.
+
+**The SDK's `samples.sciter/colorizer` is no use for a language of your own.** It wraps the engine's
+`Tokenizer`, which lexes javascript, css and html and nothing else — there is no way to give it a grammar.
+For anything else, mark the tokens yourself: read the `<plaintext>`'s `<text>` children (one per line, and
+the only exact reading of the buffer — see [`BEHAVIORS.md`](./BEHAVIORS.md#plaintext-the-lines-are-the-buffer-content-is-not)),
+scan each line, and `applyMark` per token. For a line-oriented language that per-line scan *is* the grammar
+rather than a shortcut, and it is fast enough to re-run on the edited line alone.
 
 ## A `@media` query with a WIDTH FEATURE crashes the engine
 

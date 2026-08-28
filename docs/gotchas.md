@@ -405,6 +405,186 @@ non-string value — wrap it, `String(getComputedStyle(el).backgroundColor)`.
 
 ---
 
+## 17. A `disabled` button still does its job, and the test that "proves" otherwise proved nothing
+
+**Symptom:** a UI path that is supposed to be closed opens anyway — and the test asserting that it is
+closed passes.
+
+**Cause:** three separate facts, each measured on 6.0.4.9, that stack into one wrong conclusion.
+
+* **`do_click` runs a DISABLED button's behavior.** The activation happens and the click is delivered to
+  an attached handler like any other. `disabled` is what the button LOOKS like, not what it refuses;
+  see [`BEHAVIORS.md`](./BEHAVIORS.md#what-do_click-is-worth).
+* **A presence-only `disabled` in the markup reads back as an EMPTY attribute value**, so
+  `attribute(el, "disabled") != ""` is FALSE for a button that really is disabled — and it is equally
+  false for one that has no such attribute at all. `element_state` and its `.DISABLED` bit is what the
+  engine matches `:disabled` on, and it answers for the attribute and a host-set bit alike; see
+  [`dom.md`](./dom.md#state).
+* **A test that clicks anything needs the handler ATTACHED.** A test that builds a view, loads a
+  document and never calls `attach_handler` / `attach_window_handler` delivers its clicks NOWHERE, so
+  every assertion of the form "nothing happened" passes VACUOUSLY. That is what turned the first two
+  facts into a confident, wrong "the engine honours `disabled`".
+
+**Why it is confusing:** all three failures look like success. The button greys out, the click is
+refused *on screen* by nothing at all, and the test is green.
+
+**What to do:** enforce in the MODEL — a flag the handler checks — and let the attribute or the state bit
+be the projection of it. If a click test confirms something surprising, check the attach before believing
+it.
+
+---
+
+## 18. Odin's `fmt` eats CSS and script braces
+
+Not the engine's fault, but it lands squarely on anyone generating a stylesheet or a script from Odin.
+`fmt.aprintf` (and every other `fmt` procedure) reads `{…}` as a format directive, so a CSS rule or a JS
+block passed through one comes out mangled or empty, with no error. Build markup with
+`strings.Builder` / concatenation, and keep `fmt` for the values that go *into* it.
+
+---
+
+## 19. A scroll into a freshly loaded `<frame>` moves nothing, and every call reports success
+
+**Symptom:** a host scrolls a framed page to an element right after loading it. Nothing moves. No error, no
+warning, and `set_scroll_pos` returns `nil`. Try it again a moment later from a button and it works - so it
+reads as "only the first time", or as the arithmetic being wrong.
+
+**Cause:** `loadHtml` gives the frame its DOM synchronously - `select_all` finds the elements, which is what
+makes this convincing - but **not its layout**. Until the sub-document is laid out it is not taller than its
+view, and a scroll is clamped to `content - view`, i.e. to zero. `update_window` on the HOST window does not
+flush it either. Every step succeeds and the position stays 0.
+
+**Measured, on a 28,000px-tall document in a 800px view (windowless, as the view's own document):**
+
+```
+root: view 685x801    content 192x28433     <- the scroller
+body: view 669x28418  content 176x28417     <- NOT a scroller: content - view is -1
+```
+
+So the document ROOT is what scrolls, and `body` - the element most hosts reach for - can never scroll,
+because it is as tall as its content. Both `set_scroll_pos` on the root and `scroll_to_view` on a child move
+it there, once layout exists.
+
+**What to do:** treat the scroll as a REQUEST rather than a call.
+
+1. compute the offset from boxes rather than line heights: `.Root` positions are what the viewport shows, so
+   `target.y - scroller.y + info.pos.y` is the content-space offset (and `.Container` is the origin that
+   ignores scrolling entirely);
+2. **verify by re-reading `scroll_info`.** A scroll that did not move is indistinguishable from one that did,
+   at the call site, and that is the whole of this gotcha;
+3. if it did not move, try again shortly - a `set_timer` on the frame element is enough (a few 60ms
+   attempts). `.TIMER` is delivered to handlers on the ELEMENT, so a window handler hears nothing;
+4. and distinguish **nothing to scroll** from **not scrolled**: a page shorter than its view has no scroll
+   range at all, and the target is already visible. Reporting that as a failure is how a retry loop starts
+   crying wolf.
+
+**A related one, same family:** matching an element in a rendered page by its TEXT fails as soon as the
+markup is real - a heading holding an inline `<span>` or `<a>` does not read back as the string that
+generated it. If the page carries ids derived from the source, compare those instead; `#1C--1D` is not a
+valid CSS selector (an id may not start with a digit), so enumerate and compare the attribute.
+
+---
+
+## 20. Rebuilding a `<frame>`'s document from that frame's own handler hangs the window
+
+**Symptom:** the application stops answering — the title bar says "not responding" — after an edit that a
+timer was watching for. No crash, no log, nothing to attach to afterwards.
+
+`.TIMER` never reaches a window handler, so a timer that paces work on a framed document has to be set on the
+FRAME element and answered by a handler attached to it. That is fine until the work itself is
+`loadHtml`/`loadFile` into that same frame: the engine is mid-dispatch into the element whose whole document
+you are then replacing, and it does not come back.
+
+The fix is not to render in the handler at all. Post it — `post_callback(window, code)` — and do the work in
+`on_posted`, one turn of the pump later with nothing on the stack:
+
+```odin
+if te, ok := sciter_app.timer_event(event); ok && te.id == RENDER_TIMER {
+	sciter_app.post_callback(app.window, RENDER)   // NOT the render itself
+	return false                                   // one-shot; the next edit re-arms it
+}
+```
+
+**A windowless view cannot test this.** A post goes to a WINDOW, and synthesising the timer event in a
+windowless view segfaults on the post — which then hangs the test runner, since its crash handler touches the
+engine from another thread. A program with a real window (the way `page_check` is a program rather than a
+test) is the only harness that can drive it.
+
+## 21. The caret is `text-selection-caret-color`, and on an empty line it is a block that stays behind
+
+Two separate things, both invisible until the caret has a colour of its own.
+
+**The property is not `caret-color`.** That is the browsers' spelling and this engine does not have it, so it
+parses, matches, and leaves the engine's own black default in place — invisible on any dark field, which reads
+as an editor that will not take the caret rather than as a missing colour. The engine's name is
+`text-selection-caret-color` (SDK `docs/md/css/properties.md`, in the selection group beside
+`text-selection-color` and `text-selection-background-color`). A property this engine does not know reads back
+EMPTY through `style(el, name)`, which is how to tell the two spellings apart from a test.
+
+The neighbouring two are worth leaving alone unless a design needs them: painting the selection background
+makes a stale EMPTY selection visible as a bar sitting away from the caret.
+
+**And a caret is only painted in a FOCUSED widget** — a view that shows a `<plaintext>` without focusing it
+has no caret at all.
+
+**On a line with no text the caret is drawn a whole CELL wide**, a block rather than a bar, and the block is
+left on screen when the caret moves off that line. Measured: the widget's `selectionStart`/`selectionEnd` are
+identical either side of it, moving the caret away does not clear it (only the caret's own region repaints),
+and typing on that line does (the widget repaints that line). So it is stale paint, and the cure is to
+invalidate:
+
+```js
+// ON THE WAY UP: the widget moves the caret while it HANDLES the key, so a keydown handler
+// invalidates the old position and the ghost is laid down again immediately afterwards.
+document.on("keyup", "#editor", function (event) {
+  if (!CARET_KEYS[event.code]) return false;   // `code`, not `key` — see the keyboard note
+  try { this.requestPaint(); } catch (x) {}
+  return false;
+});
+```
+
+## 22. `input`/`select` have a fixed `height: 1.4em`, and their text walks out of it under `zoom`
+
+**Symptom:** at a high global zoom the text in every field sits low and is clipped by the bottom border, as
+though the caret had grown taller than the box.
+
+The engine's own sheet gives `input[type=text]` and `select` a fixed `height: 1.4em`. The box scales with
+`zoom` correctly — it is the CAPTION inside that does not stay centred in it. Measured in painted pixels
+(`paint_windowless` + `windowless_pixel`, scanning rows for ink) on a field whose text is centred at 100%:
+
+| zoom | box | gap above the ink | gap below |
+|---|---|---|---|
+| 1.00 | 33px | 13 | 13 |
+| 1.10 | 36px | 15 | 13 |
+| 1.21 | 40px | 19 | 12 |
+| 1.33 | 43px | 22 | 11 |
+
+`height: auto` — the control sizing itself to its own content — holds it centred at every step (13/13, 14/15,
+16/15, 17/17). Restore the height the fixed rule was giving with padding, or every row built around a 33px
+field moves. The caption is INTERNAL to the control (`child_count` is 0, and a composite control's internals
+take no author CSS), so nothing in the geometry API can see this: pixels are the only witness.
+
+## 23. A width media query's FIRST rule still applies
+
+Gotcha 15 has the half that kills the process. This is the half that changes the layout quietly.
+
+`@media (max-width: 640px)` is a parse error here, and the parse error discards the rest of the stylesheet —
+but the rules INSIDE the block are not all discarded with it. Measured on a page whose phone block opens with
+`.opc, .shape { display: none; }`: those two elements computed to `display: none` in a 1200px desktop window,
+while a browser showing the same page showed them.
+
+So a page ported to this engine cannot rely on its phone block being skipped. Restate what the block hides,
+above the query, at a specificity the phone rule cannot reach — order is not available, because the override
+block has to come before the query that kills everything after it:
+
+```css
+@media sciter { .seat .opc, .seat .shape { display: block; } }   /* 0-2-0 beats the phone rule's 0-1-0 */
+@media (max-width: 640px) { .opc, .shape { display: none; } ... }
+```
+
+A hidden element still measures **1×1 rather than 0×0**, so a check asking "does it have a box" passes
+vacuously. Ask for a line of text's worth of height.
+
 ## Where the knowledge actually lives
 
 - **`external/sciter/include/*.h`** — the C ABI. Comments are the only C-API documentation there is, and

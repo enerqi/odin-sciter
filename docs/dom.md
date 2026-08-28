@@ -379,6 +379,15 @@ sciter_app.set_element_state(el, set = {.DISABLED}, clear = {.ACTIVE})
 Setting a bit triggers the matching CSS rule, which is how you drive `:disabled` styling from
 application state rather than from a class.
 
+**A presence-only attribute in the markup reads back as an EMPTY VALUE, not as its own name.**
+`<button disabled>` gives `attribute(el, "disabled")` the string `""`, so the natural-looking
+`attribute(el, "disabled") != ""` is FALSE for a button that really is disabled — and `""` is what a
+*missing* attribute gives too, so the two cases are indistinguishable through that door. `element_state`
+and its `.DISABLED` bit is what the engine matches `:disabled` on, and it answers for both spellings (the
+attribute and a host-set bit), so ask the state rather than the attribute; `enabled(el)` answers the
+inherited question. The bit is styling and not enforcement — see
+[`BEHAVIORS.md`](./BEHAVIORS.md#what-do_click-is-worth).
+
 The overload group `state(x)` / `set_state(x, …)` resolves to the element or the window version by
 argument type — a window is shown or minimized, an element is hovered or checked, and the two are
 named apart so either can be called directly.
