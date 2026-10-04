@@ -341,11 +341,26 @@ thinks to take.
 assert(len(stylesheet) < 32 * 1024, "over Sciter's 32 KiB cap on one inline <style>; the WHOLE block goes")
 ```
 
+**A SECOND SYMPTOM, AND IT DOES NOT LOOK LIKE CSS AT ALL** (2026-08-31, a desktop app whose own stylesheet
+crossed the cap at 35,781 bytes): `behavior: button` is a CSS PROPERTY, so when the sheet goes, every
+element that was clickable *because* of it stops attaching the behavior. List rows and palette entries then
+answer `do_click` with `handled = false`, no `BUTTON_CLICK` reaches the host, and three unrelated tests fail
+as though the event routing had broken. Nothing in that picture points at a stylesheet. If clicks stop
+arriving from elements that get `behavior:` from CSS, **measure the sheet before debugging the events**.
+
 **The fix that keeps the documentation:** strip CSS comments when the page is EMITTED rather than deleting
 them from the template — a browser has no use for them either. One card-page template went from 33.3 KB to
 18.4 KB that way. But comment-stripping only buys headroom and leaves the cliff one sentence away: emitting
-the CSS as **two `<style>` blocks**, cut at a top-level rule boundary, removes it and keeps the page
+the CSS as **several `<style>` blocks**, cut at top-level rule boundaries, removes it and keeps the page
 single-file, which a `<link>` would not for a page that gets copied around or handed to a `<frame>`.
+
+**Cut it automatically, not with a marker.** A hand-placed split marker plus a test saying "move the marker"
+was tried and rejected: it fails just as late and still needs whoever trips it to understand the trap. A
+~40-line cutter that walks the sheet and closes a block at a top-level rule boundary whenever the next rule
+would exceed a budget (24 KiB leaves room) ends the question. Two rules make it safe, and both are load-
+bearing: **skip block comments whole** — documented stylesheets quote `@set x { … }` and `@media` blocks in
+prose, and a brace count alone will cut mid-sentence — and **track depth**, so a nested `@media` or `@set` is
+never halved. A single rule bigger than the budget goes out whole; splitting it would be worse.
 
 [`html-css-js.md`](./html-css-js.md#a-stylesheet-is-capped-at-32-kib-and-the-whole-block-is-dropped-in-silence) has
 the table and the emit-time fix.
@@ -584,6 +599,237 @@ block has to come before the query that kills everything after it:
 
 A hidden element still measures **1×1 rather than 0×0**, so a check asking "does it have a box" passes
 vacuously. Ask for a line of text's worth of height.
+
+## 24. An inline box takes no margin, no padding and no background
+
+**Symptom:** a line of small tags rendered from `<span class="tag">html</span><span class="tag">pbn</span>…`
+comes out as one run-on word — `htmlpbnlinhvlinenumtext` — with no gaps, no pills and no background, though
+the rule setting all three is right there and matches.
+
+**Cause:** the spans are inline-level, and this engine's flow model gives an inline box no box of its own:
+horizontal margins, padding and background are not painted for it. The rule is not ignored — the element has
+nowhere to put it.
+
+**Fix:** `display: inline-block` on anything that needs a box while sitting inside a line of text — tags,
+pills, chips, badges, a coloured key inside a sentence.
+
+```css
+.tag {
+	display: inline-block; /* without this, every other line here does nothing */
+	margin-right: 0.3em;
+	padding: 0 0.35em;
+	border-radius: 3px;
+	background: var(--line-soft);
+}
+```
+
+**Related:** the same instinct catches a "why is my icon not spaced" question — an inline `<svg>` inside a
+button takes vertical nudging (`margin-bottom`) but sits where the line box puts it.
+
+---
+
+## 25. A "selected" state has to be the accent, not a lighter grey
+
+**Symptom:** a three-position segmented control, drawn with the selected segment on `--line` (#313244)
+against the group's `--surface` (#181825) and its icon in `--accent`, reads in the real window as three
+identical buttons. Reported as "cannot tell which is selected". The measurement said the rule applied; the
+window said it did not communicate.
+
+**Cause:** a few percent of luminance between two dark greys is not a state. It survives a screenshot in a
+diff and dies on a real panel, at a real brightness, at arm's length — and an accent applied to a 15px ICON
+is a few hundred coloured pixels, which is not where the eye looks first.
+
+**Fix:** where the state is the ONLY information the control carries, make the ground carry it — the accent
+as background with the label or icon knocked out of it. Keep the subtle version for things that also say
+what they are in words.
+
+**Why it belongs in an engine gotcha list:** because this engine paints no state feedback for a `<button>`
+at all (see the interaction-states table in `html-css-js.md`), every `:hover`, `:active` and selected look is
+author-written, so there is no platform default quietly making it legible for you.
+
+---
+
+## 26. `flow: horizontal` does not wrap, and a frameset pane keeps its old width until you click
+
+Two separate ways a layout that is correct at one size is broken at another, both found by hosting a page in
+a resizable PANE rather than a window.
+
+**`display: flex; flex-wrap: wrap` has no one-property translation.** `flow: horizontal` is the row, and it
+never wraps: a control bar with `width: max-content` is then as wide as its contents and everything past the
+container edge is simply clipped — at a wide view there is room and nothing shows. The counterpart of
+`flex-wrap: wrap` is **`flow: horizontal-flow`**, and it needs something to wrap against: with
+`width: max-content` and no cap, the available width IS the content width, so add `max-width: 100%`. (The
+border box then lands about a pixel past the cap; measured, and not worth chasing.)
+
+**A frameset does not re-lay out when one of its panes is hidden.** `display: none` on a pane takes effect,
+but the frame-set behavior recomputes the widths of the panes it is left with on its own schedule — the next
+click is what tends to provide it, so the window sits with a blank strip until it is poked. Ask for it:
+
+```odin
+sciter_app.update_element(frameset, render = true) // style + layout + paint for that subtree
+```
+
+**Test-shape lesson from both:** a windowless check that only ever runs at one view size cannot see either.
+Resize the view in the check (`resize_windowless`) and assert at the size the app actually hosts at.
+
+---
+
+## 27. A stroked `<svg>` shape loses its right and bottom edges under `zoom`
+
+**Symptom:** small icons drawn as inline svg look right at 100% and degrade as the window is zoomed — a
+rounded rectangle outline ends up as a rounded CORNER, "more like an r than a rectangle".
+
+**Measured:** the icon markup painted inside an element with `zoom: 2.0`, pixels read back from a
+windowless view — correct at 1:1, **top and left edges only** when zoomed. Unchanged by removing the
+viewBox, by matching the viewBox 1:1 to the element size, by sizing the element in CSS rather than with
+`width`/`height` attributes, and by `overflow: visible`. (Plain viewBox scaling is fine on its own: a mark
+in the far corner of a `0 0 24 24` box lands correctly in a 40px element.)
+
+**Fix:** for a shape a box can be — a rectangle, a bar, a square, a band — draw it with CSS instead. A
+bordered element is drawn by the box painter and laid out by the same box model as the rest of the page, so
+it scales with the document:
+
+```css
+.icon      { display: inline-block; width: 1.05em; height: 0.85em;
+             border: 1px solid currentColor; border-radius: 2px; flow: horizontal; }
+.icon > .fill { width: 1*; height: *; background: currentColor; }
+```
+
+`currentColor` works in both worlds, so the icon still inherits the control's `color` and every `:hover` /
+`[disabled]` / selected rule recolours it for free. For a genuine diagonal, a text glyph (`↗`) is the
+cheaper escape than keeping a vector.
+
+**Caveat that decides how to test this:** the defect does NOT reproduce in a windowless view driven by the
+same document — a test pointed at the broken icon passes. The difference to suspect is the rasterizer
+(windowless is software; a real window is on a GPU backend by default). Force the software path to compare
+if a drawing looks wrong in the window and right in a test.
+
+---
+
+## 28. A horizontal flow does not centre children of different heights
+
+**Symptom:** a toolbar of mixed controls — a button, a checkbox, a small text label, an input — where every
+item sits at its own level, and it gets worse as the window is zoomed.
+
+**Cause:** `flow: horizontal` stacks children on the row without centring them, and a bare inline (a
+`<label>`, a `<span>`) runs at its own text line rather than as a box that can be aligned at all.
+
+**What works, measured on 6.0.4.9:**
+
+```css
+.bar        { flow: horizontal; }              /* `vertical-align: middle` here did NOTHING */
+.bar .label { display: inline-block; vertical-align: middle; }   /* a bare inline needs a box */
+.bar .group { flow: horizontal; vertical-align: middle; }        /* an inner flow DOES need it */
+button.with-icon { flow: horizontal; vertical-align: middle; }   /* icon + word, laid out by the button */
+```
+
+The asymmetry is the point: the property did nothing on the outer container and was load-bearing on an
+inner flow and on a button laying out its own content. Bisect rather than assume — and delete the rules that
+turn out to do nothing, or the next person has to disprove them too.
+
+**Test it across the ZOOM, not at rest.** At 100% a badly aligned row can measure fine; the drift appears
+once paddings, borders and text round differently — measured here from 133% up, 3-4px.
+
+---
+
+## 29. Flex units are not a proportion: `N*` divides the space left AFTER content
+
+**Symptom:** two panes given `width: 1487*` and `width: 835*` render as **28px and 2294px**. A layout that
+works with light content collapses as soon as one pane holds something wide (here a framed page with a row
+of fixed-width cards).
+
+**Cause:** the SDK says it in one line (`docs/md/css/flows-and-flexes.md`): "Flex units distribute **free
+space** left in a container **after** applying length units to content." A flex share is added on top of the
+content's own width; it is not CSS-flexbox `flex-grow` with a zero basis. Wide content takes the room first
+and the shares divide what is left. `min-width: 0` and `overflow: hidden` on the panes did not change it.
+
+**What works:** give the pane whose size the user chose a LENGTH (`1487px`) and let one pane take the rest
+(`1*`) — the sidebar-and-content shape. Clamp the length when rendering, because px is what `zoom` scales and
+what a smaller window cannot hold.
+
+**Test caveat:** a windowless check with a plain wide block in the frame honoured the shares exactly; only the
+real page (which crashed the windowless test engine on load, not investigated) showed it. A real-window debug
+log of the widths written and the widths that SETTLED found it — see #30's drag recipe.
+
+---
+
+## 30. For panes a user drags, a plain flow beats the frame-set behavior
+
+`<frameset>` gives draggable `<splitter>`s and a `state` of pane widths for free. In an app with hidden panes,
+a global `zoom` and a remembered layout, every one of these was measured, each found by fixing the last:
+
+- `display: none` on a **`<splitter>`** breaks the frameset: every later `state` write throws
+  (`TypeError: setting property 'state'`), so the dividers die. (A hidden **pane** is fine and drops out of
+  `state`.)
+- the behavior's own drag, under a root `zoom`, rewrites panes the drag is not about with on-screen pixels as
+  CSS pixels — `250px` came back `303px` at 110% (250 × 1.1²).
+- its numbers are content widths, so a pane's padding skews any measured-then-written width.
+- in script, the widths are **`element.frameset.state`** (the behavior's object, as the host's `frameset`
+  asset). `element.state` is the generic ElementState and assigning to it silently does nothing.
+
+**What replaced it** — a `div` with `flow: horizontal`, ordinary `.divider` elements, inline `width`s,
+`box-sizing: border-box` (so a number is the whole pane), and a script drag:
+
+```js
+document.on("mousedown", ".split > .divider", (evt, divider) => { /* note widths, screenX, wbZoom() */
+  divider.state.capture(true);
+  divider.parentElement.classList.add("dragging");  // CSS: .split.dragging frame { pointer-events: none; }
+  return true; });
+document.on("mousemove", evt => { if (!drag) return;
+  if (typeof evt.buttons === "number" && !(evt.buttons & 1)) return endDrag();   // a release we never heard
+  /* write ONLY the two panes beside the divider, in CSS px = on-screen / zoom; the last pane `1*` */ });
+document.on("mouseup", evt => { if (drag) { endDrag(); return true; } });
+// endDrag: release capture, remove .dragging, then el.postEvent(new Event("dragged", {bubbles: true}))
+```
+
+Lessons in that shape: listen for moves and the release **anywhere** (a release off the 5px divider left a
+drag live, and the next buttonless pass over it jumped the panes); shield frames (`pointer-events: none`) or
+the framed document takes the moves; on release **read the inline widths you wrote, never measure** — layout
+lags the mouse (~124ms a step with a heavy framed page) and a measurement reads where the panes WERE. The
+script's `postEvent` reaches the host as a `.CUSTOM` behavior event; `event_name(be)` gives the name. Hide a
+divider beside a hidden pane with plain `display: none` (fine on an ordinary element), and once the panes are a
+plain flow the container needs `overflow: hidden` and the tall pane its own scroll, or a pane's content makes
+the whole view taller than the window — the frameset had clipped for free.
+
+---
+
+## 31. The root's `zoom` reaches framed documents, and a frame's own root `zoom` replaces it
+
+**Measured:** with `zoom: 1.5` on the outer root, a heading in a `<frame>` grew 39px → 58px, and the framed
+document's root reads back the outer factor. Setting `zoom` on the FRAMED root does not multiply — `1` there
+gives the unzoomed 39px under a 150% window, `0.8` gives 31px. So a frame can have its own ABSOLUTE scale,
+but it must be re-applied after every outer zoom change and after every load (both reset it). A CTRL+wheel
+over a frame goes to the framed document, so give that document its own wheel handler from the outer script.
+
+---
+
+## 32. A theme switch by CSS variables needs a restyle, and a hidden subtree misses it
+
+Tokens on `:root` and an override block under `html[theme="light"]` work, and setting the attribute
+recolours the ROOT at once — but descendants keep the values they resolved before (a button stayed
+`#CDD6F4` after its `--ink` had become `#4C4F69`) until `update_element(root, render = true)`. And that
+restyle does **not** reach a `display: none` subtree: a view hidden at the moment of the switch kept the old
+theme when shown again. Mark hidden views stale and restyle on their next showing.
+
+---
+
+## 33. `loadFile` into a frame returns before the document exists; `loadHtml` does not
+
+Anything applied to the framed document right after the call — a zoom, a scroll, a focus — lands on the
+OLD document after `loadFile`, while the same code works after `loadHtml` (synchronous). Re-apply such
+per-document state on `.DOCUMENT_COMPLETE`, which reaches only a handler attached to the `<frame>` element
+itself (subscribe `.BEHAVIOR_EVENT`), not a window handler. A test that only loads from memory passes on this.
+
+---
+
+## 34. A `display: none` element can still report its old box
+
+`element.state.box("width")` on a pane hidden with `display: none` can return the width it had when shown.
+Counting it as a live pane wrote three widths to a frameset showing two. Decide "hidden" by the inline
+`display` your own code wrote (or by the computed style host-side), and fall back to a zero box only for an
+element that has never been shown.
+
+---
 
 ## Where the knowledge actually lives
 

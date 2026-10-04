@@ -110,6 +110,20 @@ comparison to draw is with Ultralight's zero.
 | Electron / NW.js | Chromium + Node | MIT | N/A — you write the app in JS, Odin would be a subprocess | Full JS ecosystem, same footprint problem, ships a runtime rather than a library |
 | Qt WebEngine | Chromium inside Qt | LGPL-3.0 / commercial | C++ only — needs a shim, and pulls in Qt | Chromium's weight plus a whole application framework. Absent from most comparisons but the most-deployed of the lot |
 
+
+#### CEF vs Electron
+
+ V8 is part of Chromium, so CEF renderers run JavaScript exactly like a browser tab does. What Electron adds is Node.js, in two places CEF has neither:
+
+- Main process is Node. In Electron the app's entry point is a JS file run by Node; steam.exe is a native binary instead.
+- Node APIs reachable from page JS. Electron can expose require, fs, child_process, native modules to renderer code (via nodeIntegration or a preload bridge). CEF renderer JS gets the browser sandbox only — DOM, fetch, workers, no filesystem, no process spawning.
+
+So the split is capability, not language. Steam's UI JS can't touch disk on its own; when it needs to install a game or read the library it calls into native C++ through a binding the host installed. Valve exposes that as a SteamClient object injected into the page context — the JS calls a method, the native side does the privileged work and returns a result. CEF provides the plumbing (V8 extensions, a message router across the renderer/browser process boundary); the app decides what to put on the other end.
+
+Security consequence worth noting given the Razer thread: that binding is the trust boundary. An Electron app with nodeIntegration on turns any XSS into arbitrary code execution. A CEF app's exposure is exactly the surface the host chose to expose — usually much smaller, but only as small as the developer made it.
+
+Practical tell for identifying these: an Electron app ships node.dll or has Node symbols in the main binary and usually an app.asar in resources/. A CEF app ships libcef.dll and no asar. WebView2 apps ship neither — they call the Windows-supplied runtime, which is why WhatsApp's install has no Chromium in it.
+
 ### OS-webview wrappers — no engine of their own
 
 All share one tradeoff: three different rendering engines across platforms (WebView2 / WebKitGTK /
