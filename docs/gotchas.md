@@ -831,6 +831,176 @@ element that has never been shown.
 
 ---
 
+## 35. One `vw`/`vh` anywhere in a document makes every resize step restyle all of it — in a real window only
+
+**Symptom:** dragging a window edge is slow (~150-250 ms a frame on a 4K screen) as soon as some document is
+LOADED — and it stays slow with that document's body `display: none`, with its `<frame>` `display: none`, and
+with the pane that holds it closed. Moving the window is smooth. A windowless view of the same page shows
+none of it: a hidden page there costs ~6 ms a step whatever its stylesheet says.
+
+**Cause:** a viewport unit in the cascade. Bisected in the real window (6.x, Windows, GPU and raster layers
+alike) by rewriting the page before loading it, one suspect at a time — each row is a 16-board card page
+with its body hidden, frame time while resizing:
+
+| page | frame |
+| --- | --- |
+| as shipped | ~150 ms |
+| the web-font `<link>` removed | ~150 ms |
+| the `<script>` removed | ~150 ms |
+| every `@media` block removed | ~150 ms |
+| the whole `<style>` removed | ~45 ms |
+| every `Nvw`/`Nvh` rewritten as px | ~45 ms |
+| a one-line document | ~50 ms |
+
+Three findings that make it hard to fix by halves, each measured after the previous "fix" did not work:
+
+- **Overriding the unit does not help.** A later rule re-saying the property in px still left a visible page
+  slow while the base rule named `2.4vh` — the unit counts if it is in any rule that matches, winning or not.
+- **A `@media` block the engine reports as a parse error still counts.** `@media (max-width: 640px) { … 1vh … }`
+  logs "error parsing media section", applies nothing, and kept the window at ~250 ms a frame until its
+  three viewport lengths were hidden too.
+- **Removing every unit changes what tracks the view.** With no `vh` left, an element whose height came from
+  one stops following the window — a size watch reading that element missed the window growing (see #42).
+
+**Fix:** keep viewport units out of the engine's sight entirely, and give the page the lengths another way:
+
+1. Browser-only rules that need a unit move to a `:where(html) …` copy placed straight after the original
+   (#37 — this engine drops such a rule, a browser applies it in the same place at the same specificity).
+2. The desktop rules use Sciter variables the page script sets from the view size **once a resize has
+   settled** (#36 says which variable syntax actually updates):
+
+```css
+@media sciter {
+  html { var(h240): 21.6px; }          /* a default for the moment before the script runs */
+  .card { font-size: length(h240); }   /* bare length(): calc(2.4 * length(x)) does not follow */
+}
+```
+
+```js
+function setViewUnits() {                       // call on load, and from a resize's trailing timer
+  var h = document.documentElement.clientHeight;
+  document.documentElement.style.variables({ h240: (h * 0.024).toFixed(2) + 'px' });
+}
+```
+
+During a drag the sizes then stay put and the page catches up when the drag stops; the drag itself costs
+what the layout costs. Anything that positions content after `setViewUnits` has to do it again a beat later:
+the new sizes land at the next restyle, not synchronously (a board centred in the same call was 35 px off).
+
+**Why it survives a test suite:** the windowless harness cannot reproduce it at all. The only witness is a
+real window's frame times (#41).
+
+---
+
+## 36. CSS variables set from script: only Sciter's own form updates, and `calc()` in a `font-size` freezes
+
+Measured with `element.style.variables({…})` (the documented setter) on the root, reading boxes back:
+
+| declaration | set from script | follows? |
+| --- | --- | --- |
+| `width: length(sv)` with `var(sv): 7px` declared | `variables({sv: '30px'})` | **yes** (7 → 30) |
+| `width: calc(10 * length(sv))` | same | **yes** (70 → 300) |
+| `font-size: length(sv)` | same | **yes** |
+| `font-size: calc(2.4 * length(sv))` | same | **no** — computed once at load, never again |
+| `width: var(--vh)` with `--vh: 7px` declared | `variables({'--vh': '10px'})` or `setProperty('--vh', …)` | **no** |
+| `width: calc(10 * var(--vh, 7px))` | — | resolves to **0** |
+
+So drive a length from script with Sciter's form — `var(name): value` to declare, `length(name)` to use,
+`style.variables({name: value})` to set — and give each `font-size` its own variable used bare rather than a
+shared one scaled inside `calc()`. A default declared in the stylesheet (`html { var(sv): 7px; }`) is
+overridden by the script's value, as it should be. `getComputedStyle` reads a `calc()` back as the literal
+`calc(...)`, so assert on boxes, not on computed strings.
+
+---
+
+## 37. Hiding a browser-only rule: `:where()` drops it alone; `@media not sciter` breaks the sheet
+
+A page shared with browsers sometimes needs a rule this engine must not see at all (#35). Measured:
+
+- **`:where(html) .x { … }` and `:is(html) .x { … }`** — "unrecognized css selector", that ONE rule is
+  dropped, and every rule after it still applies. Browsers support both; `:where()` adds no specificity, so a
+  `:where(html)` copy placed straight after the original rule wins exactly where the original did. One
+  warning per rule, per load.
+- **`@media not sciter { … }`** — the engine MATCHED it (a rule inside applied) and then dropped every rule
+  after the block. Never use it.
+- **`@media (max-width: …)`** — a parse error with traps of its own (#15, #23), and its contents still
+  count for #35.
+
+---
+
+## 38. A `<style>` added by script does not apply; put it in the text before the load
+
+`document.head.appendChild(style)` (with `textContent` set) leaves the new rules inert — measured with a
+`display: none !important` on a visible element, which stayed visible. To try a stylesheet change against a
+page, splice the `<style>` into the HTML before `</head>` and load that. (`style.setProperty` on an element
+still works; it is a new stylesheet that does not.)
+
+---
+
+## 39. `box-shadow` is most of a paint
+
+A 16-board page at 1700x1100 painted in **197 ms with its drop shadows and 16 ms without** (software Skia);
+one spread "selection ring" the size of a board was ~90 ms on its own. Every frame of a window resize is a full
+paint, so a shadow is a per-frame cost, not decoration. Draw rings with `outline` (with `outline-offset`) and
+borders instead — they cost nothing measurable. This is PAINT; for layout cost the shadows changed nothing,
+which is why an earlier layout-only measurement called them harmless.
+
+---
+
+## 40. Things that move pixels without moving the box, or move it twice
+
+All measured on 6.x, all invisible to a test that only reads `getBoundingClientRect`:
+
+- **`position: relative; top: N` moves the element by 2N.** Use a negative margin when you only want to
+  pull an element up.
+- **A negative `margin-top` on a row can break hit-testing of its children** — pills inside it stopped
+  taking clicks. Adding `position: relative` to the row restored them.
+- **A transform moves the paint, not the box or the hit-test area** (#13 is the other half of transforms):
+  the element is drawn where you asked and clicked where it was.
+
+---
+
+## 41. Measuring a real window: log the gaps between animation frames
+
+A windowless view cannot measure frame rate (`paint_windowless` repaints everything) and cannot reproduce
+some costs at all (#35). The cheapest real-window probe is in the document itself: a `requestAnimationFrame`
+loop that notes when the root's size changed and logs every gap over ~40 ms within 300 ms of a change, plus
+a summary when the changes stop. The size has to be POLLED in that loop — the root document does not get a
+`resize` event either (#42). Make it opt-in (an endless frame loop is not free) and have it name what is on
+screen, so a pasted log says which state it was taken in. Combined with a host hook that rewrites a page
+before loading it (strip a `<style>`, a `<script>`, a unit), it bisects a real-window cost in a few runs.
+
+---
+
+## 42. No `resize` event reaches a document — not a framed one, not the root
+
+`events.md` records it for a `<frame>`; it holds for the window's own document too (a frame-gap logger
+listening for `resize` printed nothing through a whole drag). Poll instead — `document.documentElement`'s
+`clientWidth`/`clientHeight` on a timer or in an animation frame, acting only on a change — and **poll the
+view, not an element inside it**: once a document has no viewport units (#35), an element sized by layout
+can keep its height while the view changes (measured: a carousel stayed 558 px from a 900 px view down to
+560 and back), and a watch on it misses the window growing. `window.innerWidth`/`innerHeight` are
+`undefined` here.
+
+---
+
+## 43. A windowless test pays in paints, and layout settles only in a paint
+
+Heartbeats are cheap (~2 µs: posted work, timers, events); `paint_windowless` is the cost (~11 ms at
+1120x780 in software Skia, more for a big page). Layout does not settle without a paint — drag, zoom and fit
+assertions fail on heartbeats alone — but ONE paint per pump is enough: a workbench suite went from 70-100 s
+to 18 s by pumping 8 heartbeats + 1 paint instead of a paint per heartbeat. Inside a gesture (a drag's
+moves) send heartbeats only and pump once before measuring.
+
+Timers run on the WALL clock, not on the time you pass `windowless_heartbeat`: a page that settles on a
+350 ms timer needs real time to pass (pump for a duration, sleeping between frames), and a debounce never
+fires in a fast test — call what it would have called. Two more input facts from the same suite: `do_click`
+runs a behavior but does not reach a script listener DELEGATED on an ancestor (`e.target.closest(…)`) —
+send a real mouse down/up with `windowless_mouse` for those; and an element in a `display: none` subtree
+has no behaviors attached, so show its view before clicking or typing into it.
+
+---
+
 ## Where the knowledge actually lives
 
 - **`external/sciter/include/*.h`** — the C ABI. Comments are the only C-API documentation there is, and

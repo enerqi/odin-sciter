@@ -461,14 +461,26 @@ Two consequences worth designing for:
 **What is NOT worth chasing**, all measured on the same page: `box-shadow`, `border-radius`, `opacity` on
 inactive sections, `transform: scale()`, background colours and even hiding all the text changed the frame
 cost by nothing outside noise. Neither did `set_debug_mode(true)`, which is worth knowing before blaming
-the inspector hooks for a slow debug build.
+the inspector hooks for a slow debug build. **That is the LAYOUT cost only** — for PAINT, `box-shadow` turned
+out to be most of it (197 ms against 16 ms for a 16-board page, gotchas #39), and every resize frame is a full
+paint.
+
+**Two bigger levers than layout, both found later:**
+
+- **No `vw`/`vh` anywhere the engine can read them** (gotchas #35). One viewport unit in any matching rule —
+  overridden, or inside a `@media` block the engine cannot even parse — made every resize step of a REAL
+  window restyle the whole document, hidden parts included: ~150 ms a frame that no windowless measurement
+  shows. Drive those lengths from script-set Sciter variables (#36) and hide browser-only rules with
+  `:where(html)` (#37).
+- **No `box-shadow`** in anything that is on screen while the window resizes (#39).
 
 **`paint_windowless` is not a frame-rate proxy.** It rasterises the entire surface on every call, with no
 dirty-rect tracking, so a windowless loop reports a fixed ~90-180 ms/frame for a full-window page and says
 nothing about what a real window does. Use a windowless view to measure LAYOUT (`load_html`,
 `resize_windowless` + `heartbeat`), and measure frame rate in a window.
 
-**The one host-side lever is the graphics layer.** `graphics_caps` reports how the engine rates the machine
+**The one host-side lever is the graphics layer** — and check #35 in gotchas first: a slow resize first blamed
+on the GPU layer (~150 ms a step on DX12) was a page's viewport units, on both layers. `graphics_caps` reports how the engine rates the machine
 (and reported `.Software` on the machine these numbers come from), and `SET_GFX_LAYER` chooses the backend —
 there is no typed wrapper, because it is one `set_option` with no window:
 
@@ -667,7 +679,9 @@ Sciter's default length unit is `ppx` — physical pixels, DPI-aware. `px` is ac
 device-independent pixel. `dip`, `em`, `rem`, `%`, `mm`, `in`, `pt`, `sp` all work, and `*` is the flex
 unit above. `docs/md/css/units/` covers the details.
 
-`vw`, `vh`, `vmin` and `vmax` all work, `font-size` included. **`clamp()` works and `min()`/`max()` do
+`vw`, `vh`, `vmin` and `vmax` all work, `font-size` included — **and cost a whole-document restyle on every
+step of a real window's resize**, even overridden and even in a hidden subtree (gotchas #35); for a page of any
+size, use script-set `length(name)` variables instead (#36). **`clamp()` works and `min()`/`max()` do
 not**, and it is the nesting of the two that breaks the fluid-type idiom every recent browser stylesheet
 is full of. Measured on 6.0.4.9: `clamp(50px, 10px, 200px)` resolves to 50px, `clamp(50px, 120px, 200px)`
 to 120px and `clamp(50px, 300px, 200px)` to 200px — the real three-term behaviour, viewport terms

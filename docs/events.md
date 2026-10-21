@@ -169,6 +169,9 @@ window: the frame is relaid out and every box in the framed document changes, wh
 that event goes on laying itself out for the old size until something else happens to re-render it. There
 is no event to subscribe to from inside the frame; what works is watching the box (`clientWidth` /
 `clientHeight` on a timer, acting only on a change), or driving the page from the host, which does know.
+The window's OWN root document does not get it either (a frame-gap logger listening for `resize` printed
+nothing through a whole drag) — poll `document.documentElement`'s size there too, and watch the VIEW rather
+than an element inside it (gotchas #42).
 
 **Three groups never reach a window handler.** `.METHOD_CALL`, `.SCROLL` and `.ATTRIBUTE_CHANGE` are
 delivered only to handlers attached to the element itself, so `attach_handler` is the only attachment
