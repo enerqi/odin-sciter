@@ -24,11 +24,11 @@ below is what the fetch verifies against.
 | | |
 | --- | --- |
 | Upstream | <https://gitlab.com/sciter-engine/sciter-js-sdk> |
-| Tag | `6.0.5.4` |
-| Commit | `d5f5fec4bcacad1470c6f6819a147153da55de6b` (2026-10-20) |
-| Engine version | 6.0.5.4 (as reported by `SciterVersion(0..3)`) |
+| Tag | `6.0.4.9-bis` |
+| Commit | `561185714dcd7f18f0db57b494d083437da8123f` (2026-08-02) |
+| Engine version | 6.0.4.9 (as reported by `SciterVersion(0..3)`) |
 | `SCITER_API_VERSION` | 10 |
-| Mirror release | [`engine-6.0.5.4`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.5.4) - these three binaries, republished here so upstream cannot take them away |
+| Mirror release | [`engine-6.0.4.9-bis`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.4.9-bis) - these three binaries, republished here so upstream cannot take them away |
 
 Which bindings tags speak to which engine is a separate table, in
 [`docs/UPGRADING.md`](../../docs/UPGRADING.md#which-engine-each-release-speaks-to) - several of the
@@ -44,9 +44,9 @@ concerned - it is the only record of which bytes these bindings were verified ag
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `lib/linux/x64/libsciter.so` | 25 056 928 | `b5a9fdc1ac1b4c05668b46d17dad19bceda751d740f5f060e363df01eb151d57` |
-| `lib/windows/x64/sciter.dll` | 19 307 520 | `52ab0ea69341ba0e83fdfb9c96aad97d57d68fa5e9d05e454f3019c62ad945fa` |
-| `lib/macosx/libsciter.dylib` | 50 159 728 | `ca80e26cc04a4a10e450d4ee3dd7ab9e025459621559c7330440c7fbd3288abd` |
+| `lib/linux/x64/libsciter.so` | 25 015 296 | `b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b` |
+| `lib/windows/x64/sciter.dll` | 19 261 952 | `b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083` |
+| `lib/macosx/libsciter.dylib` | 50 029 168 | `a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c` |
 
 The Windows entry is the plain `bin/windows/x64/` build, **not** `bin/windows.d2d/` (a Direct2D variant)
 or `bin/windows.xp/`.
@@ -58,10 +58,10 @@ what was pinned. Everything here was read out of the Mach-O headers, not assumed
 
 | | |
 | --- | --- |
-| Format | universal (`FAT_MAGIC`), 2 slices: x86_64 at +16 384 (25 497 088 bytes), arm64 at +25 526 272 (24 633 456 bytes) |
-| Minimum OS | macOS 12.0, built against the 27.0 SDK - both slices (it was 11.5 up to 6.0.4.9) |
+| Format | universal (`FAT_MAGIC`), 2 slices: x86_64 at +16 384 (25 462 016 bytes), arm64 at +25 493 504 (24 535 664 bytes) |
+| Minimum OS | macOS 11.5, built against the 26.5 SDK - both slices |
 | Install name | `/usr/local/lib/libsciter.dylib` - an absolute path, **not** `@rpath/...` |
-| Code signature | present on both slices, **ad-hoc**: `CodeDirectory` flags `0x2`, empty CMS blob, identifier `libsciter-555549440767ec7f3fd032f0a8ab3ddad5ff1108` |
+| Code signature | present on both slices, **ad-hoc**: `CodeDirectory` flags `0x2`, empty CMS blob, identifier `libsciter-55554944b7c9594f88483d738faed48ff1997311` |
 | Dependencies | system frameworks only - AppKit, Cocoa, Carbon, Foundation, CoreGraphics, QuartzCore, Metal, OpenGL, AVFoundation, CoreText, IOSurface, `libc++`, `libobjc`, `libSystem`. Nothing third-party |
 
 Three of those have consequences:
@@ -118,7 +118,7 @@ budget.
 >
 > `git clone` of the GitLab repository pulls ~4 GB, because all 800+ commits carry platform binaries.
 > Use `git clone --depth 1`, or the release archive:
-> `https://gitlab.com/sciter-engine/sciter-js-sdk/-/archive/6.0.5.4/sciter-js-sdk-6.0.5.4.zip`
+> `https://gitlab.com/sciter-engine/sciter-js-sdk/-/archive/6.0.4.9/sciter-js-sdk-6.0.4.9.zip`
 
 ## What was left out
 

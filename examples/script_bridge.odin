@@ -30,19 +30,16 @@
 //     capability produced, read with `value_get`, `value_at`, `value_to_bytes`.
 //
 // The capability worked through here is the **clipboard, carrying things that are not text**, chosen
-// because its failure mode is more interesting than "it printed".
+// because its failure mode is more interesting than "it printed": JSON survives a round trip exactly,
+// and **HTML does not**. What comes back is wrapped in `<html><!--StartFragment-->…<!--EndFragment-->
+// </html>` **and carries a trailing NUL**, which is the CF_HTML convention leaking through the
+// engine's own clipboard code. A host that compares what it wrote with what it read gets a surprise;
+// `unwrap_clipboard_html` below is the four lines that deal with it.
 //
-// **On the pinned 6.0.5.4 only text comes back.** `Clipboard.write({json:…})` and `({html:…})` answer
-// true and `Clipboard.has` then reports the flavour, but `Clipboard.read()` returns an empty,
-// prototype-less object for every flavour - measured on Linux and Windows, and it has been so since
-// 6.0.5.1 (`docs/UPSTREAM-DEFECTS.md`, defect 13). `Clipboard.readText()` still works. So a host that
-// needs structure through the clipboard has to carry it as text: `JSON.stringify` in, `JSON.parse` out.
-//
-// What 6.0.4.9 did, kept because a fixed engine will very likely do it again: JSON survived a round trip
-// exactly on Linux and Windows (not on macOS, where the object was not held), and **HTML did not** -
-// it came back wrapped in `<html><!--StartFragment-->…<!--EndFragment--></html>` **with a trailing
-// NUL**, the CF_HTML convention leaking through the engine's own clipboard code.
-// `unwrap_clipboard_html` below is the four lines that deal with that, and it keeps its own test.
+// **"JSON survives a round trip exactly" is true on Linux and Windows and false on macOS**, measured on
+// macos-14/arm64. There the write is accepted and the object is simply not there afterwards, while text
+// and html round trip normally - so a host that carries structure through the clipboard needs a text
+// fallback on macOS. The test below pins the difference rather than skipping it.
 //
 // Everything here runs in a **windowless view** - no window, no pump, no `init`. The clipboard is a
 // process-wide service and does not need one, which is worth knowing if you were expecting the
@@ -214,11 +211,10 @@ read_clipboard :: proc(
 	return contents, nil
 }
 
-// **The trap, when the html flavour can be read at all.** HTML written to the clipboard came back as a
-// CF_HTML-style fragment: wrapped in `<html><!--StartFragment-->…<!--EndFragment--></html>` and
-// terminated with a NUL byte that is inside the string, not after it. Measured on 6.0.4.9/Linux; the
-// same convention is what Windows has always used. On 6.0.5.4 `Clipboard.read()` returns nothing to
-// unwrap (see the header), so this is exercised against a literal fragment instead.
+// **The trap.** HTML written to the clipboard comes back as a CF_HTML-style fragment: wrapped in
+// `<html><!--StartFragment-->…<!--EndFragment--></html>` and terminated with a NUL byte that is inside
+// the string, not after it. Measured on 6.0.4.9/Linux; the same convention is what Windows has always
+// used, so it is the engine being consistent rather than the platform leaking.
 //
 // The NUL is on the text flavour too - see `get_text`. The result borrows from `html`: a slice of it,
 // not a copy.
@@ -471,25 +467,44 @@ test_json_survives_the_round_trip_exactly :: proc(t: ^testing.T) {
 	testing.expect_value(t, cerr, nil)
 	defer sciter_app.value_clear(&contents.json)
 
-	testing.expect(t, contents.has_json, "the clipboard reports it holds json")
-
-	// **6.0.5.4 reports the flavour and hands back nothing.** `Clipboard.read()` answers an empty,
-	// prototype-less object, so `json` is undefined - on Linux and Windows alike, since 6.0.5.1
-	// (`docs/UPSTREAM-DEFECTS.md`, defect 13). On 6.0.4.9 the object came back intact on both, and on
-	// macOS was not held at all; that is the history behind this test's name.
+	// **macOS accepts the object and then does not hold it.** Measured on macos-14/arm64, engine
+	// 6.0.4.9: `put_flavour(..., "json", ...)` answers true - the write is not rejected - and the very
+	// next `read_clipboard` reports no json flavour at all. There is then nothing to read a structure
+	// out of, so every assertion in the `else` below fails against an undefined Value with
+	// `INCOMPATIBLE_TYPE`, which reads like a Value bug and is not one.
 	//
-	// Pinned rather than skipped. When an engine carries the object again, this fails, and the right
-	// response is to put back the structural assertions: `scoped_value_get(&contents.json, "name")` is
-	// "odin" and `counts` has length 3.
-	testing.expect(
-		t,
-		sciter_app.value_is_undefined(&contents.json),
-		"json read back - if it does now, this rule changed",
-	)
+	// It is the `json` flavour specifically, not the clipboard: `test_text_round_trips_through_the
+	// _document` passes here, and the html test below passes including its NUL assertion, which macOS
+	// answers the way Linux does. So this is neither clipboard access, nor a headless session, nor a
+	// permission - the other flavours use the same two calls and survive.
+	//
+	// Pinned rather than skipped. If a later engine starts carrying the object on macOS, this test
+	// failing is the right way to hear about it. See docs/MACOS-CHECKLIST.md.
+	when ODIN_OS == .Darwin {
+		testing.expect(
+			t,
+			!contents.has_json,
+			"the json flavour does not survive the round trip on macOS - if it does now, this rule changed",
+		)
+	} else {
+		testing.expect(t, contents.has_json, "the clipboard reports it holds json")
+
+		// Read the structure, rather than comparing rendered text - the point of carrying a Value.
+		name, nerr := sciter_app.scoped_value_get(&contents.json, "name")
+		testing.expect_value(t, nerr, nil)
+		name_text, _ := sciter_app.value_to_string(&name, context.temp_allocator)
+		testing.expect_value(t, name_text, "odin")
+
+		counts, cerr2 := sciter_app.scoped_value_get(&contents.json, "counts")
+		testing.expect_value(t, cerr2, nil)
+		length, lerr := sciter_app.value_len(&counts)
+		testing.expect_value(t, lerr, nil)
+		testing.expect_value(t, length, 3)
+	}
 }
 
-// **HTML cannot be read back at all on 6.0.5.4**, and text can - which, with the NUL on the text flavour,
-// is what a host that wants HTML through the clipboard has left to work with.
+// **HTML does not survive unchanged**, and this is the test that says exactly how it differs - which is
+// the finding the example exists to carry.
 @(test)
 test_html_comes_back_wrapped_and_nul_terminated :: proc(t: ^testing.T) {
 	window, ok := test_view(t)
@@ -507,38 +522,30 @@ test_html_comes_back_wrapped_and_nul_terminated :: proc(t: ^testing.T) {
 	defer sciter_app.value_clear(&contents.json)
 	testing.expect(t, contents.has_html, "the clipboard reports it holds html")
 
-	// Defect 13: reported present, read back as nothing. When this fails, the engine reads html again,
-	// and 6.0.4.9's assertions belong back here: the CF_HTML wrapper, a NUL inside the string, and
-	// `unwrap_clipboard_html(contents.html) == ORIGINAL`.
-	testing.expect_value(t, contents.html, "")
+	// Not what went in.
+	testing.expect(t, contents.html != ORIGINAL, "html is not returned verbatim - if it is, this rule changed")
+	testing.expect(t, strings.contains(contents.html, "<!--StartFragment-->"), "the CF_HTML wrapper is there")
+	testing.expect(t, strings.contains(contents.html, "\x00"), "and a NUL is inside the string")
 
-	// **On Linux the NUL is not an HTML thing - the text flavour has it too. On Windows it is not.**
-	// Read raw, because `get_text` trims it: that trim is load-bearing on Linux and a no-op on Windows,
-	// and it stays unconditional, since trimming a NUL that is not there costs nothing.
-	wrote_text, terr := put_text(window, ORIGINAL)
+	// **On Linux the NUL is not an HTML thing - the text flavour has it too. On Windows it is.** The
+	// CF_HTML wrapper and its NUL come back from the HTML flavour on both platforms; the plain text
+	// flavour is clean on Windows and NUL-terminated on Linux. So `get_text`'s trim is load-bearing on
+	// Linux and a no-op on Windows, and it stays unconditional: trimming a NUL that is not there costs
+	// nothing, and a host that skipped it would compare unequal to what it wrote on one platform only.
+	wrote_text, terr := put_flavour(window, "text", &fragment)
 	testing.expect_value(t, terr, nil)
-	testing.expect(t, wrote_text, "the clipboard accepted the text")
-	raw, rerr := sciter_app.scoped_call(window, "clipboardGetText")
-	testing.expect_value(t, rerr, nil)
-	plain, _ := sciter_app.value_to_string(&raw, context.temp_allocator)
+	testing.expect(t, wrote_text, "the clipboard accepted the text flavour")
+	plain, perr := read_clipboard(window, context.temp_allocator)
+	testing.expect_value(t, perr, nil)
+	defer sciter_app.value_clear(&plain.json)
 	when ODIN_OS == .Windows {
-		testing.expect_value(t, plain, ORIGINAL)
+		testing.expect(t, !strings.contains(plain.text, "\x00"), "the text flavour is clean here")
 	} else {
-		testing.expect_value(t, plain, ORIGINAL + "\x00")
+		testing.expect(t, strings.contains(plain.text, "\x00"), "the text flavour carries the NUL too")
 	}
-	trimmed, gerr := get_text(window, context.temp_allocator)
-	testing.expect_value(t, gerr, nil)
-	testing.expect_value(t, trimmed, ORIGINAL)
-}
 
-// What the html flavour looked like when it could be read (6.0.4.9, Linux and Windows), and what
-// `unwrap_clipboard_html` does with it. A literal, because 6.0.5.4 hands nothing back to unwrap.
-@(test)
-test_unwrap_clipboard_html_takes_the_fragment_out :: proc(t: ^testing.T) {
-	WRAPPED :: "<html><!--StartFragment--><b>bold</b> and <i>italic</i><!--EndFragment--></html>\x00"
-	testing.expect_value(t, unwrap_clipboard_html(WRAPPED), "<b>bold</b> and <i>italic</i>")
-	// Something that was never wrapped passes through, minus the NUL.
-	testing.expect_value(t, unwrap_clipboard_html("plain\x00"), "plain")
+	// And what to do about it.
+	testing.expect_value(t, unwrap_clipboard_html(contents.html), ORIGINAL)
 }
 
 // Part 1 of the pattern, and the reason it exists: `eval` cannot import a module, so a module script
@@ -688,21 +695,11 @@ test_which_options_this_engine_takes_and_which_it_refuses :: proc(t: ^testing.T)
 	testing.expect_value(t, sciter_app.set_option(.SMOOTH_SCROLL, 1, window), nil)
 
 	// Refused either way, on both builds: the option is in the header and implemented in neither.
-	testing.expect(t, sciter_app.set_option(.FONT_SMOOTHING, 1) != nil, "FONT_SMOOTHING with no window")
-	testing.expect(t, sciter_app.set_option(.FONT_SMOOTHING, 1, window) != nil, "FONT_SMOOTHING with a window")
-
-	// `.ENABLE_UIAUTOMATION` is a Windows feature, and since 6.0.5.x the Windows build takes it, with or
-	// without a window. 6.0.4.9 refused it there exactly as Linux still does.
-	when ODIN_OS == .Windows {
-		testing.expect_value(t, sciter_app.set_option(.ENABLE_UIAUTOMATION, 1), nil)
-		testing.expect_value(t, sciter_app.set_option(.ENABLE_UIAUTOMATION, 1, window), nil)
-	} else {
-		testing.expect(t, sciter_app.set_option(.ENABLE_UIAUTOMATION, 1) != nil, "ENABLE_UIAUTOMATION with no window")
-		testing.expect(
-			t,
-			sciter_app.set_option(.ENABLE_UIAUTOMATION, 1, window) != nil,
-			"ENABLE_UIAUTOMATION with a window",
-		)
+	// `.ENABLE_UIAUTOMATION` is the surprise of the pair - it is a Windows feature, and the Windows build
+	// refuses it exactly as Linux does.
+	for option in ([]sciter.Sciter_Rt_Options{.FONT_SMOOTHING, .ENABLE_UIAUTOMATION}) {
+		testing.expectf(t, sciter_app.set_option(option, 1) != nil, "%v with no window", option)
+		testing.expectf(t, sciter_app.set_option(option, 1, window) != nil, "%v with a window", option)
 	}
 
 	// The two that genuinely differ, which is what the guard is for. Both are HTTP-client settings, and

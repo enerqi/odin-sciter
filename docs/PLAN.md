@@ -69,8 +69,8 @@ There are two `sciter-js-sdk` repositories. The GitHub one, `c-smile/sciter-js-s
 engines surface and the one every blog post links. **Its last commit is 2022-04-19.** It ships engine
 4.4.8.33 with `SCITER_API_VERSION` 9.
 
-The real one is <https://gitlab.com/sciter-engine/sciter-js-sdk>, currently at tag **`6.0.5.4`**
-(2026-10-20), engine 6.0.5.4, `SCITER_API_VERSION` **10**.
+The real one is <https://gitlab.com/sciter-engine/sciter-js-sdk>, currently at tag **`6.0.4.9-bis`**
+(2026-08-02), engine 6.0.4.9, `SCITER_API_VERSION` **10**.
 
 Worse than merely stale: the GitHub mirror is *internally inconsistent*. Its `sciter-x-api.h` declares
 `SciterExec` and `SciterWindowExec` at the tail of `ISciterAPI`, but the `libsciter-gtk.so` committed
@@ -85,7 +85,7 @@ Getting the SDK:
 git clone --depth 1 https://gitlab.com/sciter-engine/sciter-js-sdk.git
 # or
 curl -L -o sciter-js-sdk.zip \
-  https://gitlab.com/sciter-engine/sciter-js-sdk/-/archive/6.0.5.4/sciter-js-sdk-6.0.5.4.zip
+  https://gitlab.com/sciter-engine/sciter-js-sdk/-/archive/6.0.4.9/sciter-js-sdk-6.0.4.9.zip
 ```
 
 A full-history clone is ~4 GB: 800+ commits, each carrying every platform's binaries.

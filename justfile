@@ -75,7 +75,7 @@ shared_ext := if os() == "windows" { ".dll" } else if os() == "macos" { ".dylib"
 # serves a `libsciter.so` of *exactly* the same 25 015 296 bytes as `6.0.4.9-bis` and a different
 # SHA-256, so a fetch that checks the length would install the wrong engine and report success. The
 # hash below is the one in `external/sciter/VENDORED.md`, and it is what decides.
-engine_tag := "6.0.5.4"
+engine_tag := "6.0.4.9-bis"
 
 # One hash per platform, because the pin is per *file*, not per tag. A single hash here would have made
 # `just fetch-engine` on Windows fetch sciter.dll and compare it against the Linux .so's digest - which
@@ -84,7 +84,7 @@ engine_tag := "6.0.5.4"
 # The macOS entry covers both architectures: `bin/macosx/libsciter.dylib` is a universal binary with an
 # x86_64 and an arm64 slice, so there is one file and one hash rather than a directory per arch. That is
 # why `engine_rel` below has no `x64` component on macOS and the other two do.
-engine_sha256 := if os() == "windows" { "52ab0ea69341ba0e83fdfb9c96aad97d57d68fa5e9d05e454f3019c62ad945fa" } else if os() == "macos" { "ca80e26cc04a4a10e450d4ee3dd7ab9e025459621559c7330440c7fbd3288abd" } else { "b5a9fdc1ac1b4c05668b46d17dad19bceda751d740f5f060e363df01eb151d57" }
+engine_sha256 := if os() == "windows" { "b49ff94759951c4dd87f18a0edac466adb48a352bdecadbd6d5568f5e2203083" } else if os() == "macos" { "a7b65f37b265a0bacf7c127b8e45e8c0f66a16e3e1071b877b19ca333af1c25c" } else { "b2e4a33682dcb7f2a63a76707e5d47faa9cb1440d986bf08fdc23ecd3964968b" }
 
 # The same relative path under two roots: `bin/` upstream, `lib/` here.
 engine_rel := if os() == "windows" { "windows/x64/sciter.dll" } else if os() == "macos" { "macosx/libsciter.dylib" } else { "linux/x64/libsciter.so" }

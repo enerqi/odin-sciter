@@ -24,8 +24,6 @@ import "../sciter_app"
 import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:path/filepath"
-import "core:strings"
 import "core:testing"
 import "core:time"
 
@@ -788,22 +786,6 @@ test_combine_url_resolves_against_the_document :: proc(t: ^testing.T) {
 	testing.expect_value(t, oerr, sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE))
 }
 
-// Turns a path relative to the current directory into an absolute `file://` URL - the same helper as
-// `load_file.odin`'s. **`file://examples/input.odin` is not a relative URL**: `examples` is its host.
-// 6.0.4.9 forgave that and read the relative path; 6.0.5.x on Windows takes it as the UNC path
-// `//examples/input.odin` and fails with 67 (`ERROR_BAD_NET_NAME`), which is the RFC 8089 reading.
-file_url :: proc(path: string, allocator := context.allocator) -> string {
-	abs, abs_err := filepath.abs(path, context.temp_allocator)
-	if abs_err != nil {
-		abs = path
-	}
-	slashed, _ := strings.replace_all(abs, "\\", "/", context.temp_allocator)
-	if !strings.has_prefix(slashed, "/") {
-		return strings.concatenate({"file:///", slashed}, allocator)
-	}
-	return strings.concatenate({"file://", slashed}, allocator)
-}
-
 @(test)
 test_request_element_data_delivers_to_the_element :: proc(t: ^testing.T) {
 	_, root, ok := test_window(t)
@@ -820,16 +802,7 @@ test_request_element_data_delivers_to_the_element :: proc(t: ^testing.T) {
 	defer sciter_app.detach_handler(scroller, &watch)
 
 	// This example's own source, which is certainly there and certainly not empty.
-	testing.expect_value(
-		t,
-		sciter_app.request_element_data(
-			scroller,
-			file_url("examples/input.odin", context.temp_allocator),
-			.RAW,
-			button,
-		),
-		nil,
-	)
+	testing.expect_value(t, sciter_app.request_element_data(scroller, "file://examples/input.odin", .RAW, button), nil)
 
 	deadline := time.now()
 	for watch.data_bytes == 0 && time.since(deadline) < 3 * time.Second {
@@ -871,11 +844,7 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 	// `request_element_data`. No server is needed for that, so this test stays hermetic; the HTTP
 	// behaviour itself - the query string a `.Get` builds, the `.Post` body, the status codes - was
 	// measured against a real server and is written up on `http_request`.
-	testing.expect_value(
-		t,
-		sciter_app.http_request(scroller, file_url("examples/input.odin", context.temp_allocator)),
-		nil,
-	)
+	testing.expect_value(t, sciter_app.http_request(scroller, "file://examples/input.odin"), nil)
 
 	deadline := time.now()
 	for watch.data_bytes == 0 && time.since(deadline) < 3 * time.Second {
@@ -888,12 +857,7 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 	watch.data_bytes = 0
 	testing.expect_value(
 		t,
-		sciter_app.http_request(
-			scroller,
-			file_url("examples/input.odin", context.temp_allocator),
-			.Get,
-			{{"a", "1"}, {"b", "two words"}},
-		),
+		sciter_app.http_request(scroller, "file://examples/input.odin", .Get, {{"a", "1"}, {"b", "two words"}}),
 		nil,
 	)
 	params_deadline := time.now()
@@ -905,7 +869,7 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 	// The same handle rules as everything else that takes an element.
 	testing.expect_value(
 		t,
-		sciter_app.http_request(nil, file_url("examples/input.odin", context.temp_allocator)),
+		sciter_app.http_request(nil, "file://examples/input.odin"),
 		sciter_app.Error(sciter.Scdom_Result.INVALID_HANDLE),
 	)
 
@@ -914,7 +878,7 @@ test_http_request_delivers_the_same_way :: proc(t: ^testing.T) {
 	defer sciter_app.unuse_element(orphan_owned)
 	testing.expect_value(
 		t,
-		sciter_app.http_request(orphan, file_url("examples/input.odin", context.temp_allocator)),
+		sciter_app.http_request(orphan, "file://examples/input.odin"),
 		sciter_app.Error(sciter.Scdom_Result.PASSIVE_HANDLE),
 	)
 }

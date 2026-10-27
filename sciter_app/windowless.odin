@@ -99,7 +99,8 @@ Windowless_Options :: struct {
 	// **`.OPENGL` renders on the GPU into the framebuffer bound to the current context**, which is the
 	// version a game engine or an immediate-mode tool wants - no readback, no copy. Three measured
 	// rules come with it, all of them in `create_windowless`: the context must be *desktop* OpenGL,
-	// `device` is mandatory, and the framebuffer bound at *paint* time is the one drawn into.
+	// `device` is mandatory, and the framebuffer binding is captured here rather than read at paint
+	// time.
 	//
 	// `.OPENGLES` is refused by this engine build on Linux - `SXM_PAINT` answers false and draws
 	// nothing, on a GLES context and on a desktop one alike. The DirectX targets are Windows-only and
@@ -131,8 +132,7 @@ is_gpu_backend :: proc(backend: sciter.Sl_Target) -> bool {
 // ## The GPU backends
 //
 // `.OPENGL` draws with the engine's own Skia GPU pipeline instead of rasterising into your memory.
-// Three rules, measured on Linux / Mesa (6.0.4.9, and the binding rules re-measured on 6.0.5.4), none
-// of them in the headers:
+// Three rules, all measured on 6.0.4.9 / Linux / Mesa, none of them in the headers:
 //
 //   - **The context must be desktop OpenGL, not GLES.** On a GLES 3.2 context `SXM_PAINT` answers true
 //     and draws nothing, because Skia compiles `#version 150` desktop shaders and the driver rejects
@@ -142,14 +142,14 @@ is_gpu_backend :: proc(backend: sciter.Sl_Target) -> bool {
 //   - **`device` is mandatory.** It is a `glGetProcAddress`-shaped function pointer, as the SDK's own
 //     `lite-sciter` demo passes `glfwGetProcAddress`. A nil one segfaults inside the engine on the
 //     first paint, so this refuses it with `.Window_Failed` rather than letting that happen.
-//   - **The framebuffer is read at paint time, not captured here.** Measured both ways round on
-//     6.0.5.4: whatever is bound when `paint_windowless` is called is what gets drawn into, regardless
-//     of what was bound at create time. So: bind the target framebuffer before each paint. That is how
-//     a host gets Sciter into its own texture. **6.0.4.9 was the opposite** - it captured the binding
-//     here and ignored later binds - so a host written against that engine that binds its FBO only
-//     before `create_windowless` and then draws its own scene to the default framebuffer will see the
-//     UI land on screen instead of in its texture.
-//   - **The paint leaves the binding as the host had it.** See `paint_windowless`.
+//   - **The framebuffer binding is captured here, at create time.** Measured both ways round: a view
+//     created while an FBO was bound paints into that FBO even when the default framebuffer is bound
+//     at paint time, and a view created against the default framebuffer keeps painting there with an
+//     FBO bound. So: make the context current *and* bind the target framebuffer before this call.
+//     That is how a host gets Sciter into its own texture.
+//   - **The paint leaves the engine's framebuffer bound.** It does not restore what the host had
+//     bound, so anything the host draws next lands in Sciter's target unless it rebinds. See
+//     `paint_windowless`.
 //
 // The image comes out the GL way up - row 0 is the *bottom* of the document - so it can be sampled as
 // a texture directly, and needs a flip only if it is being written into a top-down image format.
@@ -287,10 +287,10 @@ resize_windowless :: proc(view: ^Windowless_View, width, height: i32, pixels: []
 // `rect` defaults to the whole surface. `element` paints one layer instead of the tree, with `fore`
 // telling the engine whether that layer is in front.
 //
-// **On a GPU backend this draws into the framebuffer bound right now** and leaves that binding as it
-// was (measured on 6.0.5.4; 6.0.4.9 drew into the one bound at create time and left it bound). Nothing
-// else about GL state was surveyed - treat the rest of the context as the engine left it and set what
-// you need.
+// **On a GPU backend this changes GL state and does not put it back.** Measured: the engine's own
+// framebuffer is still bound when the call returns, so a host that draws its own scene afterwards has
+// to rebind its target first. Nothing else about the state was surveyed - treat the context as the
+// engine left it and set what you need.
 paint_windowless :: proc(
 	view: ^Windowless_View,
 	rect: Maybe(sciter.Rect) = nil,

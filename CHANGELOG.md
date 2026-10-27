@@ -21,23 +21,6 @@ of it since. Fixes and hardening from a whole-repository review, [`docs/review/`
 
 ### Breaking
 
-- **The engine pin moved from `6.0.4.9-bis` to `6.0.5.4`** (`SCITER_API_VERSION` still 10, ISciterAPI
-  unchanged at 189 slots). `just fetch-engine` installs the new binaries; the hashes are in
-  [`VENDORED.md`](external/sciter/VENDORED.md). What a host can notice:
-  - **`.OPENGL` windowless views draw into the framebuffer bound at *paint* time**, and leave the
-    binding as the host had it. 6.0.4.9 captured the binding at `create_windowless` and left its own
-    FBO bound after each paint. A host that bound its FBO only before creating the view now paints to
-    the default framebuffer — bind the target before every `paint_windowless`.
-  - **Script's `Clipboard.read()` returns nothing on Linux and Windows** for any flavour, while
-    `Clipboard.has` still reports it and `readText` still works — an engine regression since 6.0.5.1,
-    [`UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) defect 13. Carry structure through the clipboard
-    as text.
-  - **`file://name/path` is a UNC path on Windows now** (host `name`), as RFC 8089 says; 6.0.4.9 read
-    it as relative. Use `file:///C:/...` or a plain relative URL.
-  - `.ENABLE_UIAUTOMATION` is accepted on Windows; it was refused.
-  - The macOS engine needs **macOS 12.0** (was 11.5).
-  - `sciter.Sciter_Create_Window_Flag.CHILD` is gone, removed from the SDK header (`SW_CHILD`; use
-    mix-in mode).
 - **Temp memory allocated inside a callback no longer outlives that callback.** Every callback that runs
   your code — event handlers, host notifications, native functors, SOM getters/setters/methods, paint
   procs, `value_each` visitors, element comparators — now unwinds `context.temp_allocator` to the mark it
