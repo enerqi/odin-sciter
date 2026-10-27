@@ -412,8 +412,8 @@ unload :: proc() {
 // ==== sciter-version.h ====================================================
 SCITER_VERSION_0 :: 6
 SCITER_VERSION_1 :: 0
-SCITER_VERSION_2 :: 4
-SCITER_VERSION_3 :: 9
+SCITER_VERSION_2 :: 5
+SCITER_VERSION_3 :: 4
 
 Bool32 :: b32
 
@@ -2280,9 +2280,8 @@ Url_Data :: struct {
 Url_Data_Receiver :: proc "system" (pUrlData: ^Url_Data, param: Lpvoid)
 
 Sciter_Create_Window_Flag :: enum u32 {
-	CHILD        = 0, // child window only, if this flag is set all other flags ignored
 	MAIN         = 7, // main window of the app, will terminate the app on close
-	POPUP        = 8, // the window is created as topmost window.
+	POPUP        = 8, // the window is created as a topmost window.
 	ENABLE_DEBUG = 9, // make this window inspector ready
 }
 

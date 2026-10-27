@@ -451,8 +451,8 @@ pin, so a breaking engine release is news before it is a problem. See
 
 | | |
 | --- | --- |
-| SDK | [gitlab.com/sciter-engine/sciter-js-sdk](https://gitlab.com/sciter-engine/sciter-js-sdk) tag `6.0.4.9-bis` |
-| Engine | 6.0.4.9 |
+| SDK | [gitlab.com/sciter-engine/sciter-js-sdk](https://gitlab.com/sciter-engine/sciter-js-sdk) tag `6.0.5.4` |
+| Engine | 6.0.5.4 |
 | `SCITER_API_VERSION` | 10 |
 
 > **Use the GitLab repository.** The `c-smile/sciter-js-sdk` mirror on GitHub is abandoned — last commit
