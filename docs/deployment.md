@@ -182,7 +182,7 @@ legal advice; ask Terra Informatica if it matters commercially.
 
 ## Version pinning and upgrades
 
-The engine is pinned at `6.0.4.9-bis` — see
+The engine is pinned at `6.0.5.4` — see
 [`external/sciter/VENDORED.md`](../external/sciter/VENDORED.md) for the commit and the API version.
 Upstream tags roughly weekly.
 

@@ -28,15 +28,15 @@
 //     work. `SL_TARGET_OPENGLES` as a backend is refused outright on this build.
 //   - **`device` is a `glGetProcAddress` and is mandatory.** Nil segfaults the engine on the first
 //     paint; `create_windowless` refuses it instead.
-//   - **The framebuffer binding is captured at create time**, not read at paint time. Bind the FBO you
-//     want *before* creating the view; a view made against the default framebuffer keeps painting
-//     there however many FBOs you bind later.
+//   - **The paint goes to the framebuffer bound when `paint_windowless` is called**, not the one bound
+//     when the view was created. Bind the FBO you want before every paint. (6.0.4.9 captured the
+//     binding at create time and ignored later binds; 6.0.5.x reads it at paint time - measured both
+//     ways round on each.)
 //   - **Row 0 is the bottom of the document**, the GL way up, so the texture samples directly and only
 //     a top-down image format needs the flip.
-//   - **The engine leaves its own framebuffer bound when the paint returns.** It does not put back what
-//     the host had bound, so the next thing the host draws lands in Sciter's target unless it rebinds.
-//     This cost an hour: a test read "the default framebuffer" straight after a paint and was actually
-//     reading the FBO the engine had left bound.
+//   - **The paint leaves the framebuffer binding as the host had it.** (6.0.4.9 left its own captured
+//     FBO bound, which once had a test reading "the default framebuffer" straight after a paint and
+//     actually reading the FBO.)
 package main
 
 import sciter ".."
@@ -323,8 +323,9 @@ main :: proc() {
 		gc.gl.clear_color(0.05, 0.05, 0.1, 1)
 		gc.gl.clear(GL_COLOR_BUFFER_BIT)
 
-		// **The FBO is bound before the view is created**, because that binding is what the engine
-		// captures. Bind it afterwards and the UI goes to the default framebuffer instead.
+		// **The FBO is bound before the paints below**, because the engine draws into whatever is bound
+		// when `paint_windowless` is called. Nothing below rebinds, and the paint leaves the binding
+		// alone, so binding once here covers every paint in this function.
 		gc.gl.bind_framebuffer(GL_FRAMEBUFFER, gc.fbo)
 
 		view, err := sciter_app.create_windowless(
@@ -435,7 +436,6 @@ test_gl_view :: proc(t: ^testing.T) -> (^Context, ^sciter_app.Windowless_View, b
 				fmt.println("no offscreen GL context available - skipping")
 				return nil, nil, false
 			}
-			g_gc.gl.bind_framebuffer(GL_FRAMEBUFFER, g_gc.fbo)
 
 			view, err := sciter_app.create_windowless(
 				{width = W, height = H, backend = .OPENGL, device = rawptr(gl_get_proc)},
@@ -447,6 +447,8 @@ test_gl_view :: proc(t: ^testing.T) -> (^Context, ^sciter_app.Windowless_View, b
 			g_view = view
 		}
 
+		// Every test starts painting into the texture, whatever the previous test left bound.
+		g_gc.gl.bind_framebuffer(GL_FRAMEBUFFER, g_gc.fbo)
 		testing.expect_value(t, sciter_app.load_html(g_view.window, DOC, "about:blank"), nil)
 		for i in 0 ..< 10 {
 			sciter_app.windowless_heartbeat(&g_view, time.Duration(i) * 16 * time.Millisecond)
@@ -499,37 +501,37 @@ test_a_host_driven_change_reaches_the_texture :: proc(t: ^testing.T) {
 	testing.expect_value(t, [3]u8{after.r, after.g, after.b}, [3]u8{0x89, 0xb4, 0xfa})
 }
 
-// **The binding is captured at create time, and this is the test that says so.** The view was created
-// with the FBO bound; binding the default framebuffer now and painting must leave the default one
-// alone and go on filling the texture.
+// **The binding is read at paint time, and this is the test that says so.** The view was created with
+// the FBO bound; binding the default framebuffer now and painting must draw into the default one, leave
+// the texture alone, and leave the default framebuffer bound. On 6.0.4.9 all three were the other way
+// round, so this test failing is how a change back would be heard about.
 @(test)
-test_the_framebuffer_binding_is_captured_when_the_view_is_created :: proc(t: ^testing.T) {
+test_the_paint_goes_to_the_framebuffer_bound_at_paint_time :: proc(t: ^testing.T) {
 	gc, view, ok := test_gl_view(t)
 	if !ok {return}
 
-	// Paint the default framebuffer a colour of our own, then paint the view while *it* is bound.
+	// Both targets a colour of our own first - cyan and magenta appear nowhere in the document.
+	gc.gl.bind_framebuffer(GL_FRAMEBUFFER, gc.fbo)
+	gc.gl.viewport(0, 0, W, H)
+	gc.gl.clear_color(0, 1, 1, 1)
+	gc.gl.clear(GL_COLOR_BUFFER_BIT)
 	gc.gl.bind_framebuffer(GL_FRAMEBUFFER, 0)
 	gc.gl.viewport(0, 0, W, H)
-	gc.gl.clear_color(1, 0, 1, 1) // magenta appears nowhere in the document
+	gc.gl.clear_color(1, 0, 1, 1)
 	gc.gl.clear(GL_COLOR_BUFFER_BIT)
 
 	testing.expect_value(t, sciter_app.paint_windowless(view), nil)
 
-	// **Rebinding before reading is not a formality.** The engine leaves its own framebuffer bound when
-	// the paint returns, so a read here without this line samples the FBO and looks like the opposite
-	// result - which is exactly the mistake this test was written with the first time.
 	bound: i32
 	gc.gl.get_integer(GL_FRAMEBUFFER_BINDING, &bound)
-	testing.expectf(t, u32(bound) == gc.fbo, "the engine should have left its own framebuffer bound, got %d", bound)
+	testing.expectf(t, bound == 0, "the paint should have left the host's binding alone, got %d", bound)
 
-	gc.gl.bind_framebuffer(GL_FRAMEBUFFER, 0)
-	on_default := gl_pixel(gc, W / 2, H / 2)
-	testing.expect_value(t, [3]u8{on_default.r, on_default.g, on_default.b}, [3]u8{0xff, 0x00, 0xff})
+	on_default := gl_pixel(gc, W / 2, H - 4)
+	testing.expect_value(t, [3]u8{on_default.r, on_default.g, on_default.b}, [3]u8{0xf3, 0x8b, 0xa8})
 
-	// And the texture - the target this view was created against - has the document in it.
 	gc.gl.bind_framebuffer(GL_FRAMEBUFFER, gc.fbo)
 	in_texture := gl_pixel(gc, W / 2, H - 4)
-	testing.expect_value(t, [3]u8{in_texture.r, in_texture.g, in_texture.b}, [3]u8{0xf3, 0x8b, 0xa8})
+	testing.expect_value(t, [3]u8{in_texture.r, in_texture.g, in_texture.b}, [3]u8{0x00, 0xff, 0xff})
 }
 
 // A GPU backend with no `glGetProcAddress` segfaults inside the engine on the first paint. The wrapper

@@ -213,6 +213,25 @@ demonstrate — so this is a platform-specific regression in one build, like def
 direction. The test pins the macOS behaviour with a `when` rather than skipping, so a build that fixes
 it fails the test and says so.
 
+## 13. `Clipboard.read()` returns an empty object, though `Clipboard.has` reports the flavour
+
+**Severity:** silent data loss, every platform measured. **Workaround:** carry everything through
+`Clipboard.writeText` / `readText`, which still work — `JSON.stringify` on the way in, `JSON.parse` on
+the way out.
+
+Measured on 6.0.5.4, Linux x64 and Windows x64, in a windowless view (`examples/script_bridge.odin`).
+After `Clipboard.write({json: {a: 1}})`, `({html: "<b>x</b>"})` or `({text: "x"})` — each answers
+`true` — `Clipboard.has("json" | "html" | "text")` answers `true`, and `Clipboard.read()` returns an
+object with no prototype and no own properties: `Object.keys` is `[]`, `JSON.stringify` gives `{}`,
+`String(r)` throws in `toPrimitive`, and `r.text`, `r.html`, `r.json` are all `undefined`. Passing a
+flavour (`Clipboard.read("json")`) or a list of them changes nothing. `Clipboard.readText()` in the same
+session returns the text.
+
+**A regression, and when it arrived is known.** The weekly canary passed this on 6.0.4.10 and 6.0.5.0
+and has failed it on every tag since 6.0.5.1, whose changelog has "[clipboard] TeamViewer patch: AV in
+cases when content is not available" — plausibly the change. 6.0.4.9 returned `{text, html, json}`
+with the html in its CF_HTML wrapper, on Linux and Windows alike.
+
 ## Not defects — corrections this repository had to make to itself
 
 Kept here so nobody files them by mistake. Each was written up as an engine defect and each turned out

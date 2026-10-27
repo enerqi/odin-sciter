@@ -49,7 +49,8 @@ still answers "which engine" on its own — the table is the record of what exis
 
 | Bindings tag | Engine | Mirror release |
 | --- | --- | --- |
-| *none yet — the bindings are unreleased* | `6.0.4.9-bis`, engine 6.0.4.9, API 10 | [`engine-6.0.4.9-bis`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.4.9-bis) |
+| *none — never tagged; the pin moved before a release was cut* | `6.0.4.9-bis`, engine 6.0.4.9, API 10 | [`engine-6.0.4.9-bis`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.4.9-bis) |
+| *none yet — the bindings are unreleased* | `6.0.5.4`, engine 6.0.5.4, API 10 | [`engine-6.0.5.4`](https://github.com/enerqi/odin-sciter/releases/tag/engine-6.0.5.4) |
 
 Add a row when a bindings tag is cut; add a *mirror* row only when the pin moves, per step 8 below.
 
