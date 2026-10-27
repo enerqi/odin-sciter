@@ -232,6 +232,34 @@ and has failed it on every tag since 6.0.5.1, whose changelog has "[clipboard] T
 cases when content is not available" — plausibly the change. 6.0.4.9 returned `{text, html, json}`
 with the html in its CF_HTML wrapper, on Linux and Windows alike.
 
+## 14. macOS: creating a windowless view aborts the process
+
+**Severity:** a crash on every windowless view, one platform. **Workaround:** none — no option or flag
+reaches the code. It is why the pin is still 6.0.4.9-bis.
+
+Measured on 6.0.5.4, macos-14/arm64 in CI: every example test that calls `create_windowless` dies with
+SIGABRT inside `SciterProcX(SXM_CREATE)`:
+
+```
+*** Terminating app due to uncaught exception 'NSInvalidArgumentException', reason:
+'*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil'
+  libsciter.dylib  osx::Accessibility::init(html::view*) + 268
+  libsciter.dylib  html::view::start(window_params const&) + 284
+  libsciter.dylib  lite::view::proc_x(void*, SCITER_X_MSG*) + 996
+```
+
+Read from the disassembly: `html::view::start` ends with an unconditional call to
+`osx::Accessibility::init`, which takes the view's `iwindow::os_window()` and inserts it into an
+`NSMutableArray` without testing it. A windowless view has no OS window, so the value is nil and
+Foundation throws. A windowed view has one, which is why `window-canary` and the windowed examples
+are unaffected.
+
+**When it arrived is known.** `osx::Accessibility::init` does not exist in 6.0.4.9-bis. 6.0.5.1,
+6.0.5.2, 6.0.5.3 and 6.0.5.4 all have it, with the same 98 instructions, and all call it from
+`view::start`. The weekly canary runs on Linux only, so no 6.0.5.x tag was ever exercised on macOS
+before this pin moved. The fix upstream is a nil check (or skipping accessibility for windowless
+views) before the insert.
+
 ## Not defects — corrections this repository had to make to itself
 
 Kept here so nobody files them by mistake. Each was written up as an engine defect and each turned out

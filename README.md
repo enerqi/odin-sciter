@@ -505,7 +505,7 @@ listed and described in [`docs/README.md`](docs/README.md). A few worth naming h
   part that went wrong
 - [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) — where Sciter sits among the other ways to build a
   desktop UI, what it gives up, and what to watch
-- [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) — 12 engine defects written up ready to file,
+- [`docs/UPSTREAM-DEFECTS.md`](docs/UPSTREAM-DEFECTS.md) — 14 engine defects written up ready to file,
   and the three that turned out to be this repository's own mistakes
 - [`docs/SDK-PARITY.md`](docs/SDK-PARITY.md) — how these examples, tests and guides line up against
   everything the SDK ships, and which of its 64 script samples have no host API to bind at all
