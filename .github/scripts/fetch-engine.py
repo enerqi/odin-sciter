@@ -48,7 +48,8 @@ BASE = "https://gitlab.com/sciter-engine/sciter-js-sdk/-/raw"
 # Our own release assets. The tag is `engine-<upstream tag>` and not a bindings version, so this URL
 # moves when the *pin* moves and not when a release is cut against the same engine; the assets are flat
 # because the three basenames (.so, .dll, .dylib) are already distinct, so one namespace holds every
-# platform. Both halves have to stay in step with what `gh release create` is given in UPGRADING.md.
+# platform. `just engine-release` (release.just) creates these assets and downloads them back through
+# this constant, so the two cannot drift apart.
 MIRROR = "https://github.com/enerqi/odin-sciter/releases/download/engine-{tag}/{name}"
 
 

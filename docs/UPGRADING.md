@@ -179,22 +179,21 @@ consumers vendor or submodule the repository or import it by path.
    against the SHA-256 in `VENDORED.md`, so an untrusted source cannot do worse than fail the check.
 
    ```sh
-   gh release create engine-6.0.4.9-bis \
-       lib/linux/x64/libsciter.so lib/windows/x64/sciter.dll lib/macosx/libsciter.dylib \
-       --target master --title "Sciter engine 6.0.4.9-bis" --notes-file notes.md
+   just engine-release             # dry run: the checks, the notes and the gh command
+   just engine-release --publish   # creates the release against master, then the round trip
    ```
 
-   The notes carry the SHA-256 table and the EULA's attribution line — the engine is not BSD, and
-   redistributing it is exactly what the EULA contemplates *provided* that line travels with it. See
-   [`VENDORED.md`](../external/sciter/VENDORED.md#licensing).
+   The recipe stops with nothing to do when `engine-<engine_tag>` already has its three assets. It
+   refuses unless all three binaries in `lib/` match `VENDORED.md`'s table (the SDK's `bin/` at the
+   pinned tag has them; `just fetch-engine` installs only the host's) and `origin/master` already pins
+   the same tag, since `--target master` tags whatever master is on GitHub.
 
-   Then prove the loop closes, rather than reading the release page: point the variable at the asset
-   you just uploaded and make the fetch actually take it.
+   The notes are generated from `VENDORED.md` and carry the SHA-256 table and the EULA's attribution
+   line — the engine is not BSD, and redistributing it is exactly what the EULA contemplates
+   *provided* that line travels with it. See [`VENDORED.md`](../external/sciter/VENDORED.md#licensing).
 
-   ```sh
-   SCITER_ENGINE_URL=https://github.com/enerqi/odin-sciter/releases/download/engine-6.0.4.9-bis/libsciter.so \
-       just fetch-engine --force
-   ```
+   With `--publish` it then proves the loop closes, rather than reading the release page: it downloads
+   each asset back through `fetch-engine.py`'s own `MIRROR` URL and checks the hash.
 
 ## Upgrade procedure
 

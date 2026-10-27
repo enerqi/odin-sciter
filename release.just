@@ -122,3 +122,159 @@ changelog_section version:
 	if not body:
 		sys.exit("the '## v" + want + "' section in CHANGELOG.md is empty")
 	print(body)
+
+
+# Step 8 of docs/UPGRADING.md's "Cutting a release": mirror the three pinned engine binaries as the
+# assets of a GitHub release tagged `engine-<engine_tag>`, which is fetch-engine.py's last source. It
+# hangs off the pin rather than off a bindings tag, so it is a no-op until `engine_tag` moves - the
+# recipe checks for an existing release with all three assets first and stops if there is one.
+#
+# Everything the notes say is read out of external/sciter/VENDORED.md, and the files are checked against
+# that table before anything is uploaded: the table is the pin, so a release that disagreed with it
+# would be a mirror of the wrong bytes. All three binaries have to be in lib/ - the SDK's bin/ at the
+# pinned tag has them - although `just fetch-engine` installs only the host's.
+#
+# **Without `--publish` it publishes nothing**: it prints the notes and the `gh` command. With it, it
+# creates the release against master and then downloads each asset back through fetch-engine.py's own
+# MIRROR URL and checks the hash, which is the loop the step is there to close.
+#
+#   just engine-release             # dry run: the checks, the notes, the command
+#   just engine-release --publish   # the same, then `gh release create` and the round trip
+# ---
+# mirror the pinned engine binaries as the engine-<tag> GitHub release
+[script]
+[group('release')]
+engine-release *flags:
+	import importlib.util, json, os, re, shlex, subprocess, sys, tempfile, urllib.request
+
+	sys.stdout.reconfigure(encoding="utf-8")
+
+	flags = r"{{flags}}".split()
+	unknown = [f for f in flags if f != "--publish"]
+	if unknown:
+		sys.exit("unknown flag(s): " + " ".join(unknown) + " - the only one is --publish")
+	publish = "--publish" in flags
+
+	tag = "{{engine_tag}}"
+	release = "engine-" + tag
+
+	# The URL shape lives in fetch-engine.py and nowhere else, so the round trip below goes through it.
+	spec = importlib.util.spec_from_file_location("fetch_engine", ".github/scripts/fetch-engine.py")
+	fetch_engine = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(fetch_engine)
+
+	def field(text, name):
+		m = re.search(r"^\| " + re.escape(name) + r" \| (.+?) \|$", text, re.M)
+		if not m:
+			sys.exit("external/sciter/VENDORED.md has no '| " + name + " |' row")
+		return m.group(1)
+
+	def vendored(text):
+		"""(upstream tag, commit, engine version, API version, [(path, size, sha256)])"""
+		rows = re.findall(r"^\| `(lib/[^`]+)` \| ([\d ]+) \| `([0-9a-f]{64})` \|$", text, re.M)
+		if len(rows) != 3:
+			sys.exit(f"expected 3 binaries in VENDORED.md's table, found {len(rows)}")
+		return (
+			field(text, "Tag").strip("`"),
+			re.match(r"`([0-9a-f]{40})`", field(text, "Commit")).group(1),
+			field(text, "Engine version").split()[0],
+			field(text, "`SCITER_API_VERSION`"),
+			[(p, int(s.replace(" ", "")), h) for p, s, h in rows],
+		)
+
+	with open("external/sciter/VENDORED.md", encoding="utf-8") as f:
+		upstream, commit, engine, api, files = vendored(f.read())
+	if upstream != tag:
+		sys.exit(f"VENDORED.md pins tag {upstream} but the justfile's engine_tag is {tag}")
+	if "{{engine_sha256}}" not in [h for _, _, h in files]:
+		sys.exit("the justfile's engine_sha256 for this platform is not in VENDORED.md's table")
+
+	# `--target master` tags whatever master is on GitHub, so that commit has to pin this engine too.
+	subprocess.run(["git", "fetch", "-q", "origin", "master"], check=True)
+	remote = subprocess.run(
+		["git", "show", "origin/master:external/sciter/VENDORED.md"],
+		capture_output=True, text=True, encoding="utf-8", check=True,
+	).stdout
+	if vendored(remote)[0] != tag:
+		sys.exit(f"origin/master does not pin {tag} yet - push and merge the upgrade first")
+
+	view = subprocess.run(
+		["gh", "release", "view", release, "--json", "assets"], capture_output=True, text=True,
+	)
+	if view.returncode == 0:
+		have = sorted(a["name"] for a in json.loads(view.stdout)["assets"])
+		want = sorted(os.path.basename(p) for p, _, _ in files)
+		if have == want:
+			print(f"{release} already has its three assets - nothing to do")
+			sys.exit(0)
+		sys.exit(f"{release} exists with assets {have}, not {want} - fix it by hand on GitHub")
+
+	bad = []
+	for path, size, sha in files:
+		if not os.path.isfile(path):
+			bad.append(f"  {path}: missing - copy it from the SDK's bin/ at tag {tag}")
+			continue
+		got = fetch_engine.digest(path)
+		if os.path.getsize(path) != size or got != sha:
+			bad.append(f"  {path}: {os.path.getsize(path)} bytes, sha256 {got}")
+	if bad:
+		sys.exit("lib/ does not hold the pinned binaries:\n" + "\n".join(bad))
+
+	labels = {"libsciter.so": "linux x64", "sciter.dll": "windows x64", "libsciter.dylib": "macos, universal"}
+	table = "\n".join(
+		f"| `{os.path.basename(p)}` ({labels[os.path.basename(p)]}) | {s:,} | `{h}` |".replace(f"{s:,}", f"{s:,}".replace(",", " "))
+		for p, s, h in files
+	)
+	notes = f"""**This is not a release of the bindings.** It is a byte-for-byte mirror of the Sciter engine
+	binaries this repository pins, published so that a checkout stays buildable if upstream withdraws or
+	moves a tag — no engine is committed to git any more. The tag exists to hold these three files and
+	says nothing about the state of the Odin code at that commit.
+
+	Bindings releases are tagged `vX.Y.Z.W`; see [`docs/UPGRADING.md`](docs/UPGRADING.md).
+
+	Upstream: <https://gitlab.com/sciter-engine/sciter-js-sdk> at tag `{tag}`, commit
+	`{commit}`. Engine version {engine}, `SCITER_API_VERSION` {api}.
+
+	| File | Size | SHA-256 |
+	| --- | --- | --- |
+	{table}
+
+	`.github/scripts/fetch-engine.py` reaches these automatically, as its last source after upstream, and
+	verifies whatever arrives against the hashes above — so nothing here has to be trusted to be useful.
+
+	The engine binary is covered by the Sciter engine EULA, not by this repository's BSD licence. It is
+	free to use in commercial and non-commercial applications, with one requirement:
+
+	> Your application shall include link to Terra Informatica site in "About" dialog or similar place in
+	> your application. Text of the link: This Application (or Component) uses Sciter Engine
+	> (http://sciter.com/), copyright Terra Informatica Software, Inc.
+	"""
+	notes = "\n".join(line.removeprefix("\t") for line in notes.splitlines()) + "\n"
+
+	command = [
+		"gh", "release", "create", release, *[p for p, _, _ in files],
+		"--target", "master", "--title", "Sciter engine " + tag, "--notes-file", "<notes>",
+	]
+	print(notes)
+	print("$ " + shlex.join(command))
+	if not publish:
+		print("\ndry run - nothing published. `just engine-release --publish` to create it.")
+		sys.exit(0)
+
+	with tempfile.TemporaryDirectory() as tmp:
+		notes_file = os.path.join(tmp, "notes.md")
+		with open(notes_file, "w", encoding="utf-8", newline="\n") as f:
+			f.write(notes)
+		subprocess.run([notes_file if a == "<notes>" else a for a in command], check=True)
+
+		# Back down through the URL a fresh clone would use, rather than trusting the release page.
+		for path, size, sha in files:
+			name = os.path.basename(path)
+			url = fetch_engine.MIRROR.format(tag=tag, name=name)
+			local = os.path.join(tmp, name)
+			urllib.request.urlretrieve(url, local)
+			got = fetch_engine.digest(local)
+			if got != sha:
+				sys.exit(f"{url}: sha256 {got}, expected {sha}")
+			print(f"ok: {url}")
+	print(f"ok: {release} published and all three assets round-trip")
